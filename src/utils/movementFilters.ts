@@ -1,5 +1,6 @@
 import { Movement, MovementType, PaymentMethod } from "../types";
 import { monthKey } from "./calculations";
+import { localDateString, localMonthString } from "./date";
 
 export type DateFilterMode = "all" | "month" | "date" | "range";
 export type MovementTypeFilter = MovementType | "todos";
@@ -18,8 +19,8 @@ export interface MovementFilters {
 
 export const defaultMovementFilters = (): MovementFilters => ({
   dateMode: "all",
-  month: monthKey(new Date().toISOString()),
-  exactDate: new Date().toISOString().slice(0, 10),
+  month: localMonthString(),
+  exactDate: localDateString(),
   dateFrom: "",
   dateTo: "",
   category: "todas",

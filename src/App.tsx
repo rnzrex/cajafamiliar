@@ -24,6 +24,7 @@ import { AppData, Category, Movement, MovementDraft, MovementType, RecurringPaym
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth } from "./utils/calculations";
 import { loadAppData, saveAppData } from "./services/dataRepository";
 import { makeId, loadData } from "./utils/storage";
+import { localDateString } from "./utils/date";
 
 type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "saldo-inicial";
 
@@ -115,7 +116,7 @@ export default function App() {
     if (shouldCreateExpense) {
       setMovementDraft({
         type: "egreso",
-        date: new Date().toISOString().slice(0, 10),
+        date: localDateString(),
         amount: payment.amount,
         description: payment.name,
         category: payment.category,

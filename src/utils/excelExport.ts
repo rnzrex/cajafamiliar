@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { Movement } from "../types";
+import { localDateString } from "./date";
 import { describeFilters, MovementFilters, movementTotals } from "./movementFilters";
 
 const moneyFormat = '"S/" #,##0.00';
@@ -123,7 +124,7 @@ function groupBy(items: Movement[], key: "category" | "method") {
 }
 
 function todayFileName() {
-  return new Date().toISOString().slice(0, 10);
+  return localDateString();
 }
 
 function formatDateTime(value: string) {

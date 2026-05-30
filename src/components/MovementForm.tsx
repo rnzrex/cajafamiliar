@@ -2,6 +2,7 @@ import { Plus, Save, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { Category, CategoryType, Movement, MovementDraft, MovementType, paymentMethods } from "../types";
 import { detectCategory } from "../utils/categoryDetector";
+import { localDateString } from "../utils/date";
 
 interface MovementFormProps {
   initialType?: MovementType;
@@ -13,7 +14,7 @@ interface MovementFormProps {
   onCancel?: () => void;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => localDateString();
 
 export function MovementForm({ initialType = "egreso", movement, draft, categories, onQuickCreateCategory, onSave, onCancel }: MovementFormProps) {
   const [type, setType] = useState<MovementType>(movement?.type ?? draft?.type ?? initialType);

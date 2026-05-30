@@ -1,9 +1,10 @@
 import { AppData, Category, Movement, RecurringPayment, baseCategories } from "../types";
+import { localDateString } from "./date";
 
 const STORAGE_KEY = "caja-familiar-data";
 
 const today = new Date();
-const isoToday = today.toISOString().slice(0, 10);
+const isoToday = localDateString(today);
 
 const sampleMovements: Movement[] = [
   {

@@ -1,4 +1,5 @@
 import { CashCount, Movement, RecurringPayment } from "../types";
+import { localMonthString } from "./date";
 
 export const formatMoney = (value: number) =>
   new Intl.NumberFormat("es-PE", {
@@ -18,7 +19,7 @@ export function expectedCash(movements: Movement[], initialBalance: number) {
   }, initialBalance);
 }
 
-export function monthlyTotals(movements: Movement[], selectedMonth = monthKey(new Date().toISOString())) {
+export function monthlyTotals(movements: Movement[], selectedMonth = localMonthString()) {
   return movements
     .filter((movement) => monthKey(movement.date) === selectedMonth)
     .reduce(
@@ -31,7 +32,7 @@ export function monthlyTotals(movements: Movement[], selectedMonth = monthKey(ne
     );
 }
 
-export function topExpenseCategory(movements: Movement[], selectedMonth = monthKey(new Date().toISOString())) {
+export function topExpenseCategory(movements: Movement[], selectedMonth = localMonthString()) {
   const totals = new Map<string, number>();
   movements
     .filter((movement) => movement.type === "egreso" && monthKey(movement.date) === selectedMonth)
