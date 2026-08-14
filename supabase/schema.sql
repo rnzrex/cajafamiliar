@@ -61,19 +61,37 @@ create table if not exists public.recurring_payments (
   id text primary key,
   household_id uuid not null references public.households(id) on delete cascade,
   name text not null,
-  amount numeric(12, 2) not null check (amount > 0),
-  due_day integer not null check (due_day between 1 and 31),
+  amount numeric(12, 2),
+  amount_mode text not null default 'fixed',
+  due_day integer,
+  due_date date,
   category text not null,
   status text not null default 'pendiente' check (status in ('pendiente', 'pagado')),
   notes text not null default '',
-  recurrence_type text not null default 'indefinite' check (recurrence_type in ('indefinite', 'fixed')),
-  total_installments integer check (total_installments is null or total_installments > 0),
+  recurrence_type text not null default 'indefinite',
+  total_installments integer,
   paid_installments integer not null default 0 check (paid_installments >= 0),
   is_active boolean not null default true,
   last_paid_month integer check (last_paid_month is null or last_paid_month between 1 and 12),
   last_paid_year integer check (last_paid_year is null or last_paid_year >= 2000),
   paid_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint recurring_payments_amount_positive_or_null_check check (amount is null or amount > 0),
+  constraint recurring_payments_amount_mode_check check (
+    (amount_mode = 'fixed' and amount is not null and amount > 0)
+    or (amount_mode = 'variable' and (amount is null or amount > 0))
+  ),
+  constraint recurring_payments_amount_mode_values_check check (amount_mode in ('fixed', 'variable')),
+  constraint recurring_payments_due_day_check check (due_day is null or due_day between 1 and 31),
+  constraint recurring_payments_schedule_check check (
+    (recurrence_type = 'one_time' and due_date is not null and due_day is null)
+    or (recurrence_type in ('indefinite', 'fixed') and due_day is not null and due_day between 1 and 31 and due_date is null)
+  ),
+  constraint recurring_payments_recurrence_type_check check (recurrence_type in ('indefinite', 'fixed', 'one_time')),
+  constraint recurring_payments_installments_check check (
+    (recurrence_type = 'fixed' and total_installments is not null and total_installments > 0)
+    or (recurrence_type in ('indefinite', 'one_time') and total_installments is null)
+  )
 );
 
 create index if not exists idx_categories_household on public.categories(household_id);

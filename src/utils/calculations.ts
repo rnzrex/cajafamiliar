@@ -1,5 +1,15 @@
 import { CashCount, Movement, RecurringPayment } from "../types";
-import { localMonthString } from "./date";
+import { formatLocalDate, localDateString, localMonthString, parseLocalDate } from "./date";
+
+export type PaymentStatusKind = "overdue" | "today" | "tomorrow" | "upcoming" | "later" | "paid" | "completed" | "inactive";
+
+export interface PaymentStatus {
+  kind: PaymentStatusKind;
+  label: string;
+  tone: "red" | "orange" | "yellow" | "blue" | "green" | "slate";
+  days: number;
+  dueDate?: string;
+}
 
 export const formatMoney = (value: number) =>
   new Intl.NumberFormat("es-PE", {
@@ -45,31 +55,35 @@ export function lastCashCount(cashCounts: CashCount[]) {
   return [...cashCounts].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
 
-export function paymentStatus(payment: RecurringPayment) {
-  if (!payment.is_active) return { label: "Finalizado", tone: "slate", days: 999 };
-  if (isPaymentPaidThisMonth(payment)) return { label: "Pagado este mes", tone: "green", days: 0 };
-  const now = startOfDay(new Date());
-  const tomorrow = addDays(now, 1);
-  const due = getRelevantDueDate(payment.dueDay, now, tomorrow);
-  const diff = Math.round((due.getTime() - now.getTime()) / 86400000);
+export function paymentStatus(payment: RecurringPayment): PaymentStatus {
+  const todayKey = localDateString();
+  const today = parseLocalDate(todayKey);
 
-  if (diff < 0) return { label: "Vencido", tone: "red", days: diff };
-  if (diff === 0) return { label: "Vence hoy", tone: "orange", days: diff };
-  if (diff === 1) return { label: "Vence manana", tone: "yellow", days: diff };
-  return { label: `Faltan ${diff} dias`, tone: "blue", days: diff };
+  if (!today) return { kind: "later", label: "Fecha por confirmar", tone: "blue", days: 999 };
+
+  if (payment.recurrence_type === "one_time") {
+    if (payment.status === "pagado") return { kind: "completed", label: "Pagado", tone: "green", days: 999 };
+    if (!payment.is_active) return { kind: "inactive", label: "Archivado", tone: "slate", days: 999 };
+    return dueDateStatus(payment.dueDate, today);
+  }
+
+  if (isPaymentFinished(payment)) return { kind: "completed", label: "Finalizado", tone: "green", days: 999 };
+  if (!payment.is_active) return { kind: "inactive", label: "Archivado", tone: "slate", days: 999 };
+
+  const dueDate = monthlyDueDate(payment.dueDay, todayKey);
+  if (!dueDate) return { kind: "later", label: "Fecha por confirmar", tone: "blue", days: 999 };
+  if (isPaymentPaidThisMonth(payment)) return { kind: "paid", label: "Pagado este mes", tone: "green", days: 0, dueDate };
+  return dueDateStatus(dueDate, today);
 }
 
 export function paymentAlert(payment: RecurringPayment) {
-  if (!payment.is_active || isPaymentPaidThisMonth(payment)) return null;
   const status = paymentStatus(payment);
-  if (status.days < 0) return { kind: "vencido" as const, ...status };
-  if (status.days === 0) return { kind: "hoy" as const, ...status };
-  if (status.days === 1) return { kind: "manana" as const, ...status };
-  return null;
+  return status.kind === "overdue" || status.kind === "today" || status.kind === "tomorrow" ? status : null;
 }
 
 export function isPaymentPaidThisMonth(payment: RecurringPayment, date = new Date()) {
-  return payment.last_paid_month === date.getMonth() + 1 && payment.last_paid_year === date.getFullYear();
+  const month = localMonthString(date);
+  return payment.last_paid_month === Number(month.slice(5)) && payment.last_paid_year === Number(month.slice(0, 4));
 }
 
 export function isPaymentFinished(payment: RecurringPayment) {
@@ -82,25 +96,36 @@ export function installmentLabel(payment: RecurringPayment) {
   return `Cuota ${visibleInstallment} de ${payment.total_installments}`;
 }
 
-function startOfDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+export function paymentAmountLabel(payment: RecurringPayment) {
+  if (payment.amount_mode === "variable") {
+    return payment.amount == null ? "Monto por confirmar" : `Monto variable · Aprox. ${formatMoney(payment.amount)}`;
+  }
+  return payment.amount == null ? "Monto por confirmar" : formatMoney(payment.amount);
 }
 
-function addDays(date: Date, days: number) {
-  const next = new Date(date);
-  next.setDate(next.getDate() + days);
-  return next;
+export function paymentScheduleLabel(payment: RecurringPayment) {
+  if (payment.recurrence_type === "one_time") return payment.dueDate ? formatLocalDate(payment.dueDate) : "Fecha por confirmar";
+  if (payment.dueDay == null) return "Fecha por confirmar";
+  const monthlySchedule = `Día ${payment.dueDay} de cada mes`;
+  return payment.recurrence_type === "fixed" ? `${installmentLabel(payment)} · ${monthlySchedule}` : monthlySchedule;
 }
 
-function daysInMonth(year: number, month: number) {
-  return new Date(year, month + 1, 0).getDate();
+function dueDateStatus(dueDate: string | null, today: Date): PaymentStatus {
+  if (!dueDate || !parseLocalDate(dueDate)) return { kind: "later", label: "Fecha por confirmar", tone: "blue", days: 999 };
+  const due = parseLocalDate(dueDate);
+  if (!due) return { kind: "later", label: "Fecha por confirmar", tone: "blue", days: 999 };
+  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
+
+  if (diff < 0) return { kind: "overdue", label: `Vencido hace ${Math.abs(diff)} ${Math.abs(diff) === 1 ? "día" : "días"}`, tone: "red", days: diff, dueDate };
+  if (diff === 0) return { kind: "today", label: "Vence hoy", tone: "orange", days: diff, dueDate };
+  if (diff === 1) return { kind: "tomorrow", label: "Vence mañana", tone: "yellow", days: diff, dueDate };
+  if (diff <= 7) return { kind: "upcoming", label: `Vence en ${diff} días`, tone: "blue", days: diff, dueDate };
+  return { kind: "later", label: `Vence en ${diff} días`, tone: "blue", days: diff, dueDate };
 }
 
-function safeMonthlyDate(year: number, month: number, day: number) {
-  return new Date(year, month, Math.min(day, daysInMonth(year, month)));
-}
-
-function getRelevantDueDate(dueDay: number, today: Date, tomorrow: Date) {
-  if (dueDay === tomorrow.getDate()) return tomorrow;
-  return safeMonthlyDate(today.getFullYear(), today.getMonth(), dueDay);
+function monthlyDueDate(dueDay: number | null, todayKey: string) {
+  if (dueDay == null) return null;
+  const [year, month] = todayKey.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year, month, 0, 12)).getUTCDate();
+  return `${year}-${String(month).padStart(2, "0")}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`;
 }

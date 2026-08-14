@@ -93,6 +93,7 @@ export default function App({ onSignOut }: AppProps = {}) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [movementDraft, setMovementDraft] = useState<MovementDraft | null>(null);
   const [pendingRecurringPaymentId, setPendingRecurringPaymentId] = useState<string | null>(null);
+  const [focusedPaymentId, setFocusedPaymentId] = useState<string | null>(null);
   const [dataReady, setDataReady] = useState(false);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
@@ -151,11 +152,20 @@ export default function App({ onSignOut }: AppProps = {}) {
   }
 
   function navigate(nextView: string) {
+    setFocusedPaymentId(null);
     if (nextView !== "registrar-gasto" && nextView !== "registrar-ingreso") {
       setMovementDraft(null);
       setPendingRecurringPaymentId(null);
     }
     setView(nextView as View);
+    setMoreOpen(false);
+  }
+
+  function openPayment(id: string) {
+    setMovementDraft(null);
+    setPendingRecurringPaymentId(null);
+    setFocusedPaymentId(id);
+    setView("pagos");
     setMoreOpen(false);
   }
 
@@ -318,14 +328,20 @@ export default function App({ onSignOut }: AppProps = {}) {
     }
   }
 
-  async function markPaymentPaid(payment: RecurringPayment, shouldCreateExpense: boolean) {
+  async function markPaymentPaid(payment: RecurringPayment, actualAmount: number | null, shouldCreateExpense: boolean) {
     if (!ensureDataReady()) return;
 
+    const paymentAmount = actualAmount ?? payment.amount;
     if (shouldCreateExpense) {
+      if (paymentAmount === null || !Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+        window.alert("Ingresa un monto válido para registrar el pago.");
+        return;
+      }
+
       setMovementDraft({
         type: "egreso",
         date: localDateString(),
-        amount: payment.amount,
+        amount: paymentAmount,
         description: payment.name,
         category: payment.category,
       });
@@ -349,14 +365,14 @@ export default function App({ onSignOut }: AppProps = {}) {
     }
   }
 
-  async function deactivatePayment(id: string): Promise<boolean> {
+  async function setPaymentActive(id: string, isActive: boolean): Promise<boolean> {
     if (!ensureDataReady()) return false;
 
     const payment = data.recurringPayments.find((item) => item.id === id);
     if (!payment) return false;
 
     try {
-      const savedPayment = await setRecurringPaymentActive(payment, false);
+      const savedPayment = await setRecurringPaymentActive(payment, isActive);
       markRemoteSuccess();
       setData((current) => ({ ...current, recurringPayments: current.recurringPayments.map((item) => (item.id === savedPayment.id ? savedPayment : item)) }));
       return true;
@@ -365,10 +381,18 @@ export default function App({ onSignOut }: AppProps = {}) {
         window.alert("Este pago ya no existe o cambió desde otro dispositivo. Actualiza la información antes de continuar.");
       } else {
         markRemoteFailure();
-        window.alert("No se pudo desactivar el pago recurrente. Intenta nuevamente.");
+        window.alert(`${isActive ? "No se pudo reactivar" : "No se pudo archivar"} el pago recurrente. Intenta nuevamente.`);
       }
       return false;
     }
+  }
+
+  async function deactivatePayment(id: string) {
+    return setPaymentActive(id, false);
+  }
+
+  async function reactivatePayment(id: string) {
+    return setPaymentActive(id, true);
   }
 
   async function saveCategory(category: Omit<Category, "id" | "created_at">, id?: string): Promise<Category | null> {
@@ -482,19 +506,21 @@ export default function App({ onSignOut }: AppProps = {}) {
   }
 
   function markPaidForCurrentMonth(payment: RecurringPayment): RecurringPayment {
-    const now = new Date();
+    const paidDate = localDateString();
+    const [paidYear, paidMonth] = paidDate.split("-").map(Number);
     const paidInstallments =
       payment.recurrence_type === "fixed" && !isPaymentPaidThisMonth(payment) ? payment.paid_installments + 1 : payment.paid_installments;
     const updated: RecurringPayment = {
       ...payment,
       status: "pagado",
-      paidAt: now.toISOString(),
+      paidAt: new Date().toISOString(),
       paid_installments: paidInstallments,
-      last_paid_month: now.getMonth() + 1,
-      last_paid_year: now.getFullYear(),
+      last_paid_month: paidMonth,
+      last_paid_year: paidYear,
     };
 
-    return isPaymentFinished(updated) ? { ...updated, is_active: false } : updated;
+    const isCompleted = updated.recurrence_type === "one_time" || isPaymentFinished(updated);
+    return isCompleted ? { ...updated, is_active: false } : updated;
   }
 
   async function savePaidRecurringPayment(payment: RecurringPayment): Promise<RecurringPayment> {
@@ -562,7 +588,7 @@ export default function App({ onSignOut }: AppProps = {}) {
 
         <div className="p-4 lg:p-8">
           {view === "dashboard" && (
-            <Dashboard movements={data.movements} cashCounts={data.cashCounts} recurringPayments={data.recurringPayments} initialBalance={data.initialBalance} onNavigate={navigate} />
+            <Dashboard movements={data.movements} cashCounts={data.cashCounts} recurringPayments={data.recurringPayments} initialBalance={data.initialBalance} onNavigate={navigate} onOpenPayment={openPayment} />
           )}
           {(view === "registrar-ingreso" || view === "registrar-gasto") && (
             <MovementForm
@@ -604,9 +630,11 @@ export default function App({ onSignOut }: AppProps = {}) {
             <RecurringPayments
               payments={data.recurringPayments}
               categories={data.categories}
+              focusedPaymentId={focusedPaymentId}
               onSave={savePayment}
               onMarkPaid={markPaymentPaid}
               onDeactivate={deactivatePayment}
+              onReactivate={reactivatePayment}
             />
           )}
           {view === "reportes" && <Reports movements={data.movements} categories={data.categories} initialBalance={data.initialBalance} />}
