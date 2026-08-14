@@ -10,7 +10,7 @@ interface MovementFormProps {
   draft?: MovementDraft | null;
   categories: Category[];
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null;
-  onSave: (movement: Omit<Movement, "id">, id?: string) => void;
+  onSave: (movement: Omit<Movement, "id">, id?: string) => void | Promise<boolean>;
   onCancel?: () => void;
 }
 
@@ -28,6 +28,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryType, setNewCategoryType] = useState<CategoryType>(initialType);
+  const [isSaving, setIsSaving] = useState(false);
 
   const availableCategories = categories.filter((item) => item.is_active && (item.type === type || item.type === "ambos"));
 
@@ -56,29 +57,36 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
     }
   }, [availableCategories, category]);
 
-  function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (isSaving) return;
+
     const parsedAmount = Number(amount);
     if (!description.trim() || !person.trim() || !parsedAmount || parsedAmount <= 0) return;
 
-    onSave(
-      {
-        type,
-        date,
-        amount: parsedAmount,
-        description: description.trim(),
-        method,
-        category,
-        person: person.trim(),
-      },
-      movement?.id
-    );
+    setIsSaving(true);
+    try {
+      const saved = await onSave(
+        {
+          type,
+          date,
+          amount: parsedAmount,
+          description: description.trim(),
+          method,
+          category,
+          person: person.trim(),
+        },
+        movement?.id
+      );
 
-    if (!movement) {
-      setAmount("");
-      setDescription("");
-      setPerson("");
-      setCategoryTouched(false);
+      if (!movement && saved !== false) {
+        setAmount("");
+        setDescription("");
+        setPerson("");
+        setCategoryTouched(false);
+      }
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -173,12 +181,12 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
       </div>
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-        <button type="submit" className="flex min-h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-xl font-bold text-white hover:bg-blue-700">
+        <button disabled={isSaving} type="submit" className="flex min-h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-xl font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
           <Save className="h-6 w-6" />
-          Guardar
+          {isSaving ? "Guardando..." : "Guardar"}
         </button>
         {onCancel && (
-          <button type="button" onClick={onCancel} className="min-h-14 rounded-lg border border-slate-300 px-5 py-3 text-xl font-bold text-slate-700 hover:bg-slate-50">
+          <button disabled={isSaving} type="button" onClick={onCancel} className="min-h-14 rounded-lg border border-slate-300 px-5 py-3 text-xl font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60">
             Cancelar
           </button>
         )}

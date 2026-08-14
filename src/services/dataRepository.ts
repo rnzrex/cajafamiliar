@@ -2,9 +2,23 @@ import { AppData, CashCount, Category, Movement, RecurringPayment } from "../typ
 import { defaultData, loadData, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
-export async function loadAppData(): Promise<AppData> {
+export type AppDataLoadSource = "local" | "remote" | "migrated" | "fallback";
+
+export interface AppDataLoadResult {
+  data: AppData;
+  source: AppDataLoadSource;
+}
+
+export class MovementNotFoundError extends Error {
+  constructor() {
+    super("El movimiento no existe en Supabase.");
+    this.name = "MovementNotFoundError";
+  }
+}
+
+export async function loadAppData(): Promise<AppDataLoadResult> {
   const localData = loadData();
-  if (!isSupabaseConfigured || !supabase) return localData;
+  if (!isSupabaseConfigured || !supabase) return { data: localData, source: "local" };
 
   try {
     const [settingsResult, movementsResult, categoriesResult, countsResult, paymentsResult] = await Promise.all([
@@ -15,6 +29,9 @@ export async function loadAppData(): Promise<AppData> {
       supabase.from("recurring_payments").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
     ]);
 
+    const queryError = [settingsResult, movementsResult, categoriesResult, countsResult, paymentsResult].find((result) => result.error)?.error;
+    if (queryError) throw queryError;
+
     const hasRemoteData =
       (movementsResult.data?.length ?? 0) > 0 ||
       (categoriesResult.data?.length ?? 0) > 0 ||
@@ -24,7 +41,8 @@ export async function loadAppData(): Promise<AppData> {
 
     if (!hasRemoteData) {
       await saveAppData(localData);
-      return localData;
+      for (const movement of localData.movements) await createMovement(movement);
+      return { data: localData, source: "migrated" };
     }
 
     const remoteData = normalizeData({
@@ -36,11 +54,40 @@ export async function loadAppData(): Promise<AppData> {
     });
 
     saveData(remoteData);
-    return remoteData;
+    return { data: remoteData, source: "remote" };
   } catch (error) {
     console.warn("No se pudo cargar desde Supabase. Usando localStorage.", error);
-    return localData;
+    return { data: localData, source: "fallback" };
   }
+}
+
+export async function createMovement(movement: Movement) {
+  if (!isSupabaseConfigured || !supabase) return;
+
+  const { error } = await supabase.from("movements").insert(toMovementRow(movement));
+  if (error) throw error;
+}
+
+export async function updateMovement(movement: Movement) {
+  if (!isSupabaseConfigured || !supabase) return;
+
+  const { data, error } = await supabase
+    .from("movements")
+    .update(toMovementRow(movement))
+    .eq("id", movement.id)
+    .eq("household_id", householdId)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) throw new MovementNotFoundError();
+}
+
+export async function deleteMovement(id: string) {
+  if (!isSupabaseConfigured || !supabase) return;
+
+  const { error } = await supabase.from("movements").delete().eq("id", id).eq("household_id", householdId).select("id");
+  if (error) throw error;
 }
 
 export async function saveAppData(data: AppData) {
@@ -49,10 +96,14 @@ export async function saveAppData(data: AppData) {
   if (!isSupabaseConfigured || !supabase) return;
 
   try {
-    await supabase.from("households").upsert({ id: householdId, name: "Familia Ruiz Gallardo" });
-    await supabase.from("settings").upsert({ household_id: householdId, initial_balance: normalized.initialBalance, updated_at: new Date().toISOString() });
+    const { error: householdError } = await supabase.from("households").upsert({ id: householdId, name: "Familia Ruiz Gallardo" });
+    if (householdError) throw householdError;
 
-    await syncTable("movements", normalized.movements.map(toMovementRow), normalized.movements.map((item) => item.id));
+    const { error: settingsError } = await supabase
+      .from("settings")
+      .upsert({ household_id: householdId, initial_balance: normalized.initialBalance, updated_at: new Date().toISOString() });
+    if (settingsError) throw settingsError;
+
     await syncTable("categories", normalized.categories.map(toCategoryRow), normalized.categories.map((item) => item.id));
     await syncTable("cash_counts", normalized.cashCounts.map(toCashCountRow), normalized.cashCounts.map((item) => item.id));
     await syncTable(
@@ -67,10 +118,14 @@ export async function saveAppData(data: AppData) {
 
 async function syncTable(table: string, rows: Record<string, unknown>[], ids: string[]) {
   if (!supabase) return;
-  if (rows.length > 0) await supabase.from(table).upsert(rows);
+  if (rows.length > 0) {
+    const { error } = await supabase.from(table).upsert(rows);
+    if (error) throw error;
+  }
+
   const deleteQuery = supabase.from(table).delete().eq("household_id", householdId);
-  if (ids.length > 0) await deleteQuery.not("id", "in", `(${ids.map((id) => `"${id}"`).join(",")})`);
-  else await deleteQuery;
+  const deleteResult = ids.length > 0 ? await deleteQuery.not("id", "in", `(${ids.map((id) => `"${id}"`).join(",")})`) : await deleteQuery;
+  if (deleteResult.error) throw deleteResult.error;
 }
 
 function toMovementRow(movement: Movement) {

@@ -22,8 +22,8 @@ import { RecurringPayments } from "./components/RecurringPayments";
 import { Reports } from "./components/Reports";
 import { AppData, Category, Movement, MovementDraft, MovementType, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth } from "./utils/calculations";
-import { loadAppData, saveAppData } from "./services/dataRepository";
-import { makeId, loadData } from "./utils/storage";
+import { createMovement, deleteMovement as deleteRemoteMovement, loadAppData, MovementNotFoundError, saveAppData, updateMovement as updateRemoteMovement } from "./services/dataRepository";
+import { makeId, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
 
 type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "saldo-inicial";
@@ -58,18 +58,25 @@ export default function App() {
   const [movementDraft, setMovementDraft] = useState<MovementDraft | null>(null);
   const [pendingRecurringPaymentId, setPendingRecurringPaymentId] = useState<string | null>(null);
   const [dataReady, setDataReady] = useState(false);
+  const [remotePersistenceReady, setRemotePersistenceReady] = useState(false);
   const expected = useMemo(() => expectedCash(data.movements, data.initialBalance), [data.movements, data.initialBalance]);
 
   useEffect(() => {
-    loadAppData().then((loadedData) => {
+    loadAppData().then(({ data: loadedData, source }) => {
       setData(loadedData);
+      setRemotePersistenceReady(source !== "fallback");
+      if (source === "fallback") {
+        window.alert("No se pudo cargar la información desde Supabase. Se conservará la copia local y no se sincronizarán datos automáticamente.");
+      }
       setDataReady(true);
     });
   }, []);
 
   useEffect(() => {
-    if (dataReady) void saveAppData(data);
-  }, [data, dataReady]);
+    if (!dataReady) return;
+    if (remotePersistenceReady) void saveAppData(data);
+    else saveData(data);
+  }, [data, dataReady, remotePersistenceReady]);
 
   function navigate(nextView: string) {
     if (nextView !== "registrar-gasto" && nextView !== "registrar-ingreso") {
@@ -80,27 +87,67 @@ export default function App() {
     setMenuOpen(false);
   }
 
-  function saveMovement(movement: Omit<Movement, "id">, id?: string) {
+  async function saveMovement(movement: Omit<Movement, "id">, id?: string): Promise<boolean> {
+    if (!dataReady) {
+      window.alert("Los datos todavía se están cargando. Intenta nuevamente en unos segundos.");
+      return false;
+    }
+
+    const recurringPaymentId = pendingRecurringPaymentId;
+    const existingMovement = id ? data.movements.find((item) => item.id === id) : undefined;
+    const savedMovement: Movement = {
+      ...movement,
+      id: id ?? makeId("mov"),
+      createdAt: id ? existingMovement?.createdAt ?? new Date().toISOString() : new Date().toISOString(),
+    };
+
+    try {
+      if (id) await updateRemoteMovement(savedMovement);
+      else await createMovement(savedMovement);
+    } catch (error) {
+      if (error instanceof MovementNotFoundError) {
+        window.alert("Este movimiento ya no existe en la base de datos. Es posible que haya sido eliminado desde otro dispositivo. Actualiza la información antes de continuar.");
+        return false;
+      }
+      window.alert("No se pudo guardar el movimiento. No se realizó ningún cambio en tu caja. Intenta nuevamente.");
+      return false;
+    }
+
     setData((current) => ({
       ...current,
       movements: id
-        ? current.movements.map((item) => (item.id === id ? { ...movement, id } : item))
-        : [{ ...movement, id: makeId("mov"), createdAt: new Date().toISOString() }, ...current.movements],
-      recurringPayments: pendingRecurringPaymentId
+        ? current.movements.map((item) => (item.id === id ? savedMovement : item))
+        : [savedMovement, ...current.movements],
+      recurringPayments: recurringPaymentId
         ? current.recurringPayments.map((item) =>
-            item.id === pendingRecurringPaymentId ? markPaidForCurrentMonth(item) : item
+            item.id === recurringPaymentId ? markPaidForCurrentMonth(item) : item
           )
         : current.recurringPayments,
     }));
-    const shouldReturnToPayments = Boolean(pendingRecurringPaymentId);
+    const shouldReturnToPayments = Boolean(recurringPaymentId);
     setMovementDraft(null);
     setPendingRecurringPaymentId(null);
     setView(shouldReturnToPayments ? "pagos" : "movimientos");
+    return true;
   }
 
-  function deleteMovement(id: string) {
-    if (!window.confirm("Seguro que deseas eliminar este movimiento?")) return;
+  async function deleteMovement(id: string): Promise<boolean> {
+    if (!dataReady) {
+      window.alert("Los datos todavía se están cargando. Intenta nuevamente en unos segundos.");
+      return false;
+    }
+
+    if (!window.confirm("Seguro que deseas eliminar este movimiento?")) return false;
+
+    try {
+      await deleteRemoteMovement(id);
+    } catch {
+      window.alert("No se pudo eliminar el movimiento. No se realizó ningún cambio en tu caja. Intenta nuevamente.");
+      return false;
+    }
+
     setData((current) => ({ ...current, movements: current.movements.filter((movement) => movement.id !== id) }));
+    return true;
   }
 
   function savePayment(payment: Omit<RecurringPayment, "id">, id?: string) {
