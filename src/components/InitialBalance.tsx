@@ -4,15 +4,22 @@ import { formatMoney } from "../utils/calculations";
 
 interface InitialBalanceProps {
   initialBalance: number;
-  onSave: (value: number) => void;
+  onSave: (value: number) => void | Promise<boolean>;
 }
 
 export function InitialBalance({ initialBalance, onSave }: InitialBalanceProps) {
   const [value, setValue] = useState(initialBalance.toString());
+  const [isSaving, setIsSaving] = useState(false);
 
-  function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    onSave(Number(value) || 0);
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      await onSave(Number(value) || 0);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -25,9 +32,9 @@ export function InitialBalance({ initialBalance, onSave }: InitialBalanceProps) 
         Saldo actual configurado: {formatMoney(initialBalance)}
         <input type="number" min="0" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} className="h-14 w-full rounded-lg border border-slate-200 px-4 text-xl" />
       </label>
-      <button type="submit" className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-xl font-bold text-white hover:bg-blue-700 sm:w-auto">
+      <button disabled={isSaving} type="submit" className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-xl font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto">
         <Save className="h-6 w-6" />
-        Guardar saldo inicial
+        {isSaving ? "Guardando..." : "Guardar saldo inicial"}
       </button>
     </form>
   );

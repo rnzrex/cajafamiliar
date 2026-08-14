@@ -4,9 +4,9 @@ import { Category, CategoryType } from "../types";
 
 interface CategoriesManagerProps {
   categories: Category[];
-  onSave: (category: Omit<Category, "id" | "created_at">, id?: string) => Category | null;
-  onDelete: (id: string) => void;
-  onToggle: (id: string) => void;
+  onSave: (category: Omit<Category, "id" | "created_at">, id?: string) => Category | null | Promise<Category | null>;
+  onDelete: (id: string) => void | Promise<boolean>;
+  onToggle: (id: string) => void | Promise<boolean>;
 }
 
 const colorOptions = ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#7c3aed", "#0f766e", "#db2777", "#64748b"];
@@ -17,6 +17,8 @@ export function CategoriesManager({ categories, onSave, onDelete, onToggle }: Ca
   const [type, setType] = useState<CategoryType>("egreso");
   const [color, setColor] = useState(colorOptions[0]);
   const [icon, setIcon] = useState("tag");
+  const [isSaving, setIsSaving] = useState(false);
+  const [busyCategoryId, setBusyCategoryId] = useState<string | null>(null);
 
   function startEdit(category: Category) {
     setEditing(category);
@@ -34,10 +36,37 @@ export function CategoriesManager({ categories, onSave, onDelete, onToggle }: Ca
     setIcon("tag");
   }
 
-  function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    const saved = onSave({ name: name.trim(), type, color, icon: icon.trim(), is_active: editing?.is_active ?? true }, editing?.id);
-    if (saved) resetForm();
+    if (isSaving) return;
+
+    setIsSaving(true);
+    try {
+      const saved = await onSave({ name: name.trim(), type, color, icon: icon.trim(), is_active: editing?.is_active ?? true }, editing?.id);
+      if (saved) resetForm();
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleToggle(id: string) {
+    if (busyCategoryId) return;
+    setBusyCategoryId(id);
+    try {
+      await onToggle(id);
+    } finally {
+      setBusyCategoryId(null);
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (busyCategoryId) return;
+    setBusyCategoryId(id);
+    try {
+      await onDelete(id);
+    } finally {
+      setBusyCategoryId(null);
+    }
   }
 
   return (
@@ -82,9 +111,9 @@ export function CategoriesManager({ categories, onSave, onDelete, onToggle }: Ca
           </label>
 
           <div className="flex flex-col gap-3 sm:flex-row">
-            <button type="submit" className="flex min-h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-xl font-bold text-white hover:bg-blue-700">
+            <button disabled={isSaving} type="submit" className="flex min-h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-xl font-bold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
               <Save className="h-6 w-6" />
-              {editing ? "Guardar cambios" : "Crear categoria"}
+              {isSaving ? "Guardando..." : editing ? "Guardar cambios" : "Crear categoria"}
             </button>
             {editing && (
               <button type="button" onClick={resetForm} className="min-h-14 rounded-lg border border-slate-300 px-5 py-3 text-xl font-bold text-slate-700 hover:bg-slate-50">
@@ -115,13 +144,13 @@ export function CategoriesManager({ categories, onSave, onDelete, onToggle }: Ca
                     <Edit className="h-5 w-5" />
                     Editar
                   </button>
-                  <button type="button" onClick={() => onToggle(category.id)} className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-slate-200 px-4 py-2 text-lg font-bold text-slate-700 hover:bg-slate-300">
+                  <button disabled={busyCategoryId !== null} type="button" onClick={() => void handleToggle(category.id)} className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-slate-200 px-4 py-2 text-lg font-bold text-slate-700 hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-60">
                     <Power className="h-5 w-5" />
-                    {category.is_active ? "Desactivar" : "Activar"}
+                    {busyCategoryId === category.id ? "Guardando..." : category.is_active ? "Desactivar" : "Activar"}
                   </button>
-                  <button type="button" onClick={() => onDelete(category.id)} className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-red-100 px-4 py-2 text-lg font-bold text-red-700 hover:bg-red-200">
+                  <button disabled={busyCategoryId !== null} type="button" onClick={() => void handleDelete(category.id)} className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-red-100 px-4 py-2 text-lg font-bold text-red-700 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60">
                     <Trash2 className="h-5 w-5" />
-                    Eliminar
+                    {busyCategoryId === category.id ? "Guardando..." : "Eliminar"}
                   </button>
                 </div>
               </div>

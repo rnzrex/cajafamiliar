@@ -23,7 +23,27 @@ import { Reports } from "./components/Reports";
 import { Toast } from "./components/Toast";
 import { AppData, CashCount, Category, Movement, MovementDraft, MovementType, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth } from "./utils/calculations";
-import { createMovement, deleteMovement as deleteRemoteMovement, loadAppData, MovementNotFoundError, saveAppData, updateMovement as updateRemoteMovement } from "./services/dataRepository";
+import {
+  CategoryNotFoundError,
+  createCashCount,
+  createCategory,
+  createMovement,
+  createRecurringPayment,
+  deleteCategory as deleteRemoteCategory,
+  deleteMovement as deleteRemoteMovement,
+  getRecurringPayment,
+  loadAppData,
+  MovementNotFoundError,
+  RecurringPaymentConflictError,
+  RecurringPaymentNotFoundError,
+  setCategoryActive,
+  setRecurringPaymentActive,
+  updateCategoryDetails,
+  updateInitialBalance,
+  updateMovement as updateRemoteMovement,
+  updateRecurringPaymentDetails,
+  updateRecurringPaymentPaymentState,
+} from "./services/dataRepository";
 import { isSupabaseConfigured } from "./services/supabaseClient";
 import { makeId, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
@@ -68,7 +88,6 @@ export default function App() {
   const [movementDraft, setMovementDraft] = useState<MovementDraft | null>(null);
   const [pendingRecurringPaymentId, setPendingRecurringPaymentId] = useState<string | null>(null);
   const [dataReady, setDataReady] = useState(false);
-  const [remotePersistenceReady, setRemotePersistenceReady] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const expected = useMemo(() => expectedCash(data.movements, data.initialBalance), [data.movements, data.initialBalance]);
@@ -76,7 +95,6 @@ export default function App() {
   useEffect(() => {
     loadAppData().then(({ data: loadedData, source }) => {
       setData(loadedData);
-      setRemotePersistenceReady(source !== "fallback");
       setSyncStatus(source === "fallback" ? "offline" : source === "local" ? "local" : "connected");
       if (source === "fallback") {
         window.alert("No se pudo cargar la información desde Supabase. Se conservará la copia local y no se sincronizarán datos automáticamente.");
@@ -87,9 +105,8 @@ export default function App() {
 
   useEffect(() => {
     if (!dataReady) return;
-    if (remotePersistenceReady) void saveAppData(data);
-    else saveData(data);
-  }, [data, dataReady, remotePersistenceReady]);
+    saveData(data);
+  }, [data, dataReady]);
 
   useEffect(() => {
     if (!toast) return;
@@ -102,7 +119,11 @@ export default function App() {
   }
 
   function markRemoteSuccess() {
-    if (isSupabaseConfigured && remotePersistenceReady) setSyncStatus("connected");
+    if (isSupabaseConfigured) setSyncStatus("connected");
+  }
+
+  function markRemoteFailure() {
+    if (isSupabaseConfigured) setSyncStatus("offline");
   }
 
   function navigate(nextView: string) {
@@ -112,6 +133,12 @@ export default function App() {
     }
     setView(nextView as View);
     setMoreOpen(false);
+  }
+
+  function ensureDataReady() {
+    if (dataReady) return true;
+    window.alert("Los datos todavía se están cargando. Intenta nuevamente en unos segundos.");
+    return false;
   }
 
   async function saveMovement(movement: Omit<Movement, "id">, id?: string): Promise<boolean> {
@@ -142,21 +169,63 @@ export default function App() {
     }
 
     markRemoteSuccess();
+
+    if (recurringPaymentId) {
+      const payment = data.recurringPayments.find((item) => item.id === recurringPaymentId);
+      if (payment) {
+        try {
+          const savedPayment = await savePaidRecurringPayment(payment);
+          markRemoteSuccess();
+          setData((current) => ({
+            ...current,
+            movements: id
+              ? current.movements.map((item) => (item.id === id ? savedMovement : item))
+              : [savedMovement, ...current.movements],
+            recurringPayments: current.recurringPayments.map((item) => (item.id === savedPayment.id ? savedPayment : item)),
+          }));
+          setMovementDraft(null);
+          setPendingRecurringPaymentId(null);
+          setView("pagos");
+          showToast("Gasto guardado correctamente");
+          return true;
+        } catch (error) {
+          if (!(error instanceof RecurringPaymentNotFoundError) && !(error instanceof RecurringPaymentConflictError)) markRemoteFailure();
+          setData((current) => ({
+            ...current,
+            movements: id
+              ? current.movements.map((item) => (item.id === id ? savedMovement : item))
+              : [savedMovement, ...current.movements],
+          }));
+          setMovementDraft(null);
+          setPendingRecurringPaymentId(null);
+          setView("pagos");
+          window.alert("El gasto se registró correctamente, pero no se pudo marcar el pago recurrente como pagado. No vuelvas a registrar el gasto. Intenta marcar el pago como pagado sin crear otro egreso.");
+          return true;
+        }
+      }
+
+      setData((current) => ({
+        ...current,
+        movements: id
+          ? current.movements.map((item) => (item.id === id ? savedMovement : item))
+          : [savedMovement, ...current.movements],
+      }));
+      setMovementDraft(null);
+      setPendingRecurringPaymentId(null);
+      setView("pagos");
+      window.alert("El gasto se registró correctamente, pero no se encontró el pago recurrente para marcarlo como pagado. No vuelvas a registrar el gasto.");
+      return true;
+    }
+
     setData((current) => ({
       ...current,
       movements: id
         ? current.movements.map((item) => (item.id === id ? savedMovement : item))
         : [savedMovement, ...current.movements],
-      recurringPayments: recurringPaymentId
-        ? current.recurringPayments.map((item) =>
-            item.id === recurringPaymentId ? markPaidForCurrentMonth(item) : item
-          )
-        : current.recurringPayments,
     }));
-    const shouldReturnToPayments = Boolean(recurringPaymentId);
     setMovementDraft(null);
     setPendingRecurringPaymentId(null);
-    setView(shouldReturnToPayments ? "pagos" : "movimientos");
+    setView("movimientos");
     showToast(movement.type === "egreso" ? "Gasto guardado correctamente" : "Ingreso guardado correctamente");
     return true;
   }
@@ -183,21 +252,51 @@ export default function App() {
     return true;
   }
 
-  function saveCashCount(cashCount: Omit<CashCount, "id">) {
-    setData((current) => ({ ...current, cashCounts: [{ ...cashCount, id: makeId("count") }, ...current.cashCounts] }));
-    showToast("Conteo registrado en este dispositivo");
+  async function saveCashCount(cashCount: Omit<CashCount, "id">): Promise<boolean> {
+    if (!ensureDataReady()) return false;
+
+    const savedCount: CashCount = { ...cashCount, id: makeId("count") };
+    try {
+      const remoteCount = await createCashCount(savedCount);
+      markRemoteSuccess();
+      setData((current) => ({ ...current, cashCounts: [remoteCount, ...current.cashCounts] }));
+      showToast("Conteo guardado correctamente");
+      return true;
+    } catch {
+      markRemoteFailure();
+      window.alert("No se pudo guardar el conteo. No se realizó ningún cambio en tu caja. Intenta nuevamente.");
+      return false;
+    }
   }
 
-  function savePayment(payment: Omit<RecurringPayment, "id">, id?: string) {
-    setData((current) => ({
-      ...current,
-      recurringPayments: id
-        ? current.recurringPayments.map((item) => (item.id === id ? { ...payment, id } : item))
-        : [{ ...payment, id: makeId("pay") }, ...current.recurringPayments],
-    }));
+  async function savePayment(payment: Omit<RecurringPayment, "id">, id?: string): Promise<boolean> {
+    if (!ensureDataReady()) return false;
+
+    const savedPayment: RecurringPayment = { ...payment, id: id ?? makeId("pay") };
+    try {
+      const remotePayment = id ? await updateRecurringPaymentDetails(savedPayment) : await createRecurringPayment(savedPayment);
+      markRemoteSuccess();
+      setData((current) => ({
+        ...current,
+        recurringPayments: id
+          ? current.recurringPayments.map((item) => (item.id === remotePayment.id ? remotePayment : item))
+          : [remotePayment, ...current.recurringPayments],
+      }));
+      return true;
+    } catch (error) {
+      if (error instanceof RecurringPaymentNotFoundError) {
+        window.alert("Este pago ya no existe o cambió desde otro dispositivo. Actualiza la información antes de continuar.");
+      } else {
+        markRemoteFailure();
+        window.alert("No se pudo guardar el pago recurrente. Intenta nuevamente.");
+      }
+      return false;
+    }
   }
 
-  function markPaymentPaid(payment: RecurringPayment, shouldCreateExpense: boolean) {
+  async function markPaymentPaid(payment: RecurringPayment, shouldCreateExpense: boolean) {
+    if (!ensureDataReady()) return;
+
     if (shouldCreateExpense) {
       setMovementDraft({
         type: "egreso",
@@ -211,14 +310,46 @@ export default function App() {
       return;
     }
 
-    setData((current) => ({ ...current, recurringPayments: current.recurringPayments.map((item) => (item.id === payment.id ? markPaidForCurrentMonth(item) : item)) }));
+    try {
+      const savedPayment = await savePaidRecurringPayment(payment);
+      markRemoteSuccess();
+      setData((current) => ({ ...current, recurringPayments: current.recurringPayments.map((item) => (item.id === savedPayment.id ? savedPayment : item)) }));
+      showToast("Pago marcado como pagado");
+    } catch (error) {
+      if (error instanceof RecurringPaymentNotFoundError || error instanceof RecurringPaymentConflictError) {
+        window.alert("Este pago ya no existe o cambió desde otro dispositivo. Actualiza la información antes de continuar.");
+      } else {
+        markRemoteFailure();
+        window.alert("No se pudo marcar el pago como pagado. No se realizó ningún cambio en el pago. Intenta nuevamente.");
+      }
+    }
   }
 
-  function deactivatePayment(id: string) {
-    setData((current) => ({ ...current, recurringPayments: current.recurringPayments.map((item) => (item.id === id ? { ...item, is_active: false } : item)) }));
+  async function deactivatePayment(id: string): Promise<boolean> {
+    if (!ensureDataReady()) return false;
+
+    const payment = data.recurringPayments.find((item) => item.id === id);
+    if (!payment) return false;
+
+    try {
+      const savedPayment = await setRecurringPaymentActive(payment, false);
+      markRemoteSuccess();
+      setData((current) => ({ ...current, recurringPayments: current.recurringPayments.map((item) => (item.id === savedPayment.id ? savedPayment : item)) }));
+      return true;
+    } catch (error) {
+      if (error instanceof RecurringPaymentNotFoundError) {
+        window.alert("Este pago ya no existe o cambió desde otro dispositivo. Actualiza la información antes de continuar.");
+      } else {
+        markRemoteFailure();
+        window.alert("No se pudo desactivar el pago recurrente. Intenta nuevamente.");
+      }
+      return false;
+    }
   }
 
-  function saveCategory(category: Omit<Category, "id" | "created_at">, id?: string): Category | null {
+  async function saveCategory(category: Omit<Category, "id" | "created_at">, id?: string): Promise<Category | null> {
+    if (!ensureDataReady()) return null;
+
     const name = category.name.trim();
     if (!name) {
       window.alert("La categoria no puede estar vacia.");
@@ -238,28 +369,92 @@ export default function App() {
       created_at: id ? (data.categories.find((item) => item.id === id)?.created_at ?? new Date().toISOString()) : new Date().toISOString(),
     };
 
-    setData((current) => ({
-      ...current,
-      categories: id ? current.categories.map((item) => (item.id === id ? savedCategory : item)) : [savedCategory, ...current.categories],
-    }));
-
-    return savedCategory;
+    try {
+      const remoteCategory = id ? await updateCategoryDetails(savedCategory) : await createCategory(savedCategory);
+      markRemoteSuccess();
+      setData((current) => ({
+        ...current,
+        categories: id
+          ? current.categories.map((item) => (item.id === remoteCategory.id ? remoteCategory : item))
+          : [remoteCategory, ...current.categories],
+      }));
+      return remoteCategory;
+    } catch (error) {
+      if (error instanceof CategoryNotFoundError) {
+        window.alert("Esta categoría ya no existe. Es posible que haya sido eliminada desde otro dispositivo.");
+      } else {
+        markRemoteFailure();
+        window.alert("No se pudo guardar la categoría. Intenta nuevamente.");
+      }
+      return null;
+    }
   }
 
-  function deleteCategory(id: string) {
+  async function deleteCategory(id: string): Promise<boolean> {
+    if (!ensureDataReady()) return false;
+
     const category = data.categories.find((item) => item.id === id);
-    if (!category) return;
+    if (!category) return false;
     const hasMovements = data.movements.some((movement) => normalizeName(movement.category) === normalizeName(category.name));
     if (hasMovements) {
       window.alert("No puedes eliminar esta categoria porque ya tiene movimientos registrados. Puedes desactivarla.");
-      return;
+      return false;
     }
-    if (!window.confirm("Seguro que deseas eliminar esta categoria?")) return;
-    setData((current) => ({ ...current, categories: current.categories.filter((item) => item.id !== id) }));
+    if (!window.confirm("Seguro que deseas eliminar esta categoria?")) return false;
+
+    try {
+      await deleteRemoteCategory(id);
+      markRemoteSuccess();
+      setData((current) => ({ ...current, categories: current.categories.filter((item) => item.id !== id) }));
+      return true;
+    } catch {
+      markRemoteFailure();
+      window.alert("No se pudo eliminar la categoría. No se realizó ningún cambio. Intenta nuevamente.");
+      return false;
+    }
   }
 
-  function toggleCategory(id: string) {
-    setData((current) => ({ ...current, categories: current.categories.map((item) => (item.id === id ? { ...item, is_active: !item.is_active } : item)) }));
+  async function toggleCategory(id: string): Promise<boolean> {
+    if (!ensureDataReady()) return false;
+
+    const category = data.categories.find((item) => item.id === id);
+    if (!category) return false;
+
+    try {
+      const remoteCategory = await setCategoryActive(category, !category.is_active);
+      markRemoteSuccess();
+      setData((current) => ({ ...current, categories: current.categories.map((item) => (item.id === remoteCategory.id ? remoteCategory : item)) }));
+      return true;
+    } catch (error) {
+      if (error instanceof CategoryNotFoundError) {
+        window.alert("Esta categoría ya no existe. Es posible que haya sido eliminada desde otro dispositivo.");
+      } else {
+        markRemoteFailure();
+        window.alert("No se pudo cambiar el estado de la categoría. Intenta nuevamente.");
+      }
+      return false;
+    }
+  }
+
+  async function saveInitialBalance(value: number): Promise<boolean> {
+    if (!ensureDataReady()) return false;
+
+    if (!Number.isFinite(value) || value < 0) {
+      window.alert("Ingresa un saldo inicial válido.");
+      return false;
+    }
+
+    try {
+      const savedValue = await updateInitialBalance(value);
+      markRemoteSuccess();
+      setData((current) => ({ ...current, initialBalance: savedValue }));
+      showToast("Saldo inicial actualizado");
+      return true;
+    } catch {
+      markRemoteFailure();
+      window.alert("No se pudo guardar el saldo inicial. No se realizó ningún cambio. Intenta nuevamente.");
+      return false;
+    }
   }
 
   function markPaidForCurrentMonth(payment: RecurringPayment): RecurringPayment {
@@ -276,6 +471,11 @@ export default function App() {
     };
 
     return isPaymentFinished(updated) ? { ...updated, is_active: false } : updated;
+  }
+
+  async function savePaidRecurringPayment(payment: RecurringPayment): Promise<RecurringPayment> {
+    const currentPayment = (await getRecurringPayment(payment.id)) ?? payment;
+    return updateRecurringPaymentPaymentState(markPaidForCurrentMonth(currentPayment), currentPayment);
   }
 
   const initialType: MovementType = view === "registrar-ingreso" ? "ingreso" : "egreso";
@@ -379,7 +579,7 @@ export default function App() {
           )}
           {view === "reportes" && <Reports movements={data.movements} categories={data.categories} initialBalance={data.initialBalance} />}
           {view === "categorias" && <CategoriesManager categories={data.categories} onSave={saveCategory} onDelete={deleteCategory} onToggle={toggleCategory} />}
-          {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={(value) => setData((current) => ({ ...current, initialBalance: value }))} />}
+          {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={saveInitialBalance} />}
         </div>
       </main>
 

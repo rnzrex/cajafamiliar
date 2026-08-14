@@ -6,9 +6,9 @@ import { formatMoney, installmentLabel, paymentStatus } from "../utils/calculati
 interface RecurringPaymentsProps {
   payments: RecurringPayment[];
   categories: Category[];
-  onSave: (payment: Omit<RecurringPayment, "id">, id?: string) => void;
-  onMarkPaid: (payment: RecurringPayment, shouldCreateExpense: boolean) => void;
-  onDeactivate: (id: string) => void;
+  onSave: (payment: Omit<RecurringPayment, "id">, id?: string) => void | Promise<boolean>;
+  onMarkPaid: (payment: RecurringPayment, shouldCreateExpense: boolean) => void | Promise<void>;
+  onDeactivate: (id: string) => void | Promise<boolean>;
 }
 
 export function RecurringPayments({ payments, categories, onSave, onMarkPaid, onDeactivate }: RecurringPaymentsProps) {
@@ -20,30 +20,60 @@ export function RecurringPayments({ payments, categories, onSave, onMarkPaid, on
   const [notes, setNotes] = useState("");
   const [recurrenceType, setRecurrenceType] = useState<RecurrenceType>("indefinite");
   const [totalInstallments, setTotalInstallments] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+  const [busyPaymentId, setBusyPaymentId] = useState<string | null>(null);
 
-  function handleSubmit(event: FormEvent) {
+  async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (isSaving) return;
     if (!name.trim() || Number(amount) <= 0) return;
     if (recurrenceType === "fixed" && Number(totalInstallments) <= 0) return;
-    onSave(
-      {
-        name: name.trim(),
-        amount: Number(amount),
-        dueDay: Number(dueDay),
-        category,
-        status: "pendiente",
-        notes,
-        recurrence_type: recurrenceType,
-        total_installments: recurrenceType === "fixed" ? Number(totalInstallments) : null,
-        paid_installments: editing?.paid_installments ?? 0,
-        is_active: editing?.is_active ?? true,
-        last_paid_month: editing?.last_paid_month ?? null,
-        last_paid_year: editing?.last_paid_year ?? null,
-        paidAt: editing?.paidAt,
-      },
-      editing?.id
-    );
-    resetForm();
+
+    setIsSaving(true);
+    try {
+      const saved = await onSave(
+        {
+          name: name.trim(),
+          amount: Number(amount),
+          dueDay: Number(dueDay),
+          category,
+          status: editing?.status ?? "pendiente",
+          notes,
+          recurrence_type: recurrenceType,
+          total_installments: recurrenceType === "fixed" ? Number(totalInstallments) : null,
+          paid_installments: editing?.paid_installments ?? 0,
+          is_active: editing?.is_active ?? true,
+          last_paid_month: editing?.last_paid_month ?? null,
+          last_paid_year: editing?.last_paid_year ?? null,
+          paidAt: editing?.paidAt,
+        },
+        editing?.id
+      );
+      if (saved !== false) resetForm();
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleMarkPaid(payment: RecurringPayment) {
+    if (busyPaymentId) return;
+    const shouldCreateExpense = window.confirm("Deseas registrar este pago como egreso?");
+    setBusyPaymentId(payment.id);
+    try {
+      await onMarkPaid(payment, shouldCreateExpense);
+    } finally {
+      setBusyPaymentId(null);
+    }
+  }
+
+  async function handleDeactivate(payment: RecurringPayment) {
+    if (busyPaymentId || !window.confirm("Deseas desactivar este pago recurrente?")) return;
+    setBusyPaymentId(payment.id);
+    try {
+      await onDeactivate(payment.id);
+    } finally {
+      setBusyPaymentId(null);
+    }
   }
 
   function startEdit(payment: RecurringPayment) {
@@ -129,9 +159,9 @@ export function RecurringPayments({ payments, categories, onSave, onMarkPaid, on
             </label>
           )}
           <div className="flex flex-col gap-3 sm:flex-row">
-            <button type="submit" className="flex min-h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-orange-500 px-5 py-3 text-xl font-bold text-white hover:bg-orange-600">
+            <button disabled={isSaving} type="submit" className="flex min-h-14 flex-1 items-center justify-center gap-2 rounded-lg bg-orange-500 px-5 py-3 text-xl font-bold text-white hover:bg-orange-600 disabled:cursor-not-allowed disabled:opacity-60">
               <Save className="h-6 w-6" />
-              {editing ? "Guardar cambios" : "Guardar pago"}
+              {isSaving ? "Guardando..." : editing ? "Guardar cambios" : "Guardar pago"}
             </button>
             {editing && (
               <button type="button" onClick={resetForm} className="min-h-14 rounded-lg border border-slate-300 px-5 py-3 text-xl font-bold text-slate-700 hover:bg-slate-50">
@@ -183,11 +213,9 @@ export function RecurringPayments({ payments, categories, onSave, onMarkPaid, on
                     {payment.is_active && status.tone !== "green" && (
                       <button
                         type="button"
-                        onClick={() => {
-                          const shouldCreateExpense = window.confirm("Deseas registrar este pago como egreso?");
-                          onMarkPaid(payment, shouldCreateExpense);
-                        }}
-                        className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-lg font-bold text-white hover:bg-green-700"
+                        disabled={busyPaymentId !== null}
+                        onClick={() => void handleMarkPaid(payment)}
+                        className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-lg font-bold text-white hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <CheckCircle className="h-5 w-5" />
                         Marcar pagado
@@ -200,13 +228,12 @@ export function RecurringPayments({ payments, categories, onSave, onMarkPaid, on
                     {payment.is_active && (
                       <button
                         type="button"
-                        onClick={() => {
-                          if (window.confirm("Deseas desactivar este pago recurrente?")) onDeactivate(payment.id);
-                        }}
-                        className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-slate-200 px-4 py-2 text-lg font-bold text-slate-700 hover:bg-slate-300"
+                        disabled={busyPaymentId !== null}
+                        onClick={() => void handleDeactivate(payment)}
+                        className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-slate-200 px-4 py-2 text-lg font-bold text-slate-700 hover:bg-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <Power className="h-5 w-5" />
-                        Desactivar
+                        {busyPaymentId === payment.id ? "Guardando..." : "Desactivar"}
                       </button>
                     )}
                   </div>

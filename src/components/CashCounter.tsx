@@ -11,23 +11,30 @@ interface CashCounterProps {
   movements: Movement[];
   initialBalance: number;
   cashCounts: CashCount[];
-  onSave: (cashCount: Omit<CashCount, "id">) => void;
+  onSave: (cashCount: Omit<CashCount, "id">) => void | Promise<boolean>;
 }
 
 export function CashCounter({ movements, initialBalance, cashCounts, onSave }: CashCounterProps) {
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [isSaving, setIsSaving] = useState(false);
   const expected = expectedCash(movements, initialBalance);
   const total = useMemo(() => denominations.reduce((sum, denomination) => sum + denomination * (counts[denomination] ?? 0), 0), [counts]);
   const difference = total - expected;
 
-  function saveCount() {
-    onSave({
-      createdAt: new Date().toISOString(),
-      denominations: counts,
-      total,
-      expected,
-      difference,
-    });
+  async function saveCount() {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      await onSave({
+        createdAt: new Date().toISOString(),
+        denominations: counts,
+        total,
+        expected,
+        difference,
+      });
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   const message =
@@ -95,9 +102,9 @@ export function CashCounter({ movements, initialBalance, cashCounts, onSave }: C
           <div className={`rounded-2xl p-4 text-lg font-black ${message.className}`}>{message.text}</div>
         </div>
 
-        <button type="button" onClick={saveCount} className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-xl font-black text-white hover:bg-blue-700 sm:w-auto">
+        <button disabled={isSaving} type="button" onClick={() => void saveCount()} className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-xl font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto">
           <Save className="h-6 w-6" />
-          Guardar conteo
+          {isSaving ? "Guardando..." : "Guardar conteo"}
         </button>
       </div>
 
