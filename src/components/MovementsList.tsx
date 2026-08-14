@@ -10,13 +10,14 @@ interface MovementsListProps {
   movements: Movement[];
   categories: Category[];
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null;
-  onSave: (movement: Omit<Movement, "id">, id?: string) => void;
-  onDelete: (id: string) => void;
+  onSave: (movement: Omit<Movement, "id">, id?: string) => void | Promise<boolean>;
+  onDelete: (id: string) => void | Promise<boolean>;
 }
 
 export function MovementsList({ movements, categories, onQuickCreateCategory, onSave, onDelete }: MovementsListProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
   const [editing, setEditing] = useState<Movement | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const filtered = useMemo(() => filterMovements(movements, filters), [movements, filters]);
 
@@ -26,9 +27,11 @@ export function MovementsList({ movements, categories, onQuickCreateCategory, on
         movement={editing}
         categories={categories}
         onQuickCreateCategory={onQuickCreateCategory}
-        onSave={(movement, id) => {
-          onSave(movement, id);
-          setEditing(null);
+        onSave={async (movement, id) => {
+          const saved = await onSave(movement, id);
+          const succeeded = saved !== false;
+          if (succeeded) setEditing(null);
+          return succeeded;
         }}
         onCancel={() => setEditing(null)}
       />
@@ -152,7 +155,21 @@ export function MovementsList({ movements, categories, onQuickCreateCategory, on
                     <button type="button" title="Editar" onClick={() => setEditing(movement)} className="rounded-lg bg-blue-100 p-3 text-blue-700 hover:bg-blue-200">
                       <Edit className="h-5 w-5" />
                     </button>
-                    <button type="button" title="Eliminar" onClick={() => onDelete(movement.id)} className="rounded-lg bg-red-100 p-3 text-red-700 hover:bg-red-200">
+                    <button
+                      disabled={deletingId !== null}
+                      type="button"
+                      title={deletingId === movement.id ? "Eliminando" : "Eliminar"}
+                      onClick={async () => {
+                        if (deletingId !== null) return;
+                        setDeletingId(movement.id);
+                        try {
+                          await onDelete(movement.id);
+                        } finally {
+                          setDeletingId(null);
+                        }
+                      }}
+                      className="rounded-lg bg-red-100 p-3 text-red-700 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
                       <Trash2 className="h-5 w-5" />
                     </button>
                   </div>
