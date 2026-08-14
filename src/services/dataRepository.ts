@@ -2,11 +2,18 @@ import { AppData, CashCount, Category, Movement, RecurringPayment } from "../typ
 import { defaultData, loadData, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
-export type AppDataLoadSource = "local" | "remote" | "migrated" | "fallback";
+export type AppDataLoadSource = "local" | "remote" | "fallback";
 
 export interface AppDataLoadResult {
   data: AppData;
   source: AppDataLoadSource;
+}
+
+export class HouseholdNotProvisionedError extends Error {
+  constructor() {
+    super("El household no está provisionado en Supabase.");
+    this.name = "HouseholdNotProvisionedError";
+  }
 }
 
 export class MovementNotFoundError extends Error {
@@ -39,10 +46,7 @@ export async function loadAppData(): Promise<AppDataLoadResult> {
       (paymentsResult.data?.length ?? 0) > 0 ||
       Boolean(settingsResult.data);
 
-    if (!hasRemoteData) {
-      await migrateInitialDataToEmptyRemote(localData);
-      return { data: localData, source: "migrated" };
-    }
+    if (!hasRemoteData) throw new HouseholdNotProvisionedError();
 
     const remoteData = normalizeData({
       initialBalance: Number(settingsResult.data?.initial_balance ?? defaultData.initialBalance),
@@ -55,6 +59,7 @@ export async function loadAppData(): Promise<AppDataLoadResult> {
     saveData(remoteData);
     return { data: remoteData, source: "remote" };
   } catch (error) {
+    if (error instanceof HouseholdNotProvisionedError) throw error;
     console.warn("No se pudo cargar desde Supabase. Usando localStorage.", error);
     return { data: localData, source: "fallback" };
   }
@@ -79,29 +84,6 @@ export class RecurringPaymentConflictError extends Error {
     super("El pago recurrente cambió antes de completar la actualización.");
     this.name = "RecurringPaymentConflictError";
   }
-}
-
-export async function migrateInitialDataToEmptyRemote(data: AppData) {
-  if (!isSupabaseConfigured || !supabase) return;
-
-  const { error: householdError } = await supabase.from("households").upsert({ id: householdId, name: "Familia Ruiz Gallardo" });
-  if (householdError) throw householdError;
-
-  const { error: settingsError } = await supabase
-    .from("settings")
-    .upsert({ household_id: householdId, initial_balance: data.initialBalance, updated_at: new Date().toISOString() });
-  if (settingsError) throw settingsError;
-
-  if (data.categories.length > 0) await upsertInitialRows("categories", data.categories.map(toCategoryRow));
-  if (data.cashCounts.length > 0) await upsertInitialRows("cash_counts", data.cashCounts.map(toCashCountRow));
-  if (data.recurringPayments.length > 0) await upsertInitialRows("recurring_payments", data.recurringPayments.map(toRecurringPaymentRow));
-  for (const movement of data.movements) await createMovement(movement);
-}
-
-async function upsertInitialRows(table: string, rows: Record<string, unknown>[]) {
-  if (!supabase || rows.length === 0) return;
-  const { error } = await supabase.from(table).upsert(rows);
-  if (error) throw error;
 }
 
 export async function createMovement(movement: Movement) {

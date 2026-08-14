@@ -150,6 +150,15 @@ export function saveData(data: AppData) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
+export function clearLocalAppData() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(PREFERRED_PERSON_KEY);
+  } catch {
+    // Local cache cleanup must not prevent logout from completing.
+  }
+}
+
 export interface PreferredPerson {
   value: string;
   isCustom: boolean;
