@@ -2,9 +2,10 @@ import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import App from "../App";
 import { householdId, isSupabaseConfigured, supabase } from "../services/supabaseClient";
+import type { HouseholdMember } from "../types";
 import { clearLocalAppData } from "../utils/storage";
 
-type MembershipState = "idle" | "checking" | "authorized" | "denied" | "error";
+type MembershipState = "idle" | "checking" | "authorized" | "denied" | "provisioning" | "error";
 
 export function AuthGate() {
   if (!isSupabaseConfigured || !supabase) return <App />;
@@ -19,6 +20,7 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
   const [membershipState, setMembershipState] = useState<MembershipState>("idle");
   const [membershipError, setMembershipError] = useState<string | null>(null);
   const [membershipAttempt, setMembershipAttempt] = useState(0);
+  const [currentMember, setCurrentMember] = useState<HouseholdMember | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -57,6 +59,7 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
       if (nextSession?.user.id !== sessionUserId.current) {
         clearLocalAppData();
         setMembershipState(nextSession ? "checking" : "idle");
+        setCurrentMember(null);
       }
       sessionUserId.current = nextSession?.user.id ?? null;
       setSession(nextSession);
@@ -76,16 +79,18 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
     if (!session || !currentUserId) {
       setMembershipState("idle");
       setMembershipError(null);
+      setCurrentMember(null);
       return;
     }
 
     let active = true;
     setMembershipState("checking");
     setMembershipError(null);
+    setCurrentMember(null);
 
     void client
       .from("household_members")
-      .select("household_id")
+      .select("household_id,user_id,role,display_name")
       .eq("household_id", householdId)
       .eq("user_id", currentUserId)
       .maybeSingle()
@@ -97,7 +102,17 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
         } else if (!data) {
           clearLocalAppData();
           setMembershipState("denied");
+        } else if (typeof data.display_name !== "string" || !data.display_name.trim()) {
+          setCurrentMember(null);
+          setMembershipError("Tu cuenta tiene acceso, pero falta configurar display_name. Un administrador debe completar el provisioning antes de usar Caja Familiar.");
+          setMembershipState("provisioning");
         } else {
+          setCurrentMember({
+            householdId: data.household_id,
+            userId: data.user_id,
+            displayName: data.display_name.trim(),
+            role: data.role === "owner" ? "owner" : "member",
+          });
           setMembershipState("authorized");
         }
       });
@@ -151,6 +166,7 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
 
     clearLocalAppData();
     setSession(null);
+    setCurrentMember(null);
     setMembershipState("idle");
     setIsSigningOut(false);
   }
@@ -176,6 +192,19 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
   if (membershipState === "denied") {
     return <GateMessage title="Caja Familiar" message="Esta cuenta no tiene acceso a Caja Familiar." actionLabel="Cerrar sesión" onAction={() => void handleSignOut()} actionDisabled={isSigningOut} />;
   }
+  if (membershipState === "provisioning") {
+    return (
+      <GateMessage
+        title="Caja Familiar"
+        message={membershipError ?? "Falta completar el provisioning de esta cuenta."}
+        actionLabel="Reintentar"
+        onAction={retryMembership}
+        secondaryLabel="Cerrar sesión"
+        onSecondary={() => void handleSignOut()}
+        actionDisabled={isSigningOut}
+      />
+    );
+  }
   if (membershipState === "error") {
     return (
       <GateMessage
@@ -190,7 +219,7 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
     );
   }
 
-  if (membershipState === "authorized") return <App onSignOut={handleSignOut} />;
+  if (membershipState === "authorized" && currentMember) return <App currentMember={currentMember} onSignOut={handleSignOut} />;
   return <GateMessage title="Caja Familiar" message="Verificando acceso..." />;
 }
 

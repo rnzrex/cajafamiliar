@@ -22,7 +22,7 @@ import { MovementsList } from "./components/MovementsList";
 import { RecurringPayments } from "./components/RecurringPayments";
 import { Reports } from "./components/Reports";
 import { Toast } from "./components/Toast";
-import { AppData, CashCount, Category, Movement, MovementDraft, MovementType, RecurringPayment } from "./types";
+import { AppData, CashCount, Category, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth } from "./utils/calculations";
 import {
   CategoryNotFoundError,
@@ -54,6 +54,7 @@ type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos
 type SyncStatus = "loading" | "connected" | "local" | "offline";
 
 interface AppProps {
+  currentMember?: HouseholdMember;
   onSignOut?: () => void | Promise<void>;
 }
 
@@ -87,7 +88,7 @@ const titles: Record<View, string> = {
   "saldo-inicial": "Saldo inicial",
 };
 
-export default function App({ onSignOut }: AppProps = {}) {
+export default function App({ currentMember, onSignOut }: AppProps = {}) {
   const [data, setData] = useState<AppData>(() => loadData());
   const [view, setView] = useState<View>("dashboard");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -175,7 +176,7 @@ export default function App({ onSignOut }: AppProps = {}) {
     return false;
   }
 
-  async function saveMovement(movement: Omit<Movement, "id">, id?: string): Promise<boolean> {
+  async function saveMovement(movement: MovementFormInput, id?: string): Promise<boolean> {
     if (!dataReady) {
       window.alert("Los datos todavía se están cargando. Intenta nuevamente en unos segundos.");
       return false;
@@ -183,9 +184,17 @@ export default function App({ onSignOut }: AppProps = {}) {
 
     const recurringPaymentId = pendingRecurringPaymentId;
     const existingMovement = id ? data.movements.find((item) => item.id === id) : undefined;
+    const person = existingMovement?.person ?? currentMember?.displayName ?? movement.person ?? "";
+    if (!person.trim()) {
+      window.alert("No se pudo determinar quién registra el movimiento. Verifica el provisioning de tu cuenta.");
+      return false;
+    }
+
     const savedMovement: Movement = {
       ...movement,
       id: id ?? makeId("mov"),
+      person,
+      registeredByUserId: existingMovement?.registeredByUserId ?? currentMember?.userId ?? null,
       createdAt: id ? existingMovement?.createdAt ?? new Date().toISOString() : new Date().toISOString(),
     };
 
@@ -582,7 +591,10 @@ export default function App({ onSignOut }: AppProps = {}) {
               <h1 className="text-3xl font-bold text-slate-900">{titles[view]}</h1>
               <p className="text-slate-600">Las finanzas de la familia en un solo lugar.</p>
             </div>
-            <SyncStatus status={syncStatus} />
+            <div className="flex flex-wrap items-center gap-3">
+              {currentMember && <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-800">Sesión: {currentMember.displayName}</span>}
+              <SyncStatus status={syncStatus} />
+            </div>
           </div>
         </header>
 
@@ -595,6 +607,7 @@ export default function App({ onSignOut }: AppProps = {}) {
               key={view}
               initialType={initialType}
               draft={movementDraft}
+              currentMember={currentMember}
               categories={data.categories}
               onQuickCreateCategory={saveCategory}
               onSave={saveMovement}
@@ -613,6 +626,7 @@ export default function App({ onSignOut }: AppProps = {}) {
             <MovementsList
               movements={data.movements}
               categories={data.categories}
+              currentMember={currentMember}
               onQuickCreateCategory={saveCategory}
               onSave={saveMovement}
               onDelete={deleteMovement}

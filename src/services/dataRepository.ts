@@ -98,7 +98,14 @@ export async function updateMovement(movement: Movement) {
 
   const { data, error } = await supabase
     .from("movements")
-    .update(toMovementRow(movement))
+    .update({
+      type: movement.type,
+      date: movement.date,
+      amount: movement.amount,
+      description: movement.description,
+      method: movement.method,
+      category: movement.category,
+    })
     .eq("id", movement.id)
     .eq("household_id", householdId)
     .select("id")
@@ -291,6 +298,7 @@ function toMovementRow(movement: Movement) {
     method: movement.method,
     category: movement.category,
     person: movement.person,
+    registered_by_user_id: movement.registeredByUserId ?? null,
     created_at: movement.createdAt ?? new Date().toISOString(),
   };
 }
@@ -305,6 +313,7 @@ function fromMovementRow(row: Record<string, any>): Movement {
     method: row.method,
     category: row.category,
     person: row.person,
+    registeredByUserId: row.registered_by_user_id ?? null,
     createdAt: row.created_at,
   };
 }

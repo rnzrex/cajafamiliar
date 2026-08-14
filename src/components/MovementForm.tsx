@@ -1,6 +1,6 @@
 import { CalendarDays, Plus, Save, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { Category, CategoryType, Movement, MovementDraft, MovementType, paymentMethods, PaymentMethod } from "../types";
+import { Category, CategoryType, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, paymentMethods, PaymentMethod } from "../types";
 import { detectCategory } from "../utils/categoryDetector";
 import { localDateString } from "../utils/date";
 import { loadPreferredPerson, savePreferredPerson } from "../utils/storage";
@@ -9,9 +9,10 @@ interface MovementFormProps {
   initialType?: MovementType;
   movement?: Movement | null;
   draft?: MovementDraft | null;
+  currentMember?: HouseholdMember;
   categories: Category[];
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
-  onSave: (movement: Omit<Movement, "id">, id?: string) => void | Promise<boolean>;
+  onSave: (movement: MovementFormInput, id?: string) => void | Promise<boolean>;
   onCancel?: () => void;
 }
 
@@ -32,15 +33,15 @@ const methodLabels: Record<PaymentMethod, string> = {
   tarjeta: "Tarjeta",
 };
 
-export function MovementForm({ initialType = "egreso", movement, draft, categories, onQuickCreateCategory, onSave, onCancel }: MovementFormProps) {
+export function MovementForm({ initialType = "egreso", movement, draft, currentMember, categories, onQuickCreateCategory, onSave, onCancel }: MovementFormProps) {
   const [type, setType] = useState<MovementType>(movement?.type ?? draft?.type ?? initialType);
   const [date, setDate] = useState(movement?.date ?? draft?.date ?? today());
   const [amount, setAmount] = useState(movement?.amount.toString() ?? draft?.amount?.toString() ?? "");
   const [description, setDescription] = useState(movement?.description ?? draft?.description ?? "");
   const [method, setMethod] = useState<PaymentMethod>(movement?.method ?? draft?.method ?? "efectivo");
   const [category, setCategory] = useState(movement?.category ?? draft?.category ?? "Otros");
-  const [person, setPerson] = useState(() => initialPersonValue(movement, draft));
-  const [personChoice, setPersonChoice] = useState<PersonChoice>(() => initialPersonChoice(movement, draft));
+  const [person, setPerson] = useState(() => initialPersonValue(movement, draft, currentMember));
+  const [personChoice, setPersonChoice] = useState<PersonChoice>(() => initialPersonChoice(movement, draft, currentMember));
   const [categoryTouched, setCategoryTouched] = useState(Boolean(movement || draft?.category));
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [showCategorySelector, setShowCategorySelector] = useState(Boolean(movement));
@@ -55,7 +56,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
   const dateLabel = date === today() ? "Hoy" : formatDateLabel(date);
 
   useEffect(() => {
-    const nextPerson = initialPersonValue(movement, draft);
+    const nextPerson = initialPersonValue(movement, draft, currentMember);
     const nextDate = movement?.date ?? draft?.date ?? today();
     setType(movement?.type ?? draft?.type ?? initialType);
     setDate(nextDate);
@@ -64,11 +65,11 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
     setMethod(movement?.method ?? draft?.method ?? "efectivo");
     setCategory(movement?.category ?? draft?.category ?? "Otros");
     setPerson(nextPerson);
-    setPersonChoice(initialPersonChoice(movement, draft));
+    setPersonChoice(initialPersonChoice(movement, draft, currentMember));
     setCategoryTouched(Boolean(movement || draft?.category));
     setShowCategorySelector(Boolean(movement));
     setShowDatePicker(Boolean(movement) || nextDate !== today());
-  }, [draft, initialType, movement]);
+  }, [currentMember, draft, initialType, movement]);
 
   useEffect(() => {
     if (!categoryTouched) {
@@ -114,19 +115,19 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
           description: description.trim(),
           method,
           category,
-          person: person.trim(),
+          ...(currentMember ? {} : { person: person.trim() }),
         },
         movement?.id
       );
 
       if (saved === false) return;
-      savePreferredPerson(person, personChoice === "Otro");
+      if (!currentMember) savePreferredPerson(person, personChoice === "Otro");
 
       if (!movement) {
         setAmount("");
         setDescription("");
         setPersonChoice("");
-        setPerson("");
+        setPerson(currentMember?.displayName ?? "");
         setCategoryTouched(false);
       }
     } finally {
@@ -135,6 +136,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
   }
 
   function handlePersonChoice(choice: PersonChoice) {
+    if (currentMember) return;
     setPersonChoice(choice);
     if (choice === "Otro" || choice === "") {
       setPerson("");
@@ -258,44 +260,52 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
             </div>
           </fieldset>
 
-          <fieldset className="space-y-2" aria-invalid={validationError?.field === "person"} aria-describedby={validationError?.field === "person" ? "movement-form-error" : undefined}>
-            <legend className="text-base font-bold text-slate-700">Registrado por</legend>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {knownPeople.map((item) => (
+          {currentMember ? (
+            <section className="rounded-2xl border border-blue-100 bg-blue-50 p-4" aria-label="Autor del movimiento">
+              <p className="text-sm font-bold uppercase tracking-wide text-blue-700">Registrado por</p>
+              <p className="mt-1 text-xl font-black text-slate-900">{person}</p>
+              <p className="mt-1 text-sm text-slate-600">Se asigna automáticamente según tu cuenta.</p>
+            </section>
+          ) : (
+            <fieldset className="space-y-2" aria-invalid={validationError?.field === "person"} aria-describedby={validationError?.field === "person" ? "movement-form-error" : undefined}>
+              <legend className="text-base font-bold text-slate-700">Registrado por</legend>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {knownPeople.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    aria-pressed={personChoice === item}
+                    onClick={() => handlePersonChoice(item)}
+                    className={`min-h-14 rounded-2xl border-2 px-3 py-2 text-base font-black transition ${personChoice === item ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"}`}
+                  >
+                    {item}
+                  </button>
+                ))}
                 <button
-                  key={item}
                   type="button"
-                  aria-pressed={personChoice === item}
-                  onClick={() => handlePersonChoice(item)}
-                  className={`min-h-14 rounded-2xl border-2 px-3 py-2 text-base font-black transition ${personChoice === item ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"}`}
+                  aria-pressed={personChoice === "Otro"}
+                  onClick={() => handlePersonChoice("Otro")}
+                  className={`min-h-14 rounded-2xl border-2 px-3 py-2 text-base font-black transition ${personChoice === "Otro" ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"}`}
                 >
-                  {item}
+                  Otro
                 </button>
-              ))}
-              <button
-                type="button"
-                aria-pressed={personChoice === "Otro"}
-                onClick={() => handlePersonChoice("Otro")}
-                className={`min-h-14 rounded-2xl border-2 px-3 py-2 text-base font-black transition ${personChoice === "Otro" ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"}`}
-              >
-                Otro
-              </button>
-            </div>
-            {personChoice === "Otro" && (
-              <input
-                value={person}
-                onChange={(event) => {
-                  setPerson(event.target.value);
-                  if (event.target.value.trim()) clearValidationError("person");
-                }}
-                onBlur={() => savePreferredPerson(person, true)}
-                placeholder="Escribe el nombre"
-                aria-invalid={validationError?.field === "person"}
-                aria-describedby={validationError?.field === "person" ? "movement-form-error" : undefined}
-                className="h-14 w-full rounded-2xl border border-slate-200 px-4 text-lg"
-              />
-            )}
-          </fieldset>
+              </div>
+              {personChoice === "Otro" && (
+                <input
+                  value={person}
+                  onChange={(event) => {
+                    setPerson(event.target.value);
+                    if (event.target.value.trim()) clearValidationError("person");
+                  }}
+                  onBlur={() => savePreferredPerson(person, true)}
+                  placeholder="Escribe el nombre"
+                  aria-invalid={validationError?.field === "person"}
+                  aria-describedby={validationError?.field === "person" ? "movement-form-error" : undefined}
+                  className="h-14 w-full rounded-2xl border border-slate-200 px-4 text-lg"
+                />
+              )}
+            </fieldset>
+          )}
 
           <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -399,13 +409,15 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
   );
 }
 
-function initialPersonValue(movement?: Movement | null, draft?: MovementDraft | null) {
+function initialPersonValue(movement?: Movement | null, draft?: MovementDraft | null, currentMember?: HouseholdMember) {
   if (movement) return movement.person;
+  if (currentMember) return currentMember.displayName;
   if (draft?.person) return draft.person;
   return loadPreferredPerson().value;
 }
 
-function initialPersonChoice(movement?: Movement | null, draft?: MovementDraft | null): PersonChoice {
+function initialPersonChoice(movement?: Movement | null, draft?: MovementDraft | null, currentMember?: HouseholdMember): PersonChoice {
+  if (currentMember) return "";
   if (movement) return getPersonChoice(movement.person);
   if (draft?.person) return getPersonChoice(draft.person);
   const preferred = loadPreferredPerson();
