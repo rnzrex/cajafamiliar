@@ -2,6 +2,8 @@ import { AppData, Category, Movement, RecurringPayment, baseCategories } from ".
 import { localDateString } from "./date";
 
 const STORAGE_KEY = "caja-familiar-data";
+const PREFERRED_PERSON_KEY = "caja-familiar-preferred-person";
+const CUSTOM_PERSON_PREFIX = "custom:";
 
 const today = new Date();
 const isoToday = localDateString(today);
@@ -146,6 +148,34 @@ export function loadData(): AppData {
 
 export function saveData(data: AppData) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+export interface PreferredPerson {
+  value: string;
+  isCustom: boolean;
+}
+
+export function loadPreferredPerson(): PreferredPerson {
+  try {
+    const stored = localStorage.getItem(PREFERRED_PERSON_KEY)?.trim() ?? "";
+    if (stored.startsWith(CUSTOM_PERSON_PREFIX)) {
+      return { value: stored.slice(CUSTOM_PERSON_PREFIX.length).trim(), isCustom: true };
+    }
+    return { value: stored, isCustom: false };
+  } catch {
+    return { value: "", isCustom: false };
+  }
+}
+
+export function savePreferredPerson(person: string, isCustom = false) {
+  const value = person.trim();
+  if (!value) return;
+
+  try {
+    localStorage.setItem(PREFERRED_PERSON_KEY, `${isCustom ? CUSTOM_PERSON_PREFIX : ""}${value}`);
+  } catch {
+    // The preference is optional and must never block movement registration.
+  }
 }
 
 export function makeId(prefix: string) {

@@ -1,18 +1,16 @@
 import {
   ArrowDownCircle,
   ArrowUpCircle,
-  BarChart3,
   CalendarClock,
-  ClipboardList,
+  CheckCircle2,
+  ChevronRight,
   Coins,
   CreditCard,
-  Edit3,
-  Home,
   PiggyBank,
   Scale,
 } from "lucide-react";
 import { CashCount, Movement, RecurringPayment } from "../types";
-import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAlert, paymentStatus, topExpenseCategory } from "../utils/calculations";
+import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentStatus, topExpenseCategory } from "../utils/calculations";
 
 interface DashboardProps {
   movements: Movement[];
@@ -22,147 +20,172 @@ interface DashboardProps {
   onNavigate: (view: string) => void;
 }
 
-const cardTone: Record<string, string> = {
-  green: "border-green-100 bg-green-50 text-green-800",
-  red: "border-red-100 bg-red-50 text-red-800",
-  blue: "border-blue-100 bg-blue-50 text-blue-800",
-  yellow: "border-yellow-100 bg-yellow-50 text-yellow-900",
-  white: "border-slate-100 bg-white text-slate-800",
-};
-
 export function Dashboard({ movements, cashCounts, recurringPayments, initialBalance, onNavigate }: DashboardProps) {
   const expected = expectedCash(movements, initialBalance);
-  const counted = lastCashCount(cashCounts)?.total ?? 0;
-  const difference = counted - expected;
+  const lastCount = lastCashCount(cashCounts);
+  const hasCount = Boolean(lastCount);
+  const difference = hasCount ? (lastCount?.total ?? 0) - expected : null;
   const totals = monthlyTotals(movements);
   const topCategory = topExpenseCategory(movements);
-  const pendingPayments = recurringPayments.filter((payment) => payment.is_active && paymentStatus(payment).tone !== "green");
-  const urgentPayments = pendingPayments.filter((payment) => paymentStatus(payment).days <= 3).length;
-  const alerts = recurringPayments
-    .map((payment) => ({ payment, alert: paymentAlert(payment) }))
-    .filter((item): item is { payment: RecurringPayment; alert: NonNullable<ReturnType<typeof paymentAlert>> } => Boolean(item.alert))
-    .sort((a, b) => a.alert.days - b.alert.days);
+  const latestMovements = [...movements]
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
+    .slice(0, 5);
+  const relevantPayments = recurringPayments
+    .map((payment) => ({ payment, status: paymentStatus(payment) }))
+    .filter(({ payment, status }) => payment.is_active && status.tone !== "green" && status.days <= 3)
+    .sort((a, b) => a.status.days - b.status.days);
 
-  const stats = [
-    { label: "Saldo esperado en caja", value: formatMoney(expected), icon: PiggyBank, tone: "blue" },
-    { label: "Total contado fisicamente", value: formatMoney(counted), icon: Coins, tone: "white" },
-    {
-      label: "Diferencia",
-      value: formatMoney(difference),
-      icon: Scale,
-      tone: difference < 0 ? "red" : difference > 0 ? "green" : "blue",
-    },
-    { label: "Ingresos del mes", value: formatMoney(totals.income), icon: ArrowUpCircle, tone: "green" },
-    { label: "Egresos del mes", value: formatMoney(totals.expense), icon: ArrowDownCircle, tone: "red" },
-    { label: "Categoria con mas gasto", value: topCategory, icon: CreditCard, tone: "yellow" },
-    { label: "Pagos proximos pendientes", value: `${urgentPayments} de ${pendingPayments.length}`, icon: CalendarClock, tone: "yellow" },
-  ];
-
-  const actions = [
-    { label: "Registrar ingreso", view: "registrar-ingreso", icon: ArrowUpCircle, className: "bg-green-600 hover:bg-green-700" },
-    { label: "Registrar gasto", view: "registrar-gasto", icon: ArrowDownCircle, className: "bg-red-600 hover:bg-red-700" },
-    { label: "Contar caja", view: "conteo", icon: Coins, className: "bg-blue-600 hover:bg-blue-700" },
-    { label: "Ver movimientos", view: "movimientos", icon: ClipboardList, className: "bg-slate-700 hover:bg-slate-800" },
-    { label: "Pagos recurrentes", view: "pagos", icon: CalendarClock, className: "bg-orange-500 hover:bg-orange-600" },
-    { label: "Reportes", view: "reportes", icon: BarChart3, className: "bg-indigo-600 hover:bg-indigo-700" },
+  const secondaryStats = [
+    { label: "Ingresos del mes", value: formatMoney(totals.income), icon: ArrowUpCircle, tone: "text-emerald-700 bg-emerald-50" },
+    { label: "Egresos del mes", value: formatMoney(totals.expense), icon: ArrowDownCircle, tone: "text-red-700 bg-red-50" },
+    { label: "Categoría con más gasto", value: topCategory, icon: CreditCard, tone: "text-amber-800 bg-amber-50" },
+    { label: "Pagos próximos", value: `${relevantPayments.length}`, icon: CalendarClock, tone: "text-orange-800 bg-orange-50" },
   ];
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-lg border border-blue-100 bg-white p-5 soft-shadow">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-blue-100 text-blue-700">
-            <Home className="h-8 w-8" />
-          </div>
+    <div className="space-y-5">
+      <section className="relative overflow-hidden rounded-3xl bg-blue-700 p-6 text-white shadow-lg sm:p-8">
+        <div className="relative z-10 max-w-xl">
+          <p className="text-sm font-bold uppercase tracking-[0.18em] text-blue-100">Saldo esperado</p>
+          <h2 className="mt-3 text-2xl font-bold sm:text-3xl">Dinero que debería haber en caja</h2>
+          <p className="mt-4 text-5xl font-black tracking-tight sm:text-6xl">{formatMoney(expected)}</p>
+          <p className="mt-4 max-w-md text-sm leading-relaxed text-blue-100">Calculado con el saldo inicial y los movimientos en efectivo.</p>
+        </div>
+        <PiggyBank className="absolute -right-6 -top-5 h-44 w-44 text-blue-500/40 sm:h-56 sm:w-56" aria-hidden="true" />
+      </section>
+
+      <section>
+        <div className="mb-3 flex items-center justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">Bienvenida, familia Ruiz Gallardo</h2>
-            <p className="mt-1 text-lg leading-relaxed text-slate-600">
-              Rolando, Sara Veronica y Renzo: este es su espacio familiar para cuidar la caja, los gastos y los pagos del hogar.
-            </p>
+            <p className="text-sm font-bold uppercase tracking-wide text-blue-700">Uso diario</p>
+            <h2 className="text-2xl font-bold text-slate-900">Acciones principales</h2>
           </div>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <button type="button" onClick={() => onNavigate("registrar-gasto")} className="flex min-h-24 items-center justify-center gap-3 rounded-2xl bg-red-600 px-5 py-4 text-xl font-black text-white shadow-md ring-4 ring-red-100 transition hover:bg-red-700">
+            <ArrowDownCircle className="h-8 w-8" />
+            Registrar gasto
+          </button>
+          <button type="button" onClick={() => onNavigate("registrar-ingreso")} className="flex min-h-24 items-center justify-center gap-3 rounded-2xl bg-emerald-600 px-5 py-4 text-xl font-black text-white shadow-md transition hover:bg-emerald-700">
+            <ArrowUpCircle className="h-8 w-8" />
+            Registrar ingreso
+          </button>
+          <button type="button" onClick={() => onNavigate("conteo")} className="flex min-h-24 items-center justify-center gap-3 rounded-2xl bg-slate-800 px-5 py-4 text-xl font-black text-white shadow-md transition hover:bg-slate-900">
+            <Coins className="h-8 w-8" />
+            Contar caja
+          </button>
         </div>
       </section>
 
-      {alerts.length > 0 && (
-        <section className="rounded-lg bg-white p-5 soft-shadow">
-          <div className="mb-4 flex items-center gap-3">
-            <CalendarClock className="h-7 w-7 text-red-600" />
-            <h2 className="text-2xl font-bold text-slate-800">Notificaciones de pagos</h2>
+      <section className="rounded-3xl bg-white p-5 shadow-sm sm:p-6">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-slate-500">Actividad reciente</p>
+            <h2 className="text-2xl font-bold text-slate-900">Últimos movimientos</h2>
           </div>
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {alerts.map(({ payment, alert }) => {
-              const tone =
-                alert.kind === "vencido"
-                  ? "border-red-300 bg-red-50 text-red-900"
-                  : alert.kind === "hoy"
-                    ? "border-red-200 bg-red-50 text-red-800"
-                    : "border-orange-200 bg-orange-50 text-orange-900";
-              const badge =
-                alert.kind === "vencido" ? "Vencido" : alert.kind === "hoy" ? "Vence hoy" : "Vence manana";
-              const message =
-                alert.kind === "vencido"
-                  ? `Pago vencido: ${payment.name} vencio el dia ${payment.dueDay}.`
-                  : alert.kind === "hoy"
-                    ? `Urgente: hoy vence ${payment.name} por aproximadamente ${formatMoney(payment.amount)}.`
-                    : `Recordatorio: manana vence ${payment.name} por aproximadamente ${formatMoney(payment.amount)}.`;
-
-              return (
-                <article key={payment.id} className={`rounded-lg border p-4 ${tone}`}>
-                  <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                    <div>
-                      <span className="inline-flex rounded-lg bg-white px-3 py-1 text-sm font-bold">{badge}</span>
-                      <h3 className="mt-3 text-xl font-bold">{payment.name}</h3>
-                      <p className="mt-1 text-base font-semibold">{message}</p>
-                      <p className="mt-1 text-sm">
-                        Monto: {formatMoney(payment.amount)} - Dia de vencimiento: {payment.dueDay}
-                      </p>
+          <button type="button" onClick={() => onNavigate("movimientos")} className="flex min-h-12 items-center gap-1 rounded-xl px-3 text-base font-bold text-blue-700 hover:bg-blue-50">
+            Ver todos
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </div>
+        {latestMovements.length === 0 ? (
+          <p className="rounded-2xl bg-slate-50 p-5 text-slate-600">Aún no hay movimientos registrados.</p>
+        ) : (
+          <div className="space-y-2">
+            {latestMovements.map((movement) => (
+              <article key={movement.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-black ${movement.type === "ingreso" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
+                        {movement.type === "ingreso" ? "Ingreso" : "Gasto"}
+                      </span>
+                      <h3 className="truncate text-lg font-bold text-slate-900">{movement.description}</h3>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onNavigate("pagos")}
-                      className="min-h-12 rounded-lg bg-white px-4 py-2 text-lg font-bold text-slate-800 shadow-sm hover:bg-slate-50"
-                    >
-                      Ver pago
-                    </button>
+                    <p className="mt-2 text-sm text-slate-600">{formatMovementDate(movement.date)} · {movement.method}</p>
+                    <p className="mt-1 text-sm text-slate-500">{movement.category} · {movement.person}</p>
                   </div>
-                </article>
-              );
-            })}
+                  <p className={`text-xl font-black sm:text-right ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>
+                    {movement.type === "ingreso" ? "+" : "-"}{formatMoney(movement.amount)}
+                  </p>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {relevantPayments.length > 0 && (
+        <section className="rounded-3xl border border-orange-100 bg-orange-50 p-5 sm:p-6">
+          <div className="mb-4 flex items-center gap-3">
+            <CalendarClock className="h-7 w-7 text-orange-700" />
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-orange-700">Atención</p>
+              <h2 className="text-2xl font-bold text-orange-950">Próximos pagos</h2>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {relevantPayments.map(({ payment, status }) => (
+              <article key={payment.id} className="rounded-2xl border border-orange-200 bg-white p-4">
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <div>
+                    <span className="inline-flex rounded-full bg-orange-100 px-3 py-1 text-sm font-bold text-orange-900">{status.label}</span>
+                    <h3 className="mt-3 text-xl font-bold text-slate-900">{payment.name}</h3>
+                    <p className="mt-1 text-sm font-semibold text-slate-600">{formatMoney(payment.amount)} · Día {payment.dueDay}</p>
+                  </div>
+                  <button type="button" onClick={() => onNavigate("pagos")} className="min-h-12 rounded-xl bg-orange-600 px-4 py-2 text-base font-bold text-white hover:bg-orange-700">
+                    Ver pago
+                  </button>
+                </div>
+              </article>
+            ))}
           </div>
         </section>
       )}
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {stats.map((stat) => (
-          <section key={stat.label} className={`soft-shadow rounded-lg border p-5 ${cardTone[stat.tone]}`}>
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <p className="text-base font-semibold">{stat.label}</p>
-              <stat.icon className="h-9 w-9 shrink-0" />
-            </div>
-            <p className="break-words text-3xl font-bold leading-tight">{stat.value}</p>
-          </section>
-        ))}
-      </div>
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <article className="rounded-3xl bg-white p-5 shadow-sm lg:col-span-1">
+          <div className="mb-4 flex items-center gap-3">
+            {hasCount ? <CheckCircle2 className="h-7 w-7 text-emerald-600" /> : <Scale className="h-7 w-7 text-slate-500" />}
+            <h2 className="text-xl font-bold text-slate-900">Estado de caja</h2>
+          </div>
+          {hasCount ? (
+            <>
+              <p className="text-sm text-slate-600">Último total contado</p>
+              <p className="mt-1 text-3xl font-black text-slate-900">{formatMoney(lastCount?.total ?? 0)}</p>
+              <p className={`mt-3 font-bold ${difference === 0 ? "text-emerald-700" : difference! < 0 ? "text-red-700" : "text-amber-700"}`}>
+                Diferencia: {formatMoney(difference ?? 0)}
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-xl font-black text-slate-900">Caja aún no contada</p>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">Haz un conteo para comparar el dinero físico con el saldo esperado.</p>
+              <button type="button" onClick={() => onNavigate("conteo")} className="mt-4 min-h-12 rounded-xl bg-blue-600 px-4 py-2 text-base font-bold text-white hover:bg-blue-700">
+                Contar caja
+              </button>
+            </>
+          )}
+        </article>
 
-      <section className="rounded-lg bg-white p-5 soft-shadow">
-        <div className="mb-4 flex items-center gap-3">
-          <Edit3 className="h-7 w-7 text-blue-600" />
-          <h2 className="text-2xl font-bold text-slate-800">Acciones rapidas</h2>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {actions.map((action) => (
-            <button
-              key={action.label}
-              type="button"
-              onClick={() => onNavigate(action.view)}
-              className={`flex min-h-20 items-center justify-center gap-3 rounded-lg px-5 py-4 text-xl font-bold text-white transition ${action.className}`}
-            >
-              <action.icon className="h-7 w-7" />
-              <span>{action.label}</span>
-            </button>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:col-span-2">
+          {secondaryStats.map((stat) => (
+            <article key={stat.label} className={`rounded-3xl p-5 ${stat.tone}`}>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="text-sm font-bold">{stat.label}</p>
+                <stat.icon className="h-7 w-7" />
+              </div>
+              <p className="break-words text-2xl font-black">{stat.value}</p>
+            </article>
           ))}
         </div>
       </section>
     </div>
   );
+}
+
+function formatMovementDate(value: string) {
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
 }

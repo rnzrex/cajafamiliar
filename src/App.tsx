@@ -4,7 +4,7 @@ import {
   ClipboardList,
   Coins,
   Home,
-  Menu,
+  MoreHorizontal,
   PiggyBank,
   PlusCircle,
   Settings,
@@ -20,13 +20,16 @@ import { MovementForm } from "./components/MovementForm";
 import { MovementsList } from "./components/MovementsList";
 import { RecurringPayments } from "./components/RecurringPayments";
 import { Reports } from "./components/Reports";
-import { AppData, Category, Movement, MovementDraft, MovementType, RecurringPayment } from "./types";
+import { Toast } from "./components/Toast";
+import { AppData, CashCount, Category, Movement, MovementDraft, MovementType, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth } from "./utils/calculations";
 import { createMovement, deleteMovement as deleteRemoteMovement, loadAppData, MovementNotFoundError, saveAppData, updateMovement as updateRemoteMovement } from "./services/dataRepository";
+import { isSupabaseConfigured } from "./services/supabaseClient";
 import { makeId, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
 
 type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "saldo-inicial";
+type SyncStatus = "loading" | "connected" | "local" | "offline";
 
 const navItems: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: "dashboard", label: "Inicio", icon: Home },
@@ -35,8 +38,15 @@ const navItems: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: "conteo", label: "Caja", icon: Coins },
   { view: "pagos", label: "Pagos", icon: CalendarClock },
   { view: "reportes", label: "Reportes", icon: BarChart3 },
-  { view: "categorias", label: "Categorias", icon: Tags },
+  { view: "categorias", label: "Categorías", icon: Tags },
   { view: "saldo-inicial", label: "Saldo inicial", icon: Settings },
+];
+
+const mobileNavItems: Array<{ view: View; label: string; icon: typeof Home }> = [
+  { view: "dashboard", label: "Inicio", icon: Home },
+  { view: "registrar-gasto", label: "Registrar", icon: PlusCircle },
+  { view: "movimientos", label: "Movimientos", icon: ClipboardList },
+  { view: "conteo", label: "Caja", icon: Coins },
 ];
 
 const titles: Record<View, string> = {
@@ -47,24 +57,27 @@ const titles: Record<View, string> = {
   conteo: "Conteo de caja",
   pagos: "Pagos recurrentes",
   reportes: "Reportes",
-  categorias: "Categorias",
+  categorias: "Categorías",
   "saldo-inicial": "Saldo inicial",
 };
 
 export default function App() {
   const [data, setData] = useState<AppData>(() => loadData());
   const [view, setView] = useState<View>("dashboard");
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [movementDraft, setMovementDraft] = useState<MovementDraft | null>(null);
   const [pendingRecurringPaymentId, setPendingRecurringPaymentId] = useState<string | null>(null);
   const [dataReady, setDataReady] = useState(false);
   const [remotePersistenceReady, setRemotePersistenceReady] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
+  const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const expected = useMemo(() => expectedCash(data.movements, data.initialBalance), [data.movements, data.initialBalance]);
 
   useEffect(() => {
     loadAppData().then(({ data: loadedData, source }) => {
       setData(loadedData);
       setRemotePersistenceReady(source !== "fallback");
+      setSyncStatus(source === "fallback" ? "offline" : source === "local" ? "local" : "connected");
       if (source === "fallback") {
         window.alert("No se pudo cargar la información desde Supabase. Se conservará la copia local y no se sincronizarán datos automáticamente.");
       }
@@ -78,13 +91,27 @@ export default function App() {
     else saveData(data);
   }, [data, dataReady, remotePersistenceReady]);
 
+  useEffect(() => {
+    if (!toast) return;
+    const timeout = window.setTimeout(() => setToast(null), 3500);
+    return () => window.clearTimeout(timeout);
+  }, [toast]);
+
+  function showToast(message: string) {
+    setToast({ id: Date.now(), message });
+  }
+
+  function markRemoteSuccess() {
+    if (isSupabaseConfigured && remotePersistenceReady) setSyncStatus("connected");
+  }
+
   function navigate(nextView: string) {
     if (nextView !== "registrar-gasto" && nextView !== "registrar-ingreso") {
       setMovementDraft(null);
       setPendingRecurringPaymentId(null);
     }
     setView(nextView as View);
-    setMenuOpen(false);
+    setMoreOpen(false);
   }
 
   async function saveMovement(movement: Omit<Movement, "id">, id?: string): Promise<boolean> {
@@ -109,10 +136,12 @@ export default function App() {
         window.alert("Este movimiento ya no existe en la base de datos. Es posible que haya sido eliminado desde otro dispositivo. Actualiza la información antes de continuar.");
         return false;
       }
+      setSyncStatus("offline");
       window.alert("No se pudo guardar el movimiento. No se realizó ningún cambio en tu caja. Intenta nuevamente.");
       return false;
     }
 
+    markRemoteSuccess();
     setData((current) => ({
       ...current,
       movements: id
@@ -128,6 +157,7 @@ export default function App() {
     setMovementDraft(null);
     setPendingRecurringPaymentId(null);
     setView(shouldReturnToPayments ? "pagos" : "movimientos");
+    showToast(movement.type === "egreso" ? "Gasto guardado correctamente" : "Ingreso guardado correctamente");
     return true;
   }
 
@@ -142,12 +172,20 @@ export default function App() {
     try {
       await deleteRemoteMovement(id);
     } catch {
+      setSyncStatus("offline");
       window.alert("No se pudo eliminar el movimiento. No se realizó ningún cambio en tu caja. Intenta nuevamente.");
       return false;
     }
 
+    markRemoteSuccess();
     setData((current) => ({ ...current, movements: current.movements.filter((movement) => movement.id !== id) }));
+    showToast("Movimiento eliminado");
     return true;
+  }
+
+  function saveCashCount(cashCount: Omit<CashCount, "id">) {
+    setData((current) => ({ ...current, cashCounts: [{ ...cashCount, id: makeId("count") }, ...current.cashCounts] }));
+    showToast("Conteo registrado en este dispositivo");
   }
 
   function savePayment(payment: Omit<RecurringPayment, "id">, id?: string) {
@@ -244,8 +282,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <aside className={`fixed inset-y-0 left-0 z-30 w-72 transform bg-white p-4 shadow-xl transition lg:translate-x-0 ${menuOpen ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className="mb-6 flex items-center justify-between">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 bg-white p-4 shadow-xl lg:block">
+        <div className="mb-6 flex items-center gap-3">
           <div className="flex items-center gap-3">
             <div className="rounded-lg bg-blue-100 p-3 text-blue-700">
               <PiggyBank className="h-8 w-8" />
@@ -255,9 +293,6 @@ export default function App() {
               <p className="text-sm text-slate-500">Finanzas en soles</p>
             </div>
           </div>
-          <button type="button" className="rounded-lg p-2 text-slate-600 lg:hidden" onClick={() => setMenuOpen(false)} title="Cerrar menu">
-            <X className="h-6 w-6" />
-          </button>
         </div>
 
         <nav className="space-y-2">
@@ -282,18 +317,14 @@ export default function App() {
         </div>
       </aside>
 
-      {menuOpen && <button className="fixed inset-0 z-20 bg-slate-900/30 lg:hidden" type="button" onClick={() => setMenuOpen(false)} title="Cerrar menu" />}
-
-      <main className="lg:pl-72">
+      <main className="pb-24 lg:pb-0 lg:pl-72">
         <header className="sticky top-0 z-10 border-b border-slate-200 bg-slate-100/95 px-4 py-4 backdrop-blur lg:px-8">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-3xl font-bold text-slate-900">{titles[view]}</h1>
-              <p className="text-slate-600">Gestion familiar clara, simple y guardada en este equipo.</p>
+              <p className="text-slate-600">Las finanzas de la familia en un solo lugar.</p>
             </div>
-            <button type="button" className="rounded-lg bg-white p-3 text-slate-700 shadow lg:hidden" onClick={() => setMenuOpen(true)} title="Abrir menu">
-              <Menu className="h-7 w-7" />
-            </button>
+            <SyncStatus status={syncStatus} />
           </div>
         </header>
 
@@ -303,6 +334,7 @@ export default function App() {
           )}
           {(view === "registrar-ingreso" || view === "registrar-gasto") && (
             <MovementForm
+              key={view}
               initialType={initialType}
               draft={movementDraft}
               categories={data.categories}
@@ -333,7 +365,7 @@ export default function App() {
               movements={data.movements}
               initialBalance={data.initialBalance}
               cashCounts={data.cashCounts}
-              onSave={(cashCount) => setData((current) => ({ ...current, cashCounts: [{ ...cashCount, id: makeId("count") }, ...current.cashCounts] }))}
+              onSave={saveCashCount}
             />
           )}
           {view === "pagos" && (
@@ -350,6 +382,84 @@ export default function App() {
           {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={(value) => setData((current) => ({ ...current, initialBalance: value }))} />}
         </div>
       </main>
+
+      <nav className="mobile-nav fixed inset-x-0 bottom-0 z-40 flex border-t border-slate-200 bg-white/95 shadow-[0_-8px_24px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden" aria-label="Navegación principal móvil">
+        {mobileNavItems.map((item) => (
+          <button
+            key={item.view}
+            type="button"
+            onClick={() => navigate(item.view)}
+            className={`flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-1 text-xs font-bold transition sm:text-sm ${
+              view === item.view ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            <item.icon className="h-6 w-6" />
+            <span>{item.label}</span>
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => setMoreOpen(true)}
+          className={`flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-1 text-xs font-bold transition sm:text-sm ${
+            moreOpen || ["pagos", "reportes", "categorias", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
+          }`}
+        >
+          <MoreHorizontal className="h-6 w-6" />
+          <span>Más</span>
+        </button>
+      </nav>
+
+      {moreOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Más opciones">
+          <button type="button" className="absolute inset-0 bg-slate-950/40" onClick={() => setMoreOpen(false)} aria-label="Cerrar Más" />
+          <section className="absolute inset-x-0 bottom-0 rounded-t-3xl bg-white p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Menú</p>
+                <h2 className="text-2xl font-bold text-slate-900">Más opciones</h2>
+              </div>
+              <button type="button" onClick={() => setMoreOpen(false)} className="rounded-full bg-slate-100 p-3 text-slate-700" aria-label="Cerrar Más">
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <button type="button" onClick={() => navigate("pagos")} className="min-h-14 rounded-2xl bg-orange-50 px-4 text-left text-base font-bold text-orange-900">
+                Pagos recurrentes
+              </button>
+              <button type="button" onClick={() => navigate("reportes")} className="min-h-14 rounded-2xl bg-indigo-50 px-4 text-left text-base font-bold text-indigo-900">
+                Reportes
+              </button>
+              <button type="button" onClick={() => navigate("categorias")} className="min-h-14 rounded-2xl bg-emerald-50 px-4 text-left text-base font-bold text-emerald-900">
+                Categorías
+              </button>
+              <div className="rounded-2xl bg-slate-50 p-3">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Configuración</p>
+                <button type="button" onClick={() => navigate("saldo-inicial")} className="min-h-10 w-full rounded-xl bg-white px-3 text-left text-sm font-bold text-slate-800 shadow-sm">
+                  Saldo inicial
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {toast && <Toast key={toast.id} message={toast.message} />}
+    </div>
+  );
+}
+
+function SyncStatus({ status }: { status: SyncStatus }) {
+  const config = {
+    loading: { label: "Conectando...", className: "bg-amber-400", textClassName: "text-slate-600" },
+    connected: { label: "Conectado", className: "bg-emerald-500", textClassName: "text-emerald-700" },
+    local: { label: "Trabajando con copia local", className: "bg-slate-400", textClassName: "text-slate-600" },
+    offline: { label: "Sin conexión", className: "bg-red-500", textClassName: "text-red-700" },
+  }[status];
+
+  return (
+    <div className={`flex items-center gap-2 text-sm font-bold ${config.textClassName}`} role="status" aria-live="polite">
+      <span className={`h-2.5 w-2.5 rounded-full ${config.className}`} aria-hidden="true" />
+      {config.label}
     </div>
   );
 }

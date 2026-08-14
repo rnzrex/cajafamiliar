@@ -23,7 +23,7 @@ export function InitialBalance({ initialBalance, onSave }: InitialBalanceProps) 
       </div>
       <label className="space-y-2 text-lg font-semibold text-slate-700">
         Saldo actual configurado: {formatMoney(initialBalance)}
-        <input type="number" min="0" step="0.1" value={value} onChange={(event) => setValue(event.target.value)} className="h-14 w-full rounded-lg border border-slate-200 px-4 text-xl" />
+        <input type="number" min="0" step="0.01" value={value} onChange={(event) => setValue(event.target.value)} className="h-14 w-full rounded-lg border border-slate-200 px-4 text-xl" />
       </label>
       <button type="submit" className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-5 py-3 text-xl font-bold text-white hover:bg-blue-700 sm:w-auto">
         <Save className="h-6 w-6" />
