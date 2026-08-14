@@ -85,7 +85,7 @@ export function RecurringPayments({ payments, categories, onSave, onMarkPaid, on
           </label>
           <label className="block space-y-2 text-lg font-semibold text-slate-700">
             Monto aproximado
-            <input type="number" min="0" step="0.1" value={amount} onChange={(event) => setAmount(event.target.value)} className="h-14 w-full rounded-lg border border-slate-200 px-4 text-lg" />
+            <input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className="h-14 w-full rounded-lg border border-slate-200 px-4 text-lg" />
           </label>
           <label className="block space-y-2 text-lg font-semibold text-slate-700">
             Dia de vencimiento

@@ -7,6 +7,7 @@ export type MovementTypeFilter = MovementType | "todos";
 export type PaymentMethodFilter = PaymentMethod | "todos";
 
 export interface MovementFilters {
+  search: string;
   dateMode: DateFilterMode;
   month: string;
   exactDate: string;
@@ -18,6 +19,7 @@ export interface MovementFilters {
 }
 
 export const defaultMovementFilters = (): MovementFilters => ({
+  search: "",
   dateMode: "all",
   month: localMonthString(),
   exactDate: localDateString(),
@@ -29,6 +31,8 @@ export const defaultMovementFilters = (): MovementFilters => ({
 });
 
 export function filterMovements(movements: Movement[], filters: MovementFilters) {
+  const search = normalizeSearch(filters.search);
+
   return movements
     .filter((movement) => {
       if (filters.dateMode === "month") return monthKey(movement.date) === filters.month;
@@ -40,10 +44,23 @@ export function filterMovements(movements: Movement[], filters: MovementFilters)
       }
       return true;
     })
+    .filter((movement) => {
+      if (!search) return true;
+      return [movement.description, movement.category, movement.person].some((value) => normalizeSearch(value).includes(search));
+    })
     .filter((movement) => filters.category === "todas" || movement.category === filters.category)
     .filter((movement) => filters.method === "todos" || movement.method === filters.method)
     .filter((movement) => filters.type === "todos" || movement.type === filters.type)
     .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function normalizeSearch(value: string) {
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 export function describeFilters(filters: MovementFilters) {

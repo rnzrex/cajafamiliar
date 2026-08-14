@@ -1,4 +1,4 @@
-import { Download, Edit, RotateCcw, Trash2 } from "lucide-react";
+import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Category, Movement, paymentMethods } from "../types";
 import { formatMoney } from "../utils/calculations";
@@ -18,8 +18,19 @@ export function MovementsList({ movements, categories, onQuickCreateCategory, on
   const [filters, setFilters] = useState(defaultMovementFilters);
   const [editing, setEditing] = useState<Movement | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const filtered = useMemo(() => filterMovements(movements, filters), [movements, filters]);
+
+  async function handleDelete(id: string) {
+    if (deletingId !== null) return;
+    setDeletingId(id);
+    try {
+      await onDelete(id);
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   if (editing) {
     return (
@@ -39,102 +50,146 @@ export function MovementsList({ movements, categories, onQuickCreateCategory, on
   }
 
   return (
-    <section className="rounded-lg bg-white p-5 soft-shadow">
-      <div className="mb-5">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">Movimientos</h2>
-          <p className="mt-1 text-slate-600">Solo los movimientos en efectivo afectan el saldo esperado de caja.</p>
+    <section className="space-y-4">
+      <div className="rounded-3xl bg-white p-5 shadow-sm sm:p-6">
+        <div className="mb-4">
+          <h2 className="text-3xl font-black text-slate-900">Movimientos</h2>
+          <p className="mt-1 text-slate-600">Busca y revisa tus ingresos y gastos sin perder los filtros actuales.</p>
         </div>
-      </div>
 
-      <div className="mb-5 rounded-lg border border-slate-100 bg-slate-50 p-4">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <label className="space-y-1 font-semibold text-slate-700">
-            Periodo
-            <select value={filters.dateMode} onChange={(event) => setFilters((current) => ({ ...current, dateMode: event.target.value as typeof current.dateMode }))} className="h-12 w-full rounded-lg border border-slate-200 bg-white px-3">
-              <option value="all">Todos los movimientos</option>
-              <option value="month">Por mes</option>
-              <option value="date">Fecha especifica</option>
-              <option value="range">Rango de fechas</option>
-            </select>
-          </label>
-          {filters.dateMode === "month" && (
-            <label className="space-y-1 font-semibold text-slate-700">
-              Mes
-              <input type="month" value={filters.month} onChange={(event) => setFilters((current) => ({ ...current, month: event.target.value }))} className="h-12 w-full rounded-lg border border-slate-200 px-3" />
+        <label className="relative block">
+          <span className="sr-only">Buscar movimiento</span>
+          <Search className="pointer-events-none absolute left-4 top-1/2 h-6 w-6 -translate-y-1/2 text-slate-400" />
+          <input
+            value={filters.search}
+            onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))}
+            placeholder="Buscar movimiento..."
+            className="h-14 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-12 pr-4 text-lg outline-none focus:border-blue-500 focus:bg-white"
+          />
+        </label>
+
+        <button type="button" onClick={() => setFiltersOpen((current) => !current)} aria-expanded={filtersOpen} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-slate-100 px-4 text-base font-black text-slate-700 hover:bg-slate-200 lg:hidden">
+          <SlidersHorizontal className="h-5 w-5" />
+          Filtros
+          <span className="text-sm font-semibold">{filtersOpen ? "Ocultar" : "Mostrar"}</span>
+        </button>
+
+        <div className={`${filtersOpen ? "block" : "hidden"} mt-3 lg:block`}>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <label className="space-y-1 text-base font-bold text-slate-700">
+              Periodo
+              <select value={filters.dateMode} onChange={(event) => setFilters((current) => ({ ...current, dateMode: event.target.value as typeof current.dateMode }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3">
+                <option value="all">Todos los movimientos</option>
+                <option value="month">Por mes</option>
+                <option value="date">Fecha específica</option>
+                <option value="range">Rango de fechas</option>
+              </select>
             </label>
-          )}
-          {filters.dateMode === "date" && (
-            <label className="space-y-1 font-semibold text-slate-700">
-              Fecha
-              <input type="date" value={filters.exactDate} onChange={(event) => setFilters((current) => ({ ...current, exactDate: event.target.value }))} className="h-12 w-full rounded-lg border border-slate-200 px-3" />
+            {filters.dateMode === "month" && (
+              <label className="space-y-1 text-base font-bold text-slate-700">
+                Mes
+                <input type="month" value={filters.month} onChange={(event) => setFilters((current) => ({ ...current, month: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 px-3" />
+              </label>
+            )}
+            {filters.dateMode === "date" && (
+              <label className="space-y-1 text-base font-bold text-slate-700">
+                Fecha
+                <input type="date" value={filters.exactDate} onChange={(event) => setFilters((current) => ({ ...current, exactDate: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 px-3" />
+              </label>
+            )}
+            {filters.dateMode === "range" && (
+              <>
+                <label className="space-y-1 text-base font-bold text-slate-700">
+                  Fecha desde
+                  <input type="date" value={filters.dateFrom} onChange={(event) => setFilters((current) => ({ ...current, dateFrom: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 px-3" />
+                </label>
+                <label className="space-y-1 text-base font-bold text-slate-700">
+                  Fecha hasta
+                  <input type="date" value={filters.dateTo} onChange={(event) => setFilters((current) => ({ ...current, dateTo: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 px-3" />
+                </label>
+              </>
+            )}
+            <label className="space-y-1 text-base font-bold text-slate-700">
+              Categoría
+              <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3">
+                <option value="todas">Todas</option>
+                {categories.map((item) => (
+                  <option key={item.id} value={item.name}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
             </label>
-          )}
-          {filters.dateMode === "range" && (
-            <>
-              <label className="space-y-1 font-semibold text-slate-700">
-                Fecha desde
-                <input type="date" value={filters.dateFrom} onChange={(event) => setFilters((current) => ({ ...current, dateFrom: event.target.value }))} className="h-12 w-full rounded-lg border border-slate-200 px-3" />
-              </label>
-              <label className="space-y-1 font-semibold text-slate-700">
-                Fecha hasta
-                <input type="date" value={filters.dateTo} onChange={(event) => setFilters((current) => ({ ...current, dateTo: event.target.value }))} className="h-12 w-full rounded-lg border border-slate-200 px-3" />
-              </label>
-            </>
-          )}
-          <label className="space-y-1 font-semibold text-slate-700">
-            Categoria
-            <select value={filters.category} onChange={(event) => setFilters((current) => ({ ...current, category: event.target.value }))} className="h-12 w-full rounded-lg border border-slate-200 bg-white px-3">
-              <option value="todas">Todas</option>
-              {categories.map((item) => (
-                <option key={item.id} value={item.name}>
-                  {item.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 font-semibold text-slate-700">
-            Metodo
-            <select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value as typeof current.method }))} className="h-12 w-full rounded-lg border border-slate-200 bg-white px-3">
-              <option value="todos">Todos</option>
-              {paymentMethods.map((item) => (
-                <option key={item} value={item}>
-                  {item}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1 font-semibold text-slate-700">
-            Tipo
-            <select value={filters.type} onChange={(event) => setFilters((current) => ({ ...current, type: event.target.value as typeof current.type }))} className="h-12 w-full rounded-lg border border-slate-200 bg-white px-3">
-              <option value="todos">Todos</option>
-              <option value="ingreso">Ingreso</option>
-              <option value="egreso">Egreso</option>
-            </select>
-          </label>
+            <label className="space-y-1 text-base font-bold text-slate-700">
+              Método
+              <select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value as typeof current.method }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3">
+                <option value="todos">Todos</option>
+                {paymentMethods.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1 text-base font-bold text-slate-700">
+              Tipo
+              <select value={filters.type} onChange={(event) => setFilters((current) => ({ ...current, type: event.target.value as typeof current.type }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3">
+                <option value="todos">Todos</option>
+                <option value="ingreso">Ingreso</option>
+                <option value="egreso">Gasto</option>
+              </select>
+            </label>
+          </div>
         </div>
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-          <button type="button" onClick={() => exportMovementsExcel(filtered)} className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-green-600 px-5 py-3 text-lg font-bold text-white hover:bg-green-700">
+
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <button type="button" onClick={() => exportMovementsExcel(filtered)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-base font-black text-white hover:bg-emerald-700">
             <Download className="h-5 w-5" />
             Descargar Excel
           </button>
-          <button type="button" onClick={() => setFilters(defaultMovementFilters())} className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-slate-200 px-5 py-3 text-lg font-bold text-slate-700 hover:bg-slate-300">
+          <button type="button" onClick={() => setFilters(defaultMovementFilters())} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-slate-200 px-5 py-3 text-base font-black text-slate-700 hover:bg-slate-300">
             <RotateCcw className="h-5 w-5" />
             Limpiar filtros
           </button>
-          <span className="flex items-center text-base font-semibold text-slate-600">{filtered.length} movimientos visibles</span>
+          <span className="text-base font-bold text-slate-600">{filtered.length} movimientos encontrados</span>
         </div>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="space-y-3 lg:hidden">
+        {filtered.map((movement) => (
+          <article key={movement.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className={`text-xs font-black uppercase tracking-wide ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "Ingreso" : "Gasto"}</p>
+                <h3 className="mt-1 break-words text-lg font-black text-slate-900">{movement.description}</h3>
+              </div>
+              <p className={`shrink-0 text-xl font-black ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "+" : "-"}{formatMoney(movement.amount)}</p>
+            </div>
+            <p className="mt-3 text-sm font-semibold text-slate-600">{formatMovementDate(movement.date)} · {movement.method}</p>
+            <p className="mt-1 text-sm text-slate-500">{movement.category} · {movement.person}</p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setEditing(movement)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-blue-100 px-3 text-base font-black text-blue-800 hover:bg-blue-200">
+                <Edit className="h-5 w-5" />
+                Editar
+              </button>
+              <button type="button" disabled={deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-100 px-3 text-base font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                <Trash2 className="h-5 w-5" />
+                {deletingId === movement.id ? "Eliminando..." : "Eliminar"}
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-3xl bg-white p-5 shadow-sm lg:block">
         <table className="w-full min-w-[900px] border-separate border-spacing-y-2">
           <thead>
             <tr className="text-left text-sm uppercase tracking-wide text-slate-500">
               <th className="px-3 py-2">Fecha</th>
               <th className="px-3 py-2">Tipo</th>
-              <th className="px-3 py-2">Descripcion</th>
-              <th className="px-3 py-2">Categoria</th>
-              <th className="px-3 py-2">Metodo</th>
+              <th className="px-3 py-2">Descripción</th>
+              <th className="px-3 py-2">Categoría</th>
+              <th className="px-3 py-2">Método</th>
               <th className="px-3 py-2">Monto</th>
               <th className="px-3 py-2">Persona</th>
               <th className="px-3 py-2">Acciones</th>
@@ -142,35 +197,23 @@ export function MovementsList({ movements, categories, onQuickCreateCategory, on
           </thead>
           <tbody>
             {filtered.map((movement) => (
-              <tr key={movement.id} className="rounded-lg bg-slate-50 text-base">
-                <td className="rounded-l-lg px-3 py-4">{movement.date}</td>
-                <td className={`px-3 py-4 font-bold ${movement.type === "ingreso" ? "text-green-700" : "text-red-700"}`}>{movement.type}</td>
+              <tr key={movement.id} className="rounded-2xl bg-slate-50 text-base">
+                <td className="rounded-l-2xl px-3 py-4">{movement.date}</td>
+                <td className={`px-3 py-4 font-black ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "Ingreso" : "Gasto"}</td>
                 <td className="px-3 py-4">{movement.description}</td>
                 <td className="px-3 py-4">{movement.category}</td>
                 <td className="px-3 py-4">{movement.method}</td>
-                <td className="px-3 py-4 font-bold">{formatMoney(movement.amount)}</td>
+                <td className="px-3 py-4 font-black">{formatMoney(movement.amount)}</td>
                 <td className="px-3 py-4">{movement.person}</td>
-                <td className="rounded-r-lg px-3 py-4">
+                <td className="rounded-r-2xl px-3 py-4">
                   <div className="flex gap-2">
-                    <button type="button" title="Editar" onClick={() => setEditing(movement)} className="rounded-lg bg-blue-100 p-3 text-blue-700 hover:bg-blue-200">
+                    <button type="button" onClick={() => setEditing(movement)} className="flex min-h-12 items-center gap-2 rounded-xl bg-blue-100 px-3 text-sm font-black text-blue-800 hover:bg-blue-200">
                       <Edit className="h-5 w-5" />
+                      Editar
                     </button>
-                    <button
-                      disabled={deletingId !== null}
-                      type="button"
-                      title={deletingId === movement.id ? "Eliminando" : "Eliminar"}
-                      onClick={async () => {
-                        if (deletingId !== null) return;
-                        setDeletingId(movement.id);
-                        try {
-                          await onDelete(movement.id);
-                        } finally {
-                          setDeletingId(null);
-                        }
-                      }}
-                      className="rounded-lg bg-red-100 p-3 text-red-700 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
+                    <button type="button" disabled={deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center gap-2 rounded-xl bg-red-100 px-3 text-sm font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60">
                       <Trash2 className="h-5 w-5" />
+                      {deletingId === movement.id ? "Eliminando..." : "Eliminar"}
                     </button>
                   </div>
                 </td>
@@ -180,7 +223,13 @@ export function MovementsList({ movements, categories, onQuickCreateCategory, on
         </table>
       </div>
 
-      {filtered.length === 0 && <p className="py-8 text-center text-lg text-slate-500">No hay movimientos para los filtros elegidos.</p>}
+      {filtered.length === 0 && <p className="rounded-3xl bg-white p-8 text-center text-lg text-slate-500 shadow-sm">No hay movimientos para la búsqueda o los filtros elegidos.</p>}
     </section>
   );
+}
+
+function formatMovementDate(value: string) {
+  const [year, month, day] = value.split("-");
+  if (!year || !month || !day) return value;
+  return `${day}/${month}/${year}`;
 }
