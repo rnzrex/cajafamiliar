@@ -9,7 +9,7 @@ import { MovementForm } from "./MovementForm";
 interface MovementsListProps {
   movements: Movement[];
   categories: Category[];
-  onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null;
+  onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
   onSave: (movement: Omit<Movement, "id">, id?: string) => void | Promise<boolean>;
   onDelete: (id: string) => void | Promise<boolean>;
 }

@@ -10,7 +10,7 @@ interface MovementFormProps {
   movement?: Movement | null;
   draft?: MovementDraft | null;
   categories: Category[];
-  onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null;
+  onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
   onSave: (movement: Omit<Movement, "id">, id?: string) => void | Promise<boolean>;
   onCancel?: () => void;
 }
@@ -47,6 +47,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
   const [showDatePicker, setShowDatePicker] = useState(Boolean(movement) || (Boolean(draft?.date) && draft?.date !== today()));
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryType, setNewCategoryType] = useState<CategoryType>(initialType);
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [validationError, setValidationError] = useState<ValidationError | null>(null);
 
@@ -149,22 +150,29 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
     setValidationError((current) => (current?.field === field ? null : current));
   }
 
-  function handleQuickCategorySubmit(event: FormEvent) {
+  async function handleQuickCategorySubmit(event: FormEvent) {
     event.preventDefault();
-    const created = onQuickCreateCategory({
-      name: newCategoryName.trim(),
-      type: newCategoryType,
-      color: "#2563eb",
-      icon: "tag",
-      is_active: true,
-    });
-    if (!created) return;
-    setCategory(created.name);
-    setCategoryTouched(true);
-    setNewCategoryName("");
-    setNewCategoryType(type);
-    setShowCategoryModal(false);
-    setShowCategorySelector(true);
+    if (isCreatingCategory) return;
+
+    setIsCreatingCategory(true);
+    try {
+      const created = await onQuickCreateCategory({
+        name: newCategoryName.trim(),
+        type: newCategoryType,
+        color: "#2563eb",
+        icon: "tag",
+        is_active: true,
+      });
+      if (!created) return;
+      setCategory(created.name);
+      setCategoryTouched(true);
+      setNewCategoryName("");
+      setNewCategoryType(type);
+      setShowCategoryModal(false);
+      setShowCategorySelector(true);
+    } finally {
+      setIsCreatingCategory(false);
+    }
   }
 
   return (
@@ -379,9 +387,9 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
                   <option value="ambos">Ambos</option>
                 </select>
               </label>
-              <button type="submit" className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-lg font-black text-white hover:bg-blue-700">
+              <button disabled={isCreatingCategory} type="submit" className="flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-lg font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
                 <Save className="h-6 w-6" />
-                Crear y seleccionar
+                {isCreatingCategory ? "Guardando..." : "Crear y seleccionar"}
               </button>
             </div>
           </form>
