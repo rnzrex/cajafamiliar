@@ -10,7 +10,7 @@ import {
   Scale,
 } from "lucide-react";
 import { CashCount, Movement, RecurringPayment } from "../types";
-import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentStatus, topExpenseCategory } from "../utils/calculations";
+import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAmountLabel, paymentScheduleLabel, paymentStatus, topExpenseCategory } from "../utils/calculations";
 
 interface DashboardProps {
   movements: Movement[];
@@ -18,9 +18,10 @@ interface DashboardProps {
   recurringPayments: RecurringPayment[];
   initialBalance: number;
   onNavigate: (view: string) => void;
+  onOpenPayment: (id: string) => void;
 }
 
-export function Dashboard({ movements, cashCounts, recurringPayments, initialBalance, onNavigate }: DashboardProps) {
+export function Dashboard({ movements, cashCounts, recurringPayments, initialBalance, onNavigate, onOpenPayment }: DashboardProps) {
   const expected = expectedCash(movements, initialBalance);
   const lastCount = lastCashCount(cashCounts);
   const hasCount = Boolean(lastCount);
@@ -30,16 +31,17 @@ export function Dashboard({ movements, cashCounts, recurringPayments, initialBal
   const latestMovements = [...movements]
     .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
     .slice(0, 5);
-  const relevantPayments = recurringPayments
+  const attentionPayments = recurringPayments
     .map((payment) => ({ payment, status: paymentStatus(payment) }))
-    .filter(({ payment, status }) => payment.is_active && status.tone !== "green" && status.days <= 3)
+    .filter(({ payment, status }) => payment.is_active && ["overdue", "today", "tomorrow", "upcoming"].includes(status.kind))
     .sort((a, b) => a.status.days - b.status.days);
+  const relevantPayments = attentionPayments.slice(0, 3);
 
   const secondaryStats = [
     { label: "Ingresos del mes", value: formatMoney(totals.income), icon: ArrowUpCircle, tone: "text-emerald-700 bg-emerald-50" },
     { label: "Egresos del mes", value: formatMoney(totals.expense), icon: ArrowDownCircle, tone: "text-red-700 bg-red-50" },
     { label: "Categoría con más gasto", value: topCategory, icon: CreditCard, tone: "text-amber-800 bg-amber-50" },
-    { label: "Pagos próximos", value: `${relevantPayments.length}`, icon: CalendarClock, tone: "text-orange-800 bg-orange-50" },
+    { label: "Pagos próximos", value: `${attentionPayments.length}`, icon: CalendarClock, tone: "text-orange-800 bg-orange-50" },
   ];
 
   return (
@@ -121,7 +123,7 @@ export function Dashboard({ movements, cashCounts, recurringPayments, initialBal
             <CalendarClock className="h-7 w-7 text-orange-700" />
             <div>
               <p className="text-sm font-bold uppercase tracking-wide text-orange-700">Atención</p>
-              <h2 className="text-2xl font-bold text-orange-950">Próximos pagos</h2>
+              <h2 className="text-2xl font-bold text-orange-950">Pagos que requieren atención</h2>
             </div>
           </div>
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -131,9 +133,9 @@ export function Dashboard({ movements, cashCounts, recurringPayments, initialBal
                   <div>
                     <span className="inline-flex rounded-full bg-orange-100 px-3 py-1 text-sm font-bold text-orange-900">{status.label}</span>
                     <h3 className="mt-3 text-xl font-bold text-slate-900">{payment.name}</h3>
-                    <p className="mt-1 text-sm font-semibold text-slate-600">{formatMoney(payment.amount)} · Día {payment.dueDay}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-600">{paymentAmountLabel(payment)} · {paymentScheduleLabel(payment)}</p>
                   </div>
-                  <button type="button" onClick={() => onNavigate("pagos")} className="min-h-12 rounded-xl bg-orange-600 px-4 py-2 text-base font-bold text-white hover:bg-orange-700">
+                  <button type="button" onClick={() => onOpenPayment(payment.id)} className="min-h-12 rounded-xl bg-orange-600 px-4 py-2 text-base font-bold text-white hover:bg-orange-700">
                     Ver pago
                   </button>
                 </div>

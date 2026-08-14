@@ -198,7 +198,9 @@ export async function updateRecurringPaymentDetails(payment: RecurringPayment): 
     .update({
       name: payment.name,
       amount: payment.amount,
+      amount_mode: payment.amount_mode,
       due_day: payment.dueDay,
+      due_date: payment.dueDate,
       category: payment.category,
       notes: payment.notes,
       recurrence_type: payment.recurrence_type,
@@ -361,7 +363,9 @@ function toRecurringPaymentRow(payment: RecurringPayment) {
     household_id: householdId,
     name: payment.name,
     amount: payment.amount,
+    amount_mode: payment.amount_mode,
     due_day: payment.dueDay,
+    due_date: payment.dueDate,
     category: payment.category,
     status: payment.status,
     notes: payment.notes,
@@ -375,21 +379,42 @@ function toRecurringPaymentRow(payment: RecurringPayment) {
   };
 }
 
-function fromRecurringPaymentRow(row: Record<string, any>): RecurringPayment {
+function fromRecurringPaymentRow(row: RecurringPaymentRow): RecurringPayment {
   return {
     id: row.id,
     name: row.name,
-    amount: Number(row.amount),
-    dueDay: Number(row.due_day),
+    amount: row.amount == null ? null : Number(row.amount),
+    amount_mode: row.amount_mode === "variable" ? "variable" : "fixed",
+    dueDay: row.due_day == null ? null : Number(row.due_day),
+    dueDate: row.due_date ?? null,
     category: row.category,
-    status: row.status,
+    status: row.status === "pagado" ? "pagado" : "pendiente",
     notes: row.notes ?? "",
-    recurrence_type: row.recurrence_type,
-    total_installments: row.total_installments,
-    paid_installments: Number(row.paid_installments ?? 0),
+    recurrence_type: row.recurrence_type === "fixed" || row.recurrence_type === "one_time" ? row.recurrence_type : "indefinite",
+    total_installments: row.total_installments == null ? null : Number(row.total_installments),
+    paid_installments: row.paid_installments == null ? 0 : Number(row.paid_installments),
     is_active: Boolean(row.is_active),
-    last_paid_month: row.last_paid_month,
-    last_paid_year: row.last_paid_year,
-    paidAt: row.paid_at,
+    last_paid_month: row.last_paid_month == null ? null : Number(row.last_paid_month),
+    last_paid_year: row.last_paid_year == null ? null : Number(row.last_paid_year),
+    paidAt: row.paid_at ?? null,
   };
+}
+
+interface RecurringPaymentRow {
+  id: string;
+  name: string;
+  amount: number | string | null;
+  amount_mode?: string | null;
+  due_day: number | string | null;
+  due_date: string | null;
+  category: string;
+  status: string;
+  notes?: string | null;
+  recurrence_type: string;
+  total_installments: number | string | null;
+  paid_installments: number | string | null;
+  is_active: boolean;
+  last_paid_month: number | string | null;
+  last_paid_year: number | string | null;
+  paid_at: string | null;
 }

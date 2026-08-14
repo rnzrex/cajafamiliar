@@ -1,7 +1,8 @@
 export type MovementType = "ingreso" | "egreso";
 export type PaymentMethod = "efectivo" | "Yape" | "transferencia" | "tarjeta";
 export type RecurringStatus = "pendiente" | "pagado";
-export type RecurrenceType = "indefinite" | "fixed";
+export type RecurrenceType = "indefinite" | "fixed" | "one_time";
+export type PaymentAmountMode = "fixed" | "variable";
 export type CategoryType = MovementType | "ambos";
 
 export interface Movement {
@@ -40,8 +41,10 @@ export interface Category {
 export interface RecurringPayment {
   id: string;
   name: string;
-  amount: number;
-  dueDay: number;
+  amount: number | null;
+  amount_mode: PaymentAmountMode;
+  dueDay: number | null;
+  dueDate: string | null;
   category: string;
   status: RecurringStatus;
   notes: string;
@@ -51,7 +54,7 @@ export interface RecurringPayment {
   is_active: boolean;
   last_paid_month: number | null;
   last_paid_year: number | null;
-  paidAt?: string;
+  paidAt?: string | null;
 }
 
 export interface AppData {
