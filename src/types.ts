@@ -5,6 +5,13 @@ export type RecurrenceType = "indefinite" | "fixed" | "one_time";
 export type PaymentAmountMode = "fixed" | "variable";
 export type CategoryType = MovementType | "ambos";
 
+export interface HouseholdMember {
+  householdId: string;
+  userId: string;
+  displayName: string;
+  role: "owner" | "member";
+}
+
 export interface Movement {
   id: string;
   type: MovementType;
@@ -14,9 +21,11 @@ export interface Movement {
   method: PaymentMethod;
   category: string;
   person: string;
+  registeredByUserId?: string | null;
   createdAt?: string;
 }
 
+export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId"> & { person?: string };
 export type MovementDraft = Partial<Omit<Movement, "id">>;
 
 export interface CashCount {

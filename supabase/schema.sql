@@ -13,6 +13,7 @@ create table if not exists public.household_members (
   household_id uuid not null references public.households(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   role text not null default 'member' check (role in ('owner', 'member')),
+  display_name text,
   created_at timestamptz not null default now(),
   primary key (household_id, user_id)
 );
@@ -44,7 +45,12 @@ create table if not exists public.movements (
   method text not null check (method in ('efectivo', 'Yape', 'transferencia', 'tarjeta')),
   category text not null,
   person text not null,
-  created_at timestamptz not null default now()
+  registered_by_user_id uuid,
+  created_at timestamptz not null default now(),
+  constraint movements_registered_by_user_fk
+    foreign key (registered_by_user_id)
+    references auth.users(id)
+    on delete set null
 );
 
 create table if not exists public.cash_counts (
@@ -99,6 +105,7 @@ create unique index if not exists categories_household_name_unique
 on public.categories (household_id, lower(name));
 create index if not exists idx_household_members_user_id on public.household_members(user_id);
 create index if not exists idx_movements_household_date on public.movements(household_id, date desc);
+create index if not exists idx_movements_registered_by_user on public.movements(household_id, registered_by_user_id);
 create index if not exists idx_cash_counts_household_created on public.cash_counts(household_id, created_at desc);
 create index if not exists idx_recurring_payments_household on public.recurring_payments(household_id);
 
@@ -123,7 +130,8 @@ from PUBLIC, anon, authenticated;
 grant select on table public.households to authenticated;
 grant select, insert, update on table public.settings to authenticated;
 grant select, insert, update, delete on table public.categories to authenticated;
-grant select, insert, update, delete on table public.movements to authenticated;
+grant select, insert, delete on table public.movements to authenticated;
+grant update (type, date, amount, description, method, category) on table public.movements to authenticated;
 grant select, insert on table public.cash_counts to authenticated;
 grant select, insert, update on table public.recurring_payments to authenticated;
 grant select on table public.household_members to authenticated;
@@ -313,11 +321,15 @@ create policy "movements_insert_member"
   for insert
   to authenticated
   with check (
-    exists (
+    registered_by_user_id = (select auth.uid())
+    and exists (
       select 1
       from public.household_members as hm
       where hm.household_id = movements.household_id
         and hm.user_id = (select auth.uid())
+        and hm.display_name is not null
+        and btrim(hm.display_name) <> ''
+        and hm.display_name = movements.person
     )
   );
 

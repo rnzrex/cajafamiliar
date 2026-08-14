@@ -204,7 +204,11 @@ export function normalizeData(data: AppData): AppData {
   return {
     ...data,
     categories,
-    movements: data.movements.map((movement) => ({ ...movement, category: movementCategoryMap[movement.category] ?? movement.category })),
+    movements: data.movements.map((movement) => ({
+      ...movement,
+      category: movementCategoryMap[movement.category] ?? movement.category,
+      registeredByUserId: movement.registeredByUserId ?? null,
+    })),
     recurringPayments: data.recurringPayments.map((payment) => ({
       ...payment,
       amount: payment.amount == null ? null : Number(payment.amount),

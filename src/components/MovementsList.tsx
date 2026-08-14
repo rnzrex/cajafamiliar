@@ -1,6 +1,6 @@
 import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Category, Movement, paymentMethods } from "../types";
+import { Category, HouseholdMember, Movement, MovementFormInput, paymentMethods } from "../types";
 import { formatMoney } from "../utils/calculations";
 import { exportMovementsExcel } from "../utils/excelExport";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters";
@@ -9,12 +9,13 @@ import { MovementForm } from "./MovementForm";
 interface MovementsListProps {
   movements: Movement[];
   categories: Category[];
+  currentMember?: HouseholdMember;
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
-  onSave: (movement: Omit<Movement, "id">, id?: string) => void | Promise<boolean>;
+  onSave: (movement: MovementFormInput, id?: string) => void | Promise<boolean>;
   onDelete: (id: string) => void | Promise<boolean>;
 }
 
-export function MovementsList({ movements, categories, onQuickCreateCategory, onSave, onDelete }: MovementsListProps) {
+export function MovementsList({ movements, categories, currentMember, onQuickCreateCategory, onSave, onDelete }: MovementsListProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
   const [editing, setEditing] = useState<Movement | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -36,6 +37,7 @@ export function MovementsList({ movements, categories, onQuickCreateCategory, on
     return (
       <MovementForm
         movement={editing}
+        currentMember={currentMember}
         categories={categories}
         onQuickCreateCategory={onQuickCreateCategory}
         onSave={async (movement, id) => {
