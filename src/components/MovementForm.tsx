@@ -18,6 +18,12 @@ interface MovementFormProps {
 const today = () => localDateString();
 const knownPeople = ["Rolando", "Verónica", "Renzo"] as const;
 type PersonChoice = (typeof knownPeople)[number] | "Otro" | "";
+type ValidationField = "amount" | "description" | "person";
+
+interface ValidationError {
+  field: ValidationField;
+  message: string;
+}
 
 const methodLabels: Record<PaymentMethod, string> = {
   efectivo: "Efectivo",
@@ -42,6 +48,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryType, setNewCategoryType] = useState<CategoryType>(initialType);
   const [isSaving, setIsSaving] = useState(false);
+  const [validationError, setValidationError] = useState<ValidationError | null>(null);
 
   const availableCategories = categories.filter((item) => item.is_active && (item.type === type || item.type === "ambos"));
   const dateLabel = date === today() ? "Hoy" : formatDateLabel(date);
@@ -80,8 +87,21 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
     event.preventDefault();
     if (isSaving) return;
 
+    if (!isValidAmount(amount)) {
+      setValidationError({ field: "amount", message: "Ingresa un monto mayor a S/ 0.00." });
+      return;
+    }
+    if (!description.trim()) {
+      setValidationError({ field: "description", message: "Escribe una descripción del movimiento." });
+      return;
+    }
+    if (!person.trim()) {
+      setValidationError({ field: "person", message: "Selecciona quién está registrando el movimiento." });
+      return;
+    }
+
     const parsedAmount = Number(amount);
-    if (!description.trim() || !person.trim() || !parsedAmount || parsedAmount <= 0) return;
+    setValidationError(null);
 
     setIsSaving(true);
     try {
@@ -121,7 +141,12 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
     }
 
     setPerson(choice);
+    clearValidationError("person");
     savePreferredPerson(choice, false);
+  }
+
+  function clearValidationError(field: ValidationField) {
+    setValidationError((current) => (current?.field === field ? null : current));
   }
 
   function handleQuickCategorySubmit(event: FormEvent) {
@@ -153,6 +178,12 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
           <p className="mt-2 text-base text-slate-600">Completa lo esencial y guarda en pocos pasos.</p>
         </div>
 
+        {validationError && (
+          <p id="movement-form-error" role="alert" aria-live="assertive" className="mb-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-base font-bold text-red-800">
+            {validationError.message}
+          </p>
+        )}
+
         <div className="space-y-5">
           {movement && (
             <label className="block space-y-2 text-base font-bold text-slate-700">
@@ -175,8 +206,13 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
                 inputMode="decimal"
                 type="number"
                 value={amount}
-                onChange={(event) => setAmount(event.target.value)}
+                onChange={(event) => {
+                  setAmount(event.target.value);
+                  if (isValidAmount(event.target.value)) clearValidationError("amount");
+                }}
                 placeholder="0.00"
+                aria-invalid={validationError?.field === "amount"}
+                aria-describedby={validationError?.field === "amount" ? "movement-form-error" : undefined}
                 className="h-full min-w-0 flex-1 bg-transparent text-3xl font-black text-slate-900 outline-none placeholder:text-blue-200"
               />
             </div>
@@ -184,7 +220,17 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
 
           <label className="block space-y-2 text-base font-bold text-slate-700">
             Descripción
-            <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Ej. Pan molido" className="h-16 w-full rounded-2xl border border-slate-200 px-4 text-lg" />
+            <input
+              value={description}
+              onChange={(event) => {
+                setDescription(event.target.value);
+                if (event.target.value.trim()) clearValidationError("description");
+              }}
+              placeholder="Ej. Pan molido"
+              aria-invalid={validationError?.field === "description"}
+              aria-describedby={validationError?.field === "description" ? "movement-form-error" : undefined}
+              className="h-16 w-full rounded-2xl border border-slate-200 px-4 text-lg"
+            />
           </label>
 
           <fieldset className="space-y-2">
@@ -204,7 +250,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
             </div>
           </fieldset>
 
-          <fieldset className="space-y-2">
+          <fieldset className="space-y-2" aria-invalid={validationError?.field === "person"} aria-describedby={validationError?.field === "person" ? "movement-form-error" : undefined}>
             <legend className="text-base font-bold text-slate-700">Registrado por</legend>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {knownPeople.map((item) => (
@@ -228,7 +274,18 @@ export function MovementForm({ initialType = "egreso", movement, draft, categori
               </button>
             </div>
             {personChoice === "Otro" && (
-              <input value={person} onChange={(event) => setPerson(event.target.value)} onBlur={() => savePreferredPerson(person, true)} placeholder="Escribe el nombre" className="h-14 w-full rounded-2xl border border-slate-200 px-4 text-lg" />
+              <input
+                value={person}
+                onChange={(event) => {
+                  setPerson(event.target.value);
+                  if (event.target.value.trim()) clearValidationError("person");
+                }}
+                onBlur={() => savePreferredPerson(person, true)}
+                placeholder="Escribe el nombre"
+                aria-invalid={validationError?.field === "person"}
+                aria-describedby={validationError?.field === "person" ? "movement-form-error" : undefined}
+                className="h-14 w-full rounded-2xl border border-slate-200 px-4 text-lg"
+              />
             )}
           </fieldset>
 
@@ -356,4 +413,9 @@ function formatDateLabel(value: string) {
   const [year, month, day] = value.split("-");
   if (!year || !month || !day) return value;
   return `${day}/${month}/${year}`;
+}
+
+function isValidAmount(value: string) {
+  const parsed = Number(value);
+  return value.trim() !== "" && Number.isFinite(parsed) && parsed > 0;
 }
