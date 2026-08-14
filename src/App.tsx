@@ -4,6 +4,7 @@ import {
   ClipboardList,
   Coins,
   Home,
+  LogOut,
   MoreHorizontal,
   PiggyBank,
   PlusCircle,
@@ -32,6 +33,7 @@ import {
   deleteCategory as deleteRemoteCategory,
   deleteMovement as deleteRemoteMovement,
   getRecurringPayment,
+  HouseholdNotProvisionedError,
   loadAppData,
   MovementNotFoundError,
   RecurringPaymentConflictError,
@@ -50,6 +52,10 @@ import { localDateString } from "./utils/date";
 
 type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "saldo-inicial";
 type SyncStatus = "loading" | "connected" | "local" | "offline";
+
+interface AppProps {
+  onSignOut?: () => void | Promise<void>;
+}
 
 const navItems: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: "dashboard", label: "Inicio", icon: Home },
@@ -81,26 +87,44 @@ const titles: Record<View, string> = {
   "saldo-inicial": "Saldo inicial",
 };
 
-export default function App() {
+export default function App({ onSignOut }: AppProps = {}) {
   const [data, setData] = useState<AppData>(() => loadData());
   const [view, setView] = useState<View>("dashboard");
   const [moreOpen, setMoreOpen] = useState(false);
   const [movementDraft, setMovementDraft] = useState<MovementDraft | null>(null);
   const [pendingRecurringPaymentId, setPendingRecurringPaymentId] = useState<string | null>(null);
   const [dataReady, setDataReady] = useState(false);
+  const [dataLoadError, setDataLoadError] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const expected = useMemo(() => expectedCash(data.movements, data.initialBalance), [data.movements, data.initialBalance]);
 
   useEffect(() => {
-    loadAppData().then(({ data: loadedData, source }) => {
-      setData(loadedData);
-      setSyncStatus(source === "fallback" ? "offline" : source === "local" ? "local" : "connected");
-      if (source === "fallback") {
-        window.alert("No se pudo cargar la información desde Supabase. Se conservará la copia local y no se sincronizarán datos automáticamente.");
-      }
-      setDataReady(true);
-    });
+    let active = true;
+
+    loadAppData()
+      .then(({ data: loadedData, source }) => {
+        if (!active) return;
+        setData(loadedData);
+        setSyncStatus(source === "fallback" ? "offline" : source === "local" ? "local" : "connected");
+        if (source === "fallback") {
+          window.alert("No se pudo cargar la información desde Supabase. Se conservará la copia local y no se sincronizarán datos automáticamente.");
+        }
+        setDataReady(true);
+      })
+      .catch((error) => {
+        if (!active) return;
+        setSyncStatus("offline");
+        setDataLoadError(
+          error instanceof HouseholdNotProvisionedError
+            ? "Este hogar todavía no está provisionado en Supabase. Contacta al administrador para habilitarlo."
+            : "No se pudo cargar la información financiera. Intenta nuevamente más tarde."
+        );
+      });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -478,6 +502,8 @@ export default function App() {
     return updateRecurringPaymentPaymentState(markPaidForCurrentMonth(currentPayment), currentPayment);
   }
 
+  if (dataLoadError) return <DataLoadErrorScreen message={dataLoadError} onSignOut={onSignOut} />;
+
   const initialType: MovementType = view === "registrar-ingreso" ? "ingreso" : "egreso";
 
   return (
@@ -515,6 +541,12 @@ export default function App() {
           <p className="font-semibold">Saldo esperado</p>
           <p className="text-2xl font-bold">{formatMoney(expected)}</p>
         </div>
+        {onSignOut && (
+          <button type="button" onClick={() => void onSignOut()} className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2 font-bold text-slate-700 hover:bg-slate-50">
+            <LogOut className="h-5 w-5" />
+            Cerrar sesión
+          </button>
+        )}
       </aside>
 
       <main className="pb-24 lg:pb-0 lg:pl-72">
@@ -638,6 +670,12 @@ export default function App() {
                   Saldo inicial
                 </button>
               </div>
+              {onSignOut && (
+                <button type="button" onClick={() => void onSignOut()} className="col-span-2 flex min-h-14 items-center justify-center gap-2 rounded-2xl border border-slate-300 px-4 text-base font-bold text-slate-700 hover:bg-slate-50">
+                  <LogOut className="h-5 w-5" />
+                  Cerrar sesión
+                </button>
+              )}
             </div>
           </section>
         </div>
@@ -661,6 +699,22 @@ function SyncStatus({ status }: { status: SyncStatus }) {
       <span className={`h-2.5 w-2.5 rounded-full ${config.className}`} aria-hidden="true" />
       {config.label}
     </div>
+  );
+}
+
+function DataLoadErrorScreen({ message, onSignOut }: { message: string; onSignOut?: () => void | Promise<void> }) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
+      <section className="w-full max-w-md rounded-3xl bg-white p-6 text-center shadow-xl sm:p-8">
+        <h1 className="text-3xl font-black text-slate-900">Caja Familiar</h1>
+        <p className="mt-4 text-lg text-slate-600" role="alert">{message}</p>
+        {onSignOut && (
+          <button type="button" onClick={() => void onSignOut()} className="mt-6 min-h-14 w-full rounded-2xl border border-slate-300 px-5 py-3 text-lg font-bold text-slate-700 hover:bg-slate-50">
+            Cerrar sesión
+          </button>
+        )}
+      </section>
+    </main>
   );
 }
 

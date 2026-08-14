@@ -1,115 +1,3 @@
--- Caja Familiar - Supabase schema
--- Run this file in Supabase SQL Editor before deploying the app.
-
-create extension if not exists pgcrypto;
-
-create table if not exists public.households (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.household_members (
-  household_id uuid not null references public.households(id) on delete cascade,
-  user_id uuid not null references auth.users(id) on delete cascade,
-  role text not null default 'member' check (role in ('owner', 'member')),
-  created_at timestamptz not null default now(),
-  primary key (household_id, user_id)
-);
-
-create table if not exists public.settings (
-  household_id uuid primary key references public.households(id) on delete cascade,
-  initial_balance numeric(12, 2) not null default 0,
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists public.categories (
-  id text primary key,
-  household_id uuid not null references public.households(id) on delete cascade,
-  name text not null,
-  type text not null check (type in ('ingreso', 'egreso', 'ambos')),
-  color text,
-  icon text,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.movements (
-  id text primary key,
-  household_id uuid not null references public.households(id) on delete cascade,
-  type text not null check (type in ('ingreso', 'egreso')),
-  date date not null,
-  amount numeric(12, 2) not null check (amount > 0),
-  description text not null,
-  method text not null check (method in ('efectivo', 'Yape', 'transferencia', 'tarjeta')),
-  category text not null,
-  person text not null,
-  created_at timestamptz not null default now()
-);
-
-create table if not exists public.cash_counts (
-  id text primary key,
-  household_id uuid not null references public.households(id) on delete cascade,
-  created_at timestamptz not null default now(),
-  denominations jsonb not null default '{}'::jsonb,
-  total numeric(12, 2) not null default 0,
-  expected numeric(12, 2) not null default 0,
-  difference numeric(12, 2) not null default 0
-);
-
-create table if not exists public.recurring_payments (
-  id text primary key,
-  household_id uuid not null references public.households(id) on delete cascade,
-  name text not null,
-  amount numeric(12, 2) not null check (amount > 0),
-  due_day integer not null check (due_day between 1 and 31),
-  category text not null,
-  status text not null default 'pendiente' check (status in ('pendiente', 'pagado')),
-  notes text not null default '',
-  recurrence_type text not null default 'indefinite' check (recurrence_type in ('indefinite', 'fixed')),
-  total_installments integer check (total_installments is null or total_installments > 0),
-  paid_installments integer not null default 0 check (paid_installments >= 0),
-  is_active boolean not null default true,
-  last_paid_month integer check (last_paid_month is null or last_paid_month between 1 and 12),
-  last_paid_year integer check (last_paid_year is null or last_paid_year >= 2000),
-  paid_at timestamptz,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists idx_categories_household on public.categories(household_id);
-create unique index if not exists categories_household_name_unique
-on public.categories (household_id, lower(name));
-create index if not exists idx_household_members_user_id on public.household_members(user_id);
-create index if not exists idx_movements_household_date on public.movements(household_id, date desc);
-create index if not exists idx_cash_counts_household_created on public.cash_counts(household_id, created_at desc);
-create index if not exists idx_recurring_payments_household on public.recurring_payments(household_id);
-
-alter table public.households enable row level security;
-alter table public.settings enable row level security;
-alter table public.categories enable row level security;
-alter table public.movements enable row level security;
-alter table public.cash_counts enable row level security;
-alter table public.recurring_payments enable row level security;
-alter table public.household_members enable row level security;
-
-revoke all privileges on table
-  public.households,
-  public.settings,
-  public.categories,
-  public.movements,
-  public.cash_counts,
-  public.recurring_payments,
-  public.household_members
-from PUBLIC, anon, authenticated;
-
-grant select on table public.households to authenticated;
-grant select, insert, update on table public.settings to authenticated;
-grant select, insert, update, delete on table public.categories to authenticated;
-grant select, insert, update, delete on table public.movements to authenticated;
-grant select, insert on table public.cash_counts to authenticated;
-grant select, insert, update on table public.recurring_payments to authenticated;
-grant select on table public.household_members to authenticated;
-
 drop policy if exists "public read households" on public.households;
 drop policy if exists "public write households" on public.households;
 drop policy if exists "public update households" on public.households;
@@ -133,23 +21,32 @@ drop policy if exists "public write recurring_payments" on public.recurring_paym
 drop policy if exists "public update recurring_payments" on public.recurring_payments;
 drop policy if exists "public delete recurring_payments" on public.recurring_payments;
 drop policy if exists "household_members_select_self" on public.household_members;
-drop policy if exists "households_select_member" on public.households;
-drop policy if exists "settings_select_member" on public.settings;
-drop policy if exists "settings_insert_member" on public.settings;
-drop policy if exists "settings_update_member" on public.settings;
-drop policy if exists "categories_select_member" on public.categories;
-drop policy if exists "categories_insert_member" on public.categories;
-drop policy if exists "categories_update_member" on public.categories;
-drop policy if exists "categories_delete_member" on public.categories;
-drop policy if exists "movements_select_member" on public.movements;
-drop policy if exists "movements_insert_member" on public.movements;
-drop policy if exists "movements_update_member" on public.movements;
-drop policy if exists "movements_delete_member" on public.movements;
-drop policy if exists "cash_counts_select_member" on public.cash_counts;
-drop policy if exists "cash_counts_insert_member" on public.cash_counts;
-drop policy if exists "recurring_payments_select_member" on public.recurring_payments;
-drop policy if exists "recurring_payments_insert_member" on public.recurring_payments;
-drop policy if exists "recurring_payments_update_member" on public.recurring_payments;
+
+alter table public.households enable row level security;
+alter table public.settings enable row level security;
+alter table public.categories enable row level security;
+alter table public.movements enable row level security;
+alter table public.cash_counts enable row level security;
+alter table public.recurring_payments enable row level security;
+alter table public.household_members enable row level security;
+
+revoke all privileges on table
+  public.households,
+  public.settings,
+  public.categories,
+  public.movements,
+  public.cash_counts,
+  public.recurring_payments,
+  public.household_members
+from public, anon, authenticated;
+
+grant select on table public.households to authenticated;
+grant select, insert, update on table public.settings to authenticated;
+grant select, insert, update, delete on table public.categories to authenticated;
+grant select, insert, update, delete on table public.movements to authenticated;
+grant select, insert on table public.cash_counts to authenticated;
+grant select, insert, update on table public.recurring_payments to authenticated;
+grant select on table public.household_members to authenticated;
 
 create policy "household_members_select_self"
   on public.household_members
