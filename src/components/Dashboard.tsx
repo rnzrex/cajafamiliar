@@ -79,6 +79,34 @@ export function Dashboard({ movements, cashCounts, recurringPayments, initialBal
         </div>
       </section>
 
+      {relevantPayments.length > 0 && (
+        <section className="rounded-3xl border border-orange-100 bg-orange-50 p-5 sm:p-6">
+          <div className="mb-4 flex items-center gap-3">
+            <CalendarClock className="h-7 w-7 text-orange-700" />
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-orange-700">Atención</p>
+              <h2 className="text-2xl font-bold text-orange-950">Pagos que requieren atención</h2>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {relevantPayments.map(({ payment, status }) => (
+              <article key={payment.id} className="rounded-2xl border border-orange-200 bg-white p-4">
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <div>
+                    <span className="inline-flex rounded-full bg-orange-100 px-3 py-1 text-sm font-bold text-orange-900">{status.label}</span>
+                    <h3 className="mt-3 text-xl font-bold text-slate-900">{payment.name}</h3>
+                    <p className="mt-1 text-sm font-semibold text-slate-600">{paymentAmountLabel(payment)} · {paymentScheduleLabel(payment)}</p>
+                  </div>
+                  <button type="button" onClick={() => onOpenPayment(payment.id)} className="min-h-12 rounded-xl bg-orange-600 px-4 py-2 text-base font-bold text-white hover:bg-orange-700">
+                    Ver pago
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="rounded-3xl bg-white p-5 shadow-sm sm:p-6">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
@@ -116,34 +144,6 @@ export function Dashboard({ movements, cashCounts, recurringPayments, initialBal
           </div>
         )}
       </section>
-
-      {relevantPayments.length > 0 && (
-        <section className="rounded-3xl border border-orange-100 bg-orange-50 p-5 sm:p-6">
-          <div className="mb-4 flex items-center gap-3">
-            <CalendarClock className="h-7 w-7 text-orange-700" />
-            <div>
-              <p className="text-sm font-bold uppercase tracking-wide text-orange-700">Atención</p>
-              <h2 className="text-2xl font-bold text-orange-950">Pagos que requieren atención</h2>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {relevantPayments.map(({ payment, status }) => (
-              <article key={payment.id} className="rounded-2xl border border-orange-200 bg-white p-4">
-                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                  <div>
-                    <span className="inline-flex rounded-full bg-orange-100 px-3 py-1 text-sm font-bold text-orange-900">{status.label}</span>
-                    <h3 className="mt-3 text-xl font-bold text-slate-900">{payment.name}</h3>
-                    <p className="mt-1 text-sm font-semibold text-slate-600">{paymentAmountLabel(payment)} · {paymentScheduleLabel(payment)}</p>
-                  </div>
-                  <button type="button" onClick={() => onOpenPayment(payment.id)} className="min-h-12 rounded-xl bg-orange-600 px-4 py-2 text-base font-bold text-white hover:bg-orange-700">
-                    Ver pago
-                  </button>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <article className="rounded-3xl bg-white p-5 shadow-sm lg:col-span-1">

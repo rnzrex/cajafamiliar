@@ -22,7 +22,7 @@ import { MovementsList } from "./components/MovementsList";
 import { RecurringPayments } from "./components/RecurringPayments";
 import { Toast } from "./components/Toast";
 import { AppData, CashCount, Category, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
-import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth } from "./utils/calculations";
+import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
 import {
   CategoryNotFoundError,
   createCashCount,
@@ -109,6 +109,8 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const expected = useMemo(() => expectedCash(data.movements, data.initialBalance), [data.movements, data.initialBalance]);
+  const urgentPaymentSummary = useMemo(() => paymentAlertSummary(data.recurringPayments), [data.recurringPayments]);
+  const urgentPaymentLabel = urgentPaymentSummary.total === 1 ? "1 pago requiere atención" : `${urgentPaymentSummary.total} pagos requieren atención`;
 
   useEffect(() => {
     let active = true;
@@ -613,9 +615,11 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
               className={`flex min-h-14 w-full items-center gap-3 rounded-lg px-4 text-left text-lg font-bold transition ${
                 view === item.view ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-100"
               }`}
+              aria-label={item.view === "pagos" ? `Pagos${urgentPaymentSummary.total > 0 ? `, ${urgentPaymentLabel}` : ""}` : undefined}
             >
               <item.icon className="h-6 w-6 shrink-0" />
-              {item.label}
+              <span className="flex-1">{item.label}</span>
+              {item.view === "pagos" && <UrgentPaymentBadge total={urgentPaymentSummary.total} className={view === item.view ? "bg-white text-blue-700" : "bg-red-100 text-red-800"} />}
             </button>
           ))}
         </nav>
@@ -695,6 +699,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
             <RecurringPayments
               payments={data.recurringPayments}
               categories={data.categories}
+              alertSummary={urgentPaymentSummary}
               focusedPaymentId={focusedPaymentId}
               onSave={savePayment}
               onMarkPaid={markPaymentPaid}
@@ -729,12 +734,14 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
         <button
           type="button"
           onClick={() => setMoreOpen(true)}
-          className={`flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-1 text-xs font-bold transition sm:text-sm ${
+          aria-label={`Más opciones${urgentPaymentSummary.total > 0 ? `, ${urgentPaymentLabel}` : ""}`}
+          className={`relative flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-1 text-xs font-bold transition sm:text-sm ${
             moreOpen || ["pagos", "reportes", "categorias", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
           }`}
         >
           <MoreHorizontal className="h-6 w-6" />
           <span>Más</span>
+          <UrgentPaymentBadge total={urgentPaymentSummary.total} className="absolute right-2 top-1 bg-red-600 text-white" />
         </button>
       </nav>
 
@@ -752,8 +759,14 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
               </button>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <button type="button" onClick={() => navigate("pagos")} className="min-h-14 rounded-2xl bg-orange-50 px-4 text-left text-base font-bold text-orange-900">
-                Pagos recurrentes
+              <button
+                type="button"
+                onClick={() => navigate("pagos")}
+                aria-label={`Pagos recurrentes${urgentPaymentSummary.total > 0 ? `, ${urgentPaymentLabel}` : ""}`}
+                className="flex min-h-14 items-center justify-between gap-3 rounded-2xl bg-orange-50 px-4 text-left text-base font-bold text-orange-900"
+              >
+                <span>Pagos recurrentes</span>
+                <UrgentPaymentBadge total={urgentPaymentSummary.total} className="shrink-0 bg-red-600 text-white" />
               </button>
               <button type="button" onClick={() => navigate("reportes")} className="min-h-14 rounded-2xl bg-indigo-50 px-4 text-left text-base font-bold text-indigo-900">
                 Reportes
@@ -797,6 +810,12 @@ function SyncStatus({ status }: { status: SyncStatus }) {
       {config.label}
     </div>
   );
+}
+
+function UrgentPaymentBadge({ total, className = "" }: { total: number; className?: string }) {
+  if (total === 0) return null;
+
+  return <span aria-hidden="true" className={`inline-flex min-w-7 items-center justify-center rounded-full px-2 py-1 text-sm font-black leading-none ${className}`}>{total}</span>;
 }
 
 function DataLoadErrorScreen({ message, onSignOut }: { message: string; onSignOut?: () => void | Promise<void> }) {

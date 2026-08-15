@@ -5,6 +5,7 @@ import {
   isPaymentFinished,
   isPaymentPaidThisMonth,
   paymentAmountLabel,
+  PaymentAlertSummary,
   paymentScheduleLabel,
   paymentStatus,
 } from "../utils/calculations";
@@ -13,6 +14,7 @@ import { isValidLocalDate } from "../utils/date";
 interface RecurringPaymentsProps {
   payments: RecurringPayment[];
   categories: Category[];
+  alertSummary: PaymentAlertSummary;
   focusedPaymentId?: string | null;
   onSave: (payment: Omit<RecurringPayment, "id">, id?: string) => void | Promise<boolean>;
   onMarkPaid: (payment: RecurringPayment, actualAmount: number | null, shouldCreateExpense: boolean) => void | Promise<void>;
@@ -22,7 +24,7 @@ interface RecurringPaymentsProps {
 
 type PaymentTab = "pending" | "paid" | "archived";
 
-export function RecurringPayments({ payments, categories, focusedPaymentId, onSave, onMarkPaid, onDeactivate, onReactivate }: RecurringPaymentsProps) {
+export function RecurringPayments({ payments, categories, alertSummary, focusedPaymentId, onSave, onMarkPaid, onDeactivate, onReactivate }: RecurringPaymentsProps) {
   const [tab, setTab] = useState<PaymentTab>("pending");
   const [editing, setEditing] = useState<RecurringPayment | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -272,6 +274,8 @@ export function RecurringPayments({ payments, categories, focusedPaymentId, onSa
           </button>
         </div>
 
+        <UrgentPaymentSummary summary={alertSummary} />
+
         <div className="mt-6 grid grid-cols-3 gap-2 rounded-2xl bg-slate-100 p-1" role="tablist" aria-label="Estado de pagos">
           <TabButton active={tab === "pending"} label="Por pagar" count={counts.pending} onClick={() => setTab("pending")} />
           <TabButton active={tab === "paid"} label="Pagados" count={counts.paid} onClick={() => setTab("paid")} />
@@ -433,6 +437,36 @@ function TabButton({ active, label, count, onClick }: { active: boolean; label: 
 
 function ChoiceButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
   return <button type="button" aria-pressed={active} onClick={onClick} className={`min-h-12 rounded-xl border-2 px-3 py-2 text-base font-black transition ${active ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"}`}>{label}</button>;
+}
+
+function UrgentPaymentSummary({ summary }: { summary: PaymentAlertSummary }) {
+  if (summary.total === 0) return null;
+
+  return (
+    <section className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 sm:p-5" aria-labelledby="urgent-payment-summary-title">
+      <div>
+        <p className="text-sm font-black uppercase tracking-wide text-red-700">Requieren atención</p>
+        <h3 id="urgent-payment-summary-title" className="mt-1 text-2xl font-black text-red-950">Pagos urgentes</h3>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {summary.overdue > 0 && (
+          <article className="rounded-2xl border border-red-200 bg-red-100 p-4 text-red-950">
+            <p className="text-xl font-black">{summary.overdue === 1 ? "1 vencido" : `${summary.overdue} vencidos`}</p>
+          </article>
+        )}
+        {summary.today > 0 && (
+          <article className="rounded-2xl border border-orange-200 bg-orange-100 p-4 text-orange-950">
+            <p className="text-xl font-black">{summary.today === 1 ? "1 vence hoy" : `${summary.today} vencen hoy`}</p>
+          </article>
+        )}
+        {summary.tomorrow > 0 && (
+          <article className="rounded-2xl border border-yellow-200 bg-yellow-100 p-4 text-yellow-950">
+            <p className="text-xl font-black">{summary.tomorrow === 1 ? "1 vence mañana" : `${summary.tomorrow} vencen mañana`}</p>
+          </article>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function isPaymentTerminal(payment: RecurringPayment) {

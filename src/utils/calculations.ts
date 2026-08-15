@@ -81,6 +81,29 @@ export function paymentAlert(payment: RecurringPayment) {
   return status.kind === "overdue" || status.kind === "today" || status.kind === "tomorrow" ? status : null;
 }
 
+export interface PaymentAlertSummary {
+  overdue: number;
+  today: number;
+  tomorrow: number;
+  total: number;
+}
+
+export function paymentAlertSummary(payments: RecurringPayment[]): PaymentAlertSummary {
+  return payments.reduce(
+    (summary, payment) => {
+      const alert = paymentAlert(payment);
+      if (!alert) return summary;
+
+      if (alert.kind === "overdue") summary.overdue += 1;
+      if (alert.kind === "today") summary.today += 1;
+      if (alert.kind === "tomorrow") summary.tomorrow += 1;
+      summary.total += 1;
+      return summary;
+    },
+    { overdue: 0, today: 0, tomorrow: 0, total: 0 }
+  );
+}
+
 export function isPaymentPaidThisMonth(payment: RecurringPayment, date = new Date()) {
   const month = localMonthString(date);
   return payment.last_paid_month === Number(month.slice(5)) && payment.last_paid_year === Number(month.slice(0, 4));
