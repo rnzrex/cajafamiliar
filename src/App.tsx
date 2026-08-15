@@ -543,8 +543,8 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 bg-white p-4 shadow-xl lg:block">
-        <div className="mb-6 flex items-center gap-3">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-72 flex-col overflow-hidden bg-white p-4 shadow-xl lg:flex">
+        <div className="mb-6 flex shrink-0 items-center gap-3">
           <div className="flex items-center gap-3">
             <div className="rounded-lg bg-blue-100 p-3 text-blue-700">
               <PiggyBank className="h-8 w-8" />
@@ -556,7 +556,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
           </div>
         </div>
 
-        <nav className="space-y-2">
+        <nav className="min-h-0 flex-1 space-y-2 overflow-x-hidden overflow-y-auto pr-1">
           {navItems.map((item) => (
             <button
               key={item.view}
@@ -572,16 +572,18 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
           ))}
         </nav>
 
-        <div className="mt-6 rounded-lg bg-blue-50 p-4 text-blue-900">
-          <p className="font-semibold">Saldo esperado</p>
-          <p className="text-2xl font-bold">{formatMoney(expected)}</p>
+        <div className="mt-6 shrink-0">
+          <div className="rounded-lg bg-blue-50 p-4 text-blue-900">
+            <p className="font-semibold">Saldo esperado</p>
+            <p className="text-2xl font-bold">{formatMoney(expected)}</p>
+          </div>
+          {onSignOut && (
+            <button type="button" onClick={() => void onSignOut()} className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2 font-bold text-slate-700 hover:bg-slate-50">
+              <LogOut className="h-5 w-5" />
+              Cerrar sesión
+            </button>
+          )}
         </div>
-        {onSignOut && (
-          <button type="button" onClick={() => void onSignOut()} className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2 font-bold text-slate-700 hover:bg-slate-50">
-            <LogOut className="h-5 w-5" />
-            Cerrar sesión
-          </button>
-        )}
       </aside>
 
       <main className="pb-24 lg:pb-0 lg:pl-72">
