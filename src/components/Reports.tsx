@@ -18,7 +18,6 @@ import { useMemo, useState } from "react";
 import { Download, RotateCcw } from "lucide-react";
 import { Category, Movement, paymentMethods } from "../types";
 import { expectedCash, formatMoney } from "../utils/calculations";
-import { exportReportExcel } from "../utils/excelExport";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters";
 
 interface ReportsProps {
@@ -43,6 +42,20 @@ export function Reports({ movements, categories, initialBalance }: ReportsProps)
   ];
   const topFive = [...byCategory].sort((a, b) => b.monto - a.monto).slice(0, 5);
   const cashEvolution = buildCashEvolution(filteredMovements, initialBalance);
+
+  async function handleExport() {
+    if (filteredMovements.length === 0) {
+      window.alert("No hay movimientos para descargar con los filtros actuales.");
+      return;
+    }
+
+    try {
+      const { exportReportExcel } = await import("../utils/excelExport");
+      exportReportExcel(filteredMovements, filters);
+    } catch {
+      window.alert("No se pudo preparar el archivo Excel. Intenta nuevamente.");
+    }
+  }
 
   return (
     <section className="space-y-5">
@@ -114,7 +127,7 @@ export function Reports({ movements, categories, initialBalance }: ReportsProps)
           </label>
         </div>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-          <button type="button" onClick={() => exportReportExcel(filteredMovements, filters)} className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-green-600 px-5 py-3 text-lg font-bold text-white hover:bg-green-700">
+          <button type="button" onClick={() => void handleExport()} className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-green-600 px-5 py-3 text-lg font-bold text-white hover:bg-green-700">
             <Download className="h-5 w-5" />
             Descargar reporte Excel
           </button>
