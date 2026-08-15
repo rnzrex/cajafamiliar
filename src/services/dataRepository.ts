@@ -79,10 +79,38 @@ export class RecurringPaymentNotFoundError extends Error {
   }
 }
 
-export class RecurringPaymentConflictError extends Error {
+export class RecurringPaymentAuthenticationError extends Error {
   constructor() {
-    super("El pago recurrente cambió antes de completar la actualización.");
-    this.name = "RecurringPaymentConflictError";
+    super("Se necesita una sesión autenticada para completar el pago recurrente.");
+    this.name = "RecurringPaymentAuthenticationError";
+  }
+}
+
+export class HouseholdMemberNotProvisionedError extends Error {
+  constructor() {
+    super("El usuario no tiene un miembro del hogar provisionado.");
+    this.name = "HouseholdMemberNotProvisionedError";
+  }
+}
+
+export class RecurringPaymentAlreadyPaidError extends Error {
+  constructor() {
+    super("El pago recurrente ya fue completado y no se creó un segundo gasto.");
+    this.name = "RecurringPaymentAlreadyPaidError";
+  }
+}
+
+export class RecurringPaymentInactiveError extends Error {
+  constructor() {
+    super("El pago recurrente está inactivo.");
+    this.name = "RecurringPaymentInactiveError";
+  }
+}
+
+export class InvalidMovementError extends Error {
+  constructor() {
+    super("Los datos del gasto no son válidos.");
+    this.name = "InvalidMovementError";
   }
 }
 
@@ -183,18 +211,35 @@ export async function createRecurringPayment(payment: RecurringPayment): Promise
   return fromRecurringPaymentRow(data);
 }
 
-export async function getRecurringPayment(id: string): Promise<RecurringPayment | null> {
+export interface CompleteRecurringPaymentResult {
+  payment: RecurringPayment;
+  movement: Movement | null;
+}
+
+export async function completeRecurringPayment(payment: RecurringPayment, movement: Movement | null): Promise<CompleteRecurringPaymentResult | null> {
   if (!isSupabaseConfigured || !supabase) return null;
 
-  const { data, error } = await supabase
-    .from("recurring_payments")
-    .select("*")
-    .eq("id", id)
-    .eq("household_id", householdId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new RecurringPaymentNotFoundError();
-  return fromRecurringPaymentRow(data);
+  const { data, error } = await supabase.rpc("complete_recurring_payment", {
+    p_payment_id: payment.id,
+    p_create_expense: movement !== null,
+    p_movement_id: movement?.id ?? null,
+    p_movement_date: movement?.date ?? null,
+    p_movement_amount: movement?.amount ?? null,
+    p_movement_description: movement?.description ?? null,
+    p_movement_method: movement?.method ?? null,
+    p_movement_category: movement?.category ?? null,
+  });
+
+  if (error) {
+    throw mapCompleteRecurringPaymentError(error.message) ?? error;
+  }
+
+  if (!data?.payment) throw new Error("La RPC no devolvió el pago recurrente.");
+
+  return {
+    payment: fromRecurringPaymentRow(data.payment),
+    movement: data.movement ? fromMovementRow(data.movement) : null,
+  };
 }
 
 export async function updateRecurringPaymentDetails(payment: RecurringPayment): Promise<RecurringPayment> {
@@ -237,44 +282,6 @@ export async function setRecurringPaymentActive(payment: RecurringPayment, isAct
   return fromRecurringPaymentRow(data);
 }
 
-export async function updateRecurringPaymentPaymentState(payment: RecurringPayment, expectedPayment: RecurringPayment): Promise<RecurringPayment> {
-  if (!isSupabaseConfigured || !supabase) return payment;
-
-  let updateQuery = supabase
-    .from("recurring_payments")
-    .update({
-      status: payment.status,
-      paid_at: payment.paidAt ?? null,
-      paid_installments: payment.paid_installments,
-      last_paid_month: payment.last_paid_month,
-      last_paid_year: payment.last_paid_year,
-      is_active: payment.is_active,
-    })
-    .eq("id", payment.id)
-    .eq("household_id", householdId)
-    .eq("status", expectedPayment.status)
-    .eq("paid_installments", expectedPayment.paid_installments)
-    .eq("is_active", expectedPayment.is_active);
-
-  updateQuery = expectedPayment.last_paid_month === null ? updateQuery.is("last_paid_month", null) : updateQuery.eq("last_paid_month", expectedPayment.last_paid_month);
-  updateQuery = expectedPayment.last_paid_year === null ? updateQuery.is("last_paid_year", null) : updateQuery.eq("last_paid_year", expectedPayment.last_paid_year);
-  updateQuery = expectedPayment.paidAt ? updateQuery.eq("paid_at", expectedPayment.paidAt) : updateQuery.is("paid_at", null);
-
-  const { data, error } = await updateQuery.select("*").maybeSingle();
-  if (error) throw error;
-  if (data) return fromRecurringPaymentRow(data);
-
-  const { data: currentRow, error: currentError } = await supabase
-    .from("recurring_payments")
-    .select("id")
-    .eq("id", payment.id)
-    .eq("household_id", householdId)
-    .maybeSingle();
-  if (currentError) throw currentError;
-  if (currentRow) throw new RecurringPaymentConflictError();
-  throw new RecurringPaymentNotFoundError();
-}
-
 export async function updateInitialBalance(value: number): Promise<number> {
   if (!isSupabaseConfigured || !supabase) return value;
 
@@ -285,6 +292,25 @@ export async function updateInitialBalance(value: number): Promise<number> {
     .single();
   if (error) throw error;
   return Number(data.initial_balance);
+}
+
+function mapCompleteRecurringPaymentError(message: string) {
+  switch (message) {
+    case "AUTH_REQUIRED":
+      return new RecurringPaymentAuthenticationError();
+    case "PAYMENT_NOT_FOUND":
+      return new RecurringPaymentNotFoundError();
+    case "PAYMENT_ALREADY_PAID":
+      return new RecurringPaymentAlreadyPaidError();
+    case "PAYMENT_INACTIVE":
+      return new RecurringPaymentInactiveError();
+    case "MEMBER_NOT_PROVISIONED":
+      return new HouseholdMemberNotProvisionedError();
+    case "INVALID_MOVEMENT":
+      return new InvalidMovementError();
+    default:
+      return null;
+  }
 }
 
 function toMovementRow(movement: Movement) {
