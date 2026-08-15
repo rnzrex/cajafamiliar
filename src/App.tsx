@@ -29,13 +29,17 @@ import {
   createCategory,
   createMovement,
   createRecurringPayment,
+  completeRecurringPayment,
   deleteCategory as deleteRemoteCategory,
   deleteMovement as deleteRemoteMovement,
-  getRecurringPayment,
+  HouseholdMemberNotProvisionedError,
   HouseholdNotProvisionedError,
+  InvalidMovementError,
   loadAppData,
   MovementNotFoundError,
-  RecurringPaymentConflictError,
+  RecurringPaymentAlreadyPaidError,
+  RecurringPaymentAuthenticationError,
+  RecurringPaymentInactiveError,
   RecurringPaymentNotFoundError,
   setCategoryActive,
   setRecurringPaymentActive,
@@ -43,7 +47,6 @@ import {
   updateInitialBalance,
   updateMovement as updateRemoteMovement,
   updateRecurringPaymentDetails,
-  updateRecurringPaymentPaymentState,
 } from "./services/dataRepository";
 import { isSupabaseConfigured } from "./services/supabaseClient";
 import { makeId, loadData, saveData } from "./utils/storage";
@@ -99,6 +102,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [movementDraft, setMovementDraft] = useState<MovementDraft | null>(null);
   const [pendingRecurringPaymentId, setPendingRecurringPaymentId] = useState<string | null>(null);
+  const [pendingRecurringMovementId, setPendingRecurringMovementId] = useState<string | null>(null);
   const [focusedPaymentId, setFocusedPaymentId] = useState<string | null>(null);
   const [dataReady, setDataReady] = useState(false);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
@@ -159,9 +163,11 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
 
   function navigate(nextView: string) {
     setFocusedPaymentId(null);
-    if (nextView !== "registrar-gasto" && nextView !== "registrar-ingreso") {
+    const isMovementView = nextView === "registrar-gasto" || nextView === "registrar-ingreso";
+    if (!isMovementView || pendingRecurringPaymentId !== null || pendingRecurringMovementId !== null) {
       setMovementDraft(null);
       setPendingRecurringPaymentId(null);
+      setPendingRecurringMovementId(null);
     }
     setView(nextView as View);
     setMoreOpen(false);
@@ -170,6 +176,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   function openPayment(id: string) {
     setMovementDraft(null);
     setPendingRecurringPaymentId(null);
+    setPendingRecurringMovementId(null);
     setFocusedPaymentId(id);
     setView("pagos");
     setMoreOpen(false);
@@ -188,20 +195,87 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
     }
 
     const recurringPaymentId = pendingRecurringPaymentId;
+    const recurringPayment = recurringPaymentId ? data.recurringPayments.find((item) => item.id === recurringPaymentId) : undefined;
+    if (recurringPaymentId && !recurringPayment) {
+      window.alert("Este pago ya no existe o cambió desde otro dispositivo. No se creó ningún gasto.");
+      return false;
+    }
+
+    const movementId = recurringPayment ? pendingRecurringMovementId : id ?? makeId("mov");
+    if (!movementId) {
+      window.alert("No se pudo preparar el identificador del gasto. Vuelve a intentar desde Pagos.");
+      return false;
+    }
+
     const existingMovement = id ? data.movements.find((item) => item.id === id) : undefined;
     const person = existingMovement?.person ?? currentMember?.displayName ?? movement.person ?? "";
-    if (!person.trim()) {
+    if (!person.trim() && !(recurringPayment && isSupabaseConfigured)) {
       window.alert("No se pudo determinar quién registra el movimiento. Verifica el provisioning de tu cuenta.");
       return false;
     }
 
     const savedMovement: Movement = {
       ...movement,
-      id: id ?? makeId("mov"),
+      id: movementId,
       person,
       registeredByUserId: existingMovement?.registeredByUserId ?? currentMember?.userId ?? null,
       createdAt: id ? existingMovement?.createdAt ?? new Date().toISOString() : new Date().toISOString(),
     };
+
+    if (recurringPayment) {
+      if (isSupabaseConfigured) {
+        try {
+          const result = await completeRecurringPayment(recurringPayment, savedMovement);
+          if (!result?.movement) throw new Error("La RPC no devolvió el movimiento creado.");
+
+          markRemoteSuccess();
+          setData((current) => ({
+            ...current,
+            movements: current.movements.some((item) => item.id === result.movement!.id)
+              ? current.movements.map((item) => (item.id === result.movement!.id ? result.movement! : item))
+              : [result.movement!, ...current.movements],
+            recurringPayments: current.recurringPayments.map((item) => (item.id === result.payment.id ? result.payment : item)),
+          }));
+          setMovementDraft(null);
+          setPendingRecurringPaymentId(null);
+          setPendingRecurringMovementId(null);
+          setView("pagos");
+          showToast("Gasto guardado correctamente");
+          return true;
+        } catch (error) {
+          if (error instanceof RecurringPaymentAlreadyPaidError) {
+            window.alert("Este pago ya fue marcado como pagado. No se creó un segundo gasto.");
+          } else if (error instanceof RecurringPaymentNotFoundError) {
+            window.alert("Este pago ya no existe o cambió desde otro dispositivo. No se creó ningún gasto.");
+          } else if (error instanceof RecurringPaymentInactiveError) {
+            window.alert("Este pago está inactivo. No se creó ningún gasto.");
+          } else if (error instanceof HouseholdMemberNotProvisionedError) {
+            window.alert("No se pudo verificar tu miembro del hogar. No se creó ningún gasto.");
+          } else if (error instanceof InvalidMovementError) {
+            window.alert("No se pudo validar el gasto. No se realizó ningún cambio. Intenta nuevamente.");
+          } else if (error instanceof RecurringPaymentAuthenticationError) {
+            window.alert("Tu sesión ya no es válida. Inicia sesión nuevamente.");
+          } else {
+            markRemoteFailure();
+            window.alert("No se pudo registrar el pago y el gasto. No se realizó ningún cambio. Intenta nuevamente.");
+          }
+          return false;
+        }
+      }
+
+      const savedPayment = markPaidForCurrentMonth(recurringPayment);
+      setData((current) => ({
+        ...current,
+        movements: [savedMovement, ...current.movements],
+        recurringPayments: current.recurringPayments.map((item) => (item.id === savedPayment.id ? savedPayment : item)),
+      }));
+      setMovementDraft(null);
+      setPendingRecurringPaymentId(null);
+      setPendingRecurringMovementId(null);
+      setView("pagos");
+      showToast("Gasto guardado correctamente");
+      return true;
+    }
 
     try {
       if (id) await updateRemoteMovement(savedMovement);
@@ -218,53 +292,6 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
 
     markRemoteSuccess();
 
-    if (recurringPaymentId) {
-      const payment = data.recurringPayments.find((item) => item.id === recurringPaymentId);
-      if (payment) {
-        try {
-          const savedPayment = await savePaidRecurringPayment(payment);
-          markRemoteSuccess();
-          setData((current) => ({
-            ...current,
-            movements: id
-              ? current.movements.map((item) => (item.id === id ? savedMovement : item))
-              : [savedMovement, ...current.movements],
-            recurringPayments: current.recurringPayments.map((item) => (item.id === savedPayment.id ? savedPayment : item)),
-          }));
-          setMovementDraft(null);
-          setPendingRecurringPaymentId(null);
-          setView("pagos");
-          showToast("Gasto guardado correctamente");
-          return true;
-        } catch (error) {
-          if (!(error instanceof RecurringPaymentNotFoundError) && !(error instanceof RecurringPaymentConflictError)) markRemoteFailure();
-          setData((current) => ({
-            ...current,
-            movements: id
-              ? current.movements.map((item) => (item.id === id ? savedMovement : item))
-              : [savedMovement, ...current.movements],
-          }));
-          setMovementDraft(null);
-          setPendingRecurringPaymentId(null);
-          setView("pagos");
-          window.alert("El gasto se registró correctamente, pero no se pudo marcar el pago recurrente como pagado. No vuelvas a registrar el gasto. Intenta marcar el pago como pagado sin crear otro egreso.");
-          return true;
-        }
-      }
-
-      setData((current) => ({
-        ...current,
-        movements: id
-          ? current.movements.map((item) => (item.id === id ? savedMovement : item))
-          : [savedMovement, ...current.movements],
-      }));
-      setMovementDraft(null);
-      setPendingRecurringPaymentId(null);
-      setView("pagos");
-      window.alert("El gasto se registró correctamente, pero no se encontró el pago recurrente para marcarlo como pagado. No vuelvas a registrar el gasto.");
-      return true;
-    }
-
     setData((current) => ({
       ...current,
       movements: id
@@ -273,6 +300,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
     }));
     setMovementDraft(null);
     setPendingRecurringPaymentId(null);
+    setPendingRecurringMovementId(null);
     setView("movimientos");
     showToast(movement.type === "egreso" ? "Gasto guardado correctamente" : "Ingreso guardado correctamente");
     return true;
@@ -360,18 +388,38 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
         category: payment.category,
       });
       setPendingRecurringPaymentId(payment.id);
+      setPendingRecurringMovementId(makeId("mov"));
       setView("registrar-gasto");
       return;
     }
 
+    setPendingRecurringPaymentId(null);
+    setPendingRecurringMovementId(null);
+
     try {
-      const savedPayment = await savePaidRecurringPayment(payment);
-      markRemoteSuccess();
+      if (isSupabaseConfigured) {
+        const result = await completeRecurringPayment(payment, null);
+        if (!result) throw new Error("La RPC no devolvió el pago actualizado.");
+        markRemoteSuccess();
+        setData((current) => ({ ...current, recurringPayments: current.recurringPayments.map((item) => (item.id === result.payment.id ? result.payment : item)) }));
+        showToast("Pago marcado como pagado");
+        return;
+      }
+
+      const savedPayment = markPaidForCurrentMonth(payment);
       setData((current) => ({ ...current, recurringPayments: current.recurringPayments.map((item) => (item.id === savedPayment.id ? savedPayment : item)) }));
       showToast("Pago marcado como pagado");
     } catch (error) {
-      if (error instanceof RecurringPaymentNotFoundError || error instanceof RecurringPaymentConflictError) {
-        window.alert("Este pago ya no existe o cambió desde otro dispositivo. Actualiza la información antes de continuar.");
+      if (error instanceof RecurringPaymentAlreadyPaidError) {
+        window.alert("Este pago ya fue marcado como pagado.");
+      } else if (error instanceof RecurringPaymentNotFoundError) {
+        window.alert("Este pago ya no existe o cambió desde otro dispositivo. No se realizó ningún cambio.");
+      } else if (error instanceof RecurringPaymentInactiveError) {
+        window.alert("Este pago está inactivo. No se realizó ningún cambio.");
+      } else if (error instanceof HouseholdMemberNotProvisionedError) {
+        window.alert("No se pudo verificar tu miembro del hogar. No se realizó ningún cambio.");
+      } else if (error instanceof RecurringPaymentAuthenticationError) {
+        window.alert("Tu sesión ya no es válida. Inicia sesión nuevamente.");
       } else {
         markRemoteFailure();
         window.alert("No se pudo marcar el pago como pagado. No se realizó ningún cambio en el pago. Intenta nuevamente.");
@@ -537,11 +585,6 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
     return isCompleted ? { ...updated, is_active: false } : updated;
   }
 
-  async function savePaidRecurringPayment(payment: RecurringPayment): Promise<RecurringPayment> {
-    const currentPayment = (await getRecurringPayment(payment.id)) ?? payment;
-    return updateRecurringPaymentPaymentState(markPaidForCurrentMonth(currentPayment), currentPayment);
-  }
-
   if (dataLoadError) return <DataLoadErrorScreen message={dataLoadError} onSignOut={onSignOut} />;
 
   const initialType: MovementType = view === "registrar-ingreso" ? "ingreso" : "egreso";
@@ -623,6 +666,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
                   ? () => {
                       setMovementDraft(null);
                       setPendingRecurringPaymentId(null);
+                      setPendingRecurringMovementId(null);
                       setView("pagos");
                     }
                   : undefined
