@@ -12,7 +12,7 @@ import {
   Tags,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { CashCounter } from "./components/CashCounter";
 import { CategoriesManager } from "./components/CategoriesManager";
 import { Dashboard } from "./components/Dashboard";
@@ -20,7 +20,6 @@ import { InitialBalance } from "./components/InitialBalance";
 import { MovementForm } from "./components/MovementForm";
 import { MovementsList } from "./components/MovementsList";
 import { RecurringPayments } from "./components/RecurringPayments";
-import { Reports } from "./components/Reports";
 import { Toast } from "./components/Toast";
 import { AppData, CashCount, Category, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth } from "./utils/calculations";
@@ -52,6 +51,12 @@ import { localDateString } from "./utils/date";
 
 type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "saldo-inicial";
 type SyncStatus = "loading" | "connected" | "local" | "offline";
+
+const Reports = lazy(() =>
+  import("./components/Reports").then(({ Reports: ReportsComponent }) => ({
+    default: ReportsComponent,
+  }))
+);
 
 interface AppProps {
   currentMember?: HouseholdMember;
@@ -653,7 +658,11 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
               onReactivate={reactivatePayment}
             />
           )}
-          {view === "reportes" && <Reports movements={data.movements} categories={data.categories} initialBalance={data.initialBalance} />}
+          {view === "reportes" && (
+            <Suspense fallback={<section className="rounded-lg bg-white p-5 text-slate-600 soft-shadow">Cargando reportes...</section>}>
+              <Reports movements={data.movements} categories={data.categories} initialBalance={data.initialBalance} />
+            </Suspense>
+          )}
           {view === "categorias" && <CategoriesManager categories={data.categories} onSave={saveCategory} onDelete={deleteCategory} onToggle={toggleCategory} />}
           {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={saveInitialBalance} />}
         </div>

@@ -2,7 +2,6 @@ import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lu
 import { useMemo, useState } from "react";
 import { Category, HouseholdMember, Movement, MovementFormInput, paymentMethods } from "../types";
 import { formatMoney } from "../utils/calculations";
-import { exportMovementsExcel } from "../utils/excelExport";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters";
 import { MovementForm } from "./MovementForm";
 
@@ -30,6 +29,20 @@ export function MovementsList({ movements, categories, currentMember, onQuickCre
       await onDelete(id);
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleExport() {
+    if (filtered.length === 0) {
+      window.alert("No hay movimientos para descargar con los filtros actuales.");
+      return;
+    }
+
+    try {
+      const { exportMovementsExcel } = await import("../utils/excelExport");
+      exportMovementsExcel(filtered);
+    } catch {
+      window.alert("No se pudo preparar el archivo Excel. Intenta nuevamente.");
     }
   }
 
@@ -145,7 +158,7 @@ export function MovementsList({ movements, categories, currentMember, onQuickCre
         </div>
 
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <button type="button" onClick={() => exportMovementsExcel(filtered)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-base font-black text-white hover:bg-emerald-700">
+          <button type="button" onClick={() => void handleExport()} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-base font-black text-white hover:bg-emerald-700">
             <Download className="h-5 w-5" />
             Descargar Excel
           </button>
