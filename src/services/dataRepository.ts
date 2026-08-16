@@ -1,5 +1,5 @@
-import { AppData, CashCount, Category, Movement, RecurringPayment } from "../types";
-import { defaultData, loadData, normalizeData, saveData } from "../utils/storage";
+import { AppData, CashCount, Category, HouseholdMember, Movement, RecurringPayment } from "../types";
+import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
 export type AppDataLoadSource = "local" | "remote" | "fallback";
@@ -16,6 +16,13 @@ export class HouseholdNotProvisionedError extends Error {
   }
 }
 
+export class TrustedOfflineSnapshotUnavailableError extends Error {
+  constructor() {
+    super("No existe una copia verificada de Caja Familiar para usar sin conexión.");
+    this.name = "TrustedOfflineSnapshotUnavailableError";
+  }
+}
+
 export class MovementNotFoundError extends Error {
   constructor() {
     super("El movimiento no existe en Supabase.");
@@ -23,9 +30,15 @@ export class MovementNotFoundError extends Error {
   }
 }
 
-export async function loadAppData(): Promise<AppDataLoadResult> {
-  const localData = loadData();
-  if (!isSupabaseConfigured || !supabase) return { data: localData, source: "local" };
+export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoadResult> {
+  if (!isSupabaseConfigured || !supabase) return { data: loadData(), source: "local" };
+  if (!member || member.householdId !== householdId) throw new TrustedOfflineSnapshotUnavailableError();
+
+  if (typeof navigator !== "undefined" && !navigator.onLine) {
+    const trustedSnapshot = loadTrustedSnapshot(member.householdId, member.userId);
+    if (trustedSnapshot) return { data: trustedSnapshot, source: "fallback" };
+    throw new TrustedOfflineSnapshotUnavailableError();
+  }
 
   try {
     const [settingsResult, movementsResult, categoriesResult, countsResult, paymentsResult] = await Promise.all([
@@ -49,7 +62,7 @@ export async function loadAppData(): Promise<AppDataLoadResult> {
     if (!hasRemoteData) throw new HouseholdNotProvisionedError();
 
     const remoteData = normalizeData({
-      initialBalance: Number(settingsResult.data?.initial_balance ?? defaultData.initialBalance),
+      initialBalance: Number(settingsResult.data?.initial_balance ?? 0),
       movements: (movementsResult.data ?? []).map(fromMovementRow),
       categories: (categoriesResult.data ?? []).map(fromCategoryRow),
       cashCounts: (countsResult.data ?? []).map(fromCashCountRow),
@@ -57,11 +70,16 @@ export async function loadAppData(): Promise<AppDataLoadResult> {
     });
 
     saveData(remoteData);
+    markTrustedSnapshot(member);
     return { data: remoteData, source: "remote" };
   } catch (error) {
     if (error instanceof HouseholdNotProvisionedError) throw error;
-    console.warn("No se pudo cargar desde Supabase. Usando localStorage.", error);
-    return { data: localData, source: "fallback" };
+    const trustedSnapshot = loadTrustedSnapshot(member.householdId, member.userId);
+    if (trustedSnapshot) {
+      console.warn("No se pudo cargar desde Supabase. Usando el snapshot confiable local.", error);
+      return { data: trustedSnapshot, source: "fallback" };
+    }
+    throw new TrustedOfflineSnapshotUnavailableError();
   }
 }
 

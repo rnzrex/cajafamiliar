@@ -1,9 +1,29 @@
-import { AppData, Category, Movement, RecurringPayment, baseCategories } from "../types";
+import { AppData, Category, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
 import { localDateString } from "./date";
+import { isSupabaseConfigured } from "../services/supabaseClient";
 
 const STORAGE_KEY = "caja-familiar-data";
 const PREFERRED_PERSON_KEY = "caja-familiar-preferred-person";
 const CUSTOM_PERSON_PREFIX = "custom:";
+const OFFLINE_ACCESS_KEY = "caja-familiar-offline-access";
+const TRUSTED_SNAPSHOT_KEY = "caja-familiar-trusted-snapshot";
+const OFFLINE_CACHE_VERSION = 1 as const;
+
+export interface OfflineAccessRecord {
+  version: typeof OFFLINE_CACHE_VERSION;
+  householdId: string;
+  userId: string;
+  displayName: string;
+  role: HouseholdMember["role"];
+  snapshotReady: boolean;
+}
+
+interface TrustedSnapshotMetadata {
+  version: typeof OFFLINE_CACHE_VERSION;
+  householdId: string;
+  userId: string;
+  savedAt: number;
+}
 
 const today = new Date();
 const isoToday = localDateString(today);
@@ -133,6 +153,19 @@ export const defaultData: AppData = {
   initialBalance: 100,
 };
 
+export function loadCachedData(): AppData | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!isAppDataSnapshot(parsed)) return null;
+    return normalizeData(parsed);
+  } catch {
+    return null;
+  }
+}
+
 export function loadData(): AppData {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
@@ -160,8 +193,97 @@ export function clearLocalAppData() {
   try {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem(PREFERRED_PERSON_KEY);
+    localStorage.removeItem(OFFLINE_ACCESS_KEY);
+    localStorage.removeItem(TRUSTED_SNAPSHOT_KEY);
   } catch {
     // Local cache cleanup must not prevent logout from completing.
+  }
+}
+
+export function loadOfflineAccessRecord(): OfflineAccessRecord | null {
+  try {
+    const raw = localStorage.getItem(OFFLINE_ACCESS_KEY);
+    if (!raw) return null;
+
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed) || parsed.version !== OFFLINE_CACHE_VERSION) return null;
+    if (typeof parsed.householdId !== "string" || !parsed.householdId.trim() || typeof parsed.userId !== "string" || !parsed.userId.trim() || typeof parsed.displayName !== "string" || !parsed.displayName.trim()) return null;
+    if (parsed.role !== "owner" && parsed.role !== "member") return null;
+    if (typeof parsed.snapshotReady !== "boolean") return null;
+
+    return {
+      version: OFFLINE_CACHE_VERSION,
+      householdId: parsed.householdId,
+      userId: parsed.userId,
+      displayName: parsed.displayName,
+      role: parsed.role,
+      snapshotReady: parsed.snapshotReady,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function saveOfflineAccessRecord(member: HouseholdMember) {
+  try {
+    const previous = loadOfflineAccessRecord();
+    const keepsTrustedSnapshot =
+      previous?.householdId === member.householdId &&
+      previous.userId === member.userId &&
+      loadTrustedSnapshot(member.householdId, member.userId) !== null;
+
+    localStorage.setItem(
+      OFFLINE_ACCESS_KEY,
+      JSON.stringify({
+        version: OFFLINE_CACHE_VERSION,
+        householdId: member.householdId,
+        userId: member.userId,
+        displayName: member.displayName,
+        role: member.role,
+        snapshotReady: keepsTrustedSnapshot,
+      } satisfies OfflineAccessRecord)
+    );
+
+    if (!keepsTrustedSnapshot) localStorage.removeItem(TRUSTED_SNAPSHOT_KEY);
+  } catch {
+    // Offline authorization is optional and must not block an online login.
+  }
+}
+
+export function markTrustedSnapshot(member: HouseholdMember) {
+  try {
+    const record = loadOfflineAccessRecord();
+    if (!record || record.householdId !== member.householdId || record.userId !== member.userId) return;
+    if (!loadCachedData()) return;
+
+    localStorage.setItem(
+      TRUSTED_SNAPSHOT_KEY,
+      JSON.stringify({
+        version: OFFLINE_CACHE_VERSION,
+        householdId: member.householdId,
+        userId: member.userId,
+        savedAt: Date.now(),
+      } satisfies TrustedSnapshotMetadata)
+    );
+    localStorage.setItem(OFFLINE_ACCESS_KEY, JSON.stringify({ ...record, snapshotReady: true } satisfies OfflineAccessRecord));
+  } catch {
+    // A storage failure must not turn a successful remote read into a failed login.
+  }
+}
+
+export function loadTrustedSnapshot(householdId: string, userId: string): AppData | null {
+  const record = loadOfflineAccessRecord();
+  if (!record || !record.snapshotReady || record.householdId !== householdId || record.userId !== userId) return null;
+
+  try {
+    const raw = localStorage.getItem(TRUSTED_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed) || parsed.version !== OFFLINE_CACHE_VERSION) return null;
+    if (parsed.householdId !== householdId || parsed.userId !== userId || !Number.isFinite(Number(parsed.savedAt))) return null;
+    return loadCachedData();
+  } catch {
+    return null;
   }
 }
 
@@ -185,6 +307,7 @@ export function loadPreferredPerson(): PreferredPerson {
 export function savePreferredPerson(person: string, isCustom = false) {
   const value = person.trim();
   if (!value) return;
+  if (isSupabaseConfigured && typeof navigator !== "undefined" && !navigator.onLine) return;
 
   try {
     localStorage.setItem(PREFERRED_PERSON_KEY, `${isCustom ? CUSTOM_PERSON_PREFIX : ""}${value}`);
@@ -248,6 +371,23 @@ function normalizeCategories(savedCategories: Category[]) {
     }
   });
   return [...byName.values()];
+}
+
+function isAppDataSnapshot(value: unknown): value is AppData {
+  if (!isRecord(value)) return false;
+  if (!Number.isFinite(Number(value.initialBalance))) return false;
+  if (!Array.isArray(value.movements) || !Array.isArray(value.cashCounts) || !Array.isArray(value.recurringPayments) || !Array.isArray(value.categories)) return false;
+
+  return (
+    value.movements.every((movement) => isRecord(movement) && typeof movement.id === "string" && typeof movement.date === "string" && Number.isFinite(Number(movement.amount))) &&
+    value.cashCounts.every((count) => isRecord(count) && typeof count.id === "string" && typeof count.createdAt === "string" && Number.isFinite(Number(count.total))) &&
+    value.recurringPayments.every((payment) => isRecord(payment) && typeof payment.id === "string" && typeof payment.name === "string") &&
+    value.categories.every((category) => isRecord(category) && typeof category.id === "string" && typeof category.name === "string")
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === "object" && value !== null;
 }
 
 function normalizeName(name: string) {
