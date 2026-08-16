@@ -12,7 +12,7 @@ import {
   Tags,
   X,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { CashCounter } from "./components/CashCounter";
 import { CategoriesManager } from "./components/CategoriesManager";
 import { Dashboard } from "./components/Dashboard";
@@ -28,6 +28,7 @@ import {
   createCashCount,
   createCategory,
   createMovement,
+  createMovementIdempotent,
   createRecurringPayment,
   completeRecurringPayment,
   deleteCategory as deleteRemoteCategory,
@@ -49,12 +50,14 @@ import {
   updateMovement as updateRemoteMovement,
   updateRecurringPaymentDetails,
 } from "./services/dataRepository";
+import { enqueueCreateMovement, listPendingCreateMovements, removeOfflineOperation, type OfflineCreateMovementOperation } from "./services/offlineOutbox";
 import { isSupabaseConfigured } from "./services/supabaseClient";
 import { makeId, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
 
 type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "saldo-inicial";
-type SyncStatus = "loading" | "connected" | "local" | "offline" | "problem";
+type SyncStatus = "loading" | "connected" | "local" | "offline" | "problem" | "syncing";
+type PendingSyncState = "idle" | "flushing" | "problem";
 type RemoteContactStatus = "unknown" | "success" | "failure";
 
 const Reports = lazy(() =>
@@ -122,18 +125,29 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [isBrowserOnline, setIsBrowserOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
   const [lastRemoteContact, setLastRemoteContact] = useState<RemoteContactStatus>("unknown");
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
+  const [pendingMovementIds, setPendingMovementIds] = useState<Set<string>>(() => new Set());
+  const pendingMovementIdsRef = useRef<Set<string>>(new Set());
+  const [pendingSyncState, setPendingSyncState] = useState<PendingSyncState>("idle");
+  const [syncAttempt, setSyncAttempt] = useState(0);
+  const flushInFlightRef = useRef(false);
+  const appMountedRef = useRef(true);
   const expected = useMemo(() => expectedCash(data.movements, data.initialBalance), [data.movements, data.initialBalance]);
   const urgentPaymentSummary = useMemo(() => paymentAlertSummary(data.recurringPayments), [data.recurringPayments]);
   const urgentPaymentLabel = urgentPaymentSummary.total === 1 ? "1 pago requiere atención" : `${urgentPaymentSummary.total} pagos requieren atención`;
+  const pendingMovementCount = pendingMovementIds.size;
   const syncStatus: SyncStatus = !isSupabaseConfigured
     ? "local"
-    : !isBrowserOnline
-      ? "offline"
-      : lastRemoteContact === "success"
-        ? "connected"
-        : lastRemoteContact === "failure"
+    : pendingSyncState === "flushing" && isBrowserOnline
+      ? "syncing"
+      : !isBrowserOnline
+        ? "offline"
+        : pendingSyncState === "problem"
           ? "problem"
-          : "loading";
+          : lastRemoteContact === "success"
+            ? "connected"
+            : lastRemoteContact === "failure"
+              ? "problem"
+              : "loading";
 
   useEffect(() => {
     if (!isSupabaseConfigured) return;
@@ -156,6 +170,13 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   }, []);
 
   useEffect(() => {
+    appMountedRef.current = true;
+    return () => {
+      appMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isSupabaseConfigured || !remoteStatus) return;
     setLastRemoteContact(remoteStatus === "connected" ? "success" : "failure");
   }, [remoteStatus]);
@@ -163,14 +184,33 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   useEffect(() => {
     let active = true;
 
-    loadAppData(currentMember)
-      .then(({ data: loadedData, source }) => {
+    async function load() {
+      if (isSupabaseConfigured) {
+        updatePendingMovementIds([]);
+        setPendingSyncState("idle");
+        setDataReady(false);
+        setDataLoadError(null);
+      }
+
+      try {
+        const result = await loadAppData(currentMember);
+        let pendingOperations: OfflineCreateMovementOperation[] = [];
+        if (isSupabaseConfigured && currentMember) {
+          try {
+            pendingOperations = await listPendingCreateMovements(currentMember);
+          } catch (error) {
+            if (!active) return;
+            if (!isBrowserOnline) throw error;
+            setPendingSyncState("problem");
+          }
+        }
         if (!active) return;
-        setData(loadedData);
-        setLastRemoteContact(source === "remote" ? "success" : source === "fallback" ? "failure" : "unknown");
+
+        updatePendingMovementIds(pendingOperations.map((operation) => operation.movement.id));
+        setData(mergePendingMovements(result.data, pendingOperations));
+        setLastRemoteContact(result.source === "remote" ? "success" : result.source === "fallback" ? "failure" : "unknown");
         setDataReady(true);
-      })
-      .catch((error) => {
+      } catch (error) {
         if (!active) return;
         setLastRemoteContact("failure");
         setDataLoadError(
@@ -178,9 +218,14 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
             ? "Este dispositivo todavía no tiene una copia verificada para usar Caja Familiar sin conexión. Conéctate a internet al menos una vez."
             : error instanceof HouseholdNotProvisionedError
               ? "Este hogar todavía no está provisionado en Supabase. Contacta al administrador para habilitarlo."
-              : "Problema de conexión. No se pudo cargar la información financiera. Intenta nuevamente más tarde."
+              : error instanceof Error && error.message.includes("IndexedDB")
+                ? "No se pudieron cargar los movimientos pendientes de este dispositivo. Intenta nuevamente."
+                : "Problema de conexión. No se pudo cargar la información financiera. Intenta nuevamente más tarde."
         );
-      });
+      }
+    }
+
+    void load();
 
     return () => {
       active = false;
@@ -189,8 +234,140 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
 
   useEffect(() => {
     if (!dataReady) return;
-    if (!isSupabaseConfigured || isBrowserOnline) saveData(data);
-  }, [data, dataReady, isBrowserOnline]);
+    if (!isSupabaseConfigured) {
+      saveData(data);
+      return;
+    }
+    if (!isBrowserOnline || pendingMovementIdsRef.current.size > 0) return;
+    saveData(data);
+  }, [data, dataReady, isBrowserOnline, pendingMovementIds]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !isBrowserOnline || !dataReady || !currentMember || remoteStatus !== "connected" || flushInFlightRef.current) return;
+
+    const member = currentMember;
+    let active = true;
+    flushInFlightRef.current = true;
+
+    async function flushPendingMovements() {
+      try {
+        let queued = await listPendingCreateMovements(member);
+        if (!active) return;
+
+        if (queued.length === 0) {
+          if (pendingMovementIdsRef.current.size === 0) {
+            setPendingSyncState("idle");
+            return;
+          }
+
+          let remoteResult;
+          try {
+            remoteResult = await loadAppData(member);
+          } catch {
+            if (active) {
+              setLastRemoteContact("failure");
+              setPendingSyncState("problem");
+            }
+            return;
+          }
+
+          if (!active) return;
+          if (remoteResult.source !== "remote") {
+            setLastRemoteContact("failure");
+            setPendingSyncState("problem");
+            return;
+          }
+
+          setData(remoteResult.data);
+          updatePendingMovementIds([]);
+          setLastRemoteContact("success");
+          setPendingSyncState("idle");
+          return;
+        }
+
+        updatePendingMovementIds(queued.map((item) => item.movement.id));
+        setData((current) => mergePendingMovements(current, queued));
+        setPendingSyncState("flushing");
+
+        while (queued.length > 0) {
+          if (!active) return;
+          const operation = queued[0];
+          const remoteMovement: Movement = {
+            ...operation.movement,
+            person: member.displayName,
+            registeredByUserId: member.userId,
+          };
+
+          try {
+            await createMovementIdempotent(remoteMovement);
+          } catch {
+            if (active) {
+              setLastRemoteContact("failure");
+              setPendingSyncState("problem");
+            }
+            return;
+          }
+
+          if (!active) return;
+
+          let remoteResult;
+          try {
+            remoteResult = await loadAppData(member);
+          } catch {
+            if (active) {
+              setLastRemoteContact("failure");
+              setPendingSyncState("problem");
+            }
+            return;
+          }
+
+          if (!active) return;
+          if (remoteResult.source !== "remote" || !remoteResult.data.movements.some((movement) => movement.id === operation.movement.id)) {
+            setLastRemoteContact("failure");
+            setPendingSyncState("problem");
+            return;
+          }
+
+          try {
+            await removeOfflineOperation(operation.operationId);
+          } catch {
+            if (active) setPendingSyncState("problem");
+            return;
+          }
+
+          if (!active) return;
+
+          try {
+            queued = await listPendingCreateMovements(member);
+          } catch {
+            setPendingSyncState("problem");
+            return;
+          }
+
+          updatePendingMovementIds(queued.map((item) => item.movement.id));
+          setData(mergePendingMovements(remoteResult.data, queued));
+          setLastRemoteContact("success");
+        }
+
+        setPendingSyncState("idle");
+      } catch {
+        if (active) {
+          setLastRemoteContact("failure");
+          setPendingSyncState("problem");
+        }
+      } finally {
+        flushInFlightRef.current = false;
+        if (!active && appMountedRef.current && isBrowserOnline && dataReady && remoteStatus === "connected") {
+          setSyncAttempt((attempt) => attempt + 1);
+        }
+      }
+    }
+
+    void flushPendingMovements();
+    return () => {
+      active = false;
+    };
+  }, [currentMember?.householdId, currentMember?.userId, dataReady, isBrowserOnline, remoteStatus, syncAttempt]);
 
   useEffect(() => {
     if (!toast) return;
@@ -200,6 +377,12 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
 
   function showToast(message: string) {
     setToast({ id: Date.now(), message });
+  }
+
+  function updatePendingMovementIds(ids: Iterable<string>) {
+    const next = new Set(ids);
+    pendingMovementIdsRef.current = next;
+    setPendingMovementIds(next);
   }
 
   function markRemoteSuccess() {
@@ -244,9 +427,23 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   }
 
   async function saveMovement(movement: MovementFormInput, id?: string): Promise<boolean> {
-    if (!ensureOnlineWriteAllowed()) return false;
+    const isOfflineManualCreate =
+      isSupabaseConfigured &&
+      !isBrowserOnline &&
+      id === undefined &&
+      pendingRecurringPaymentId === null &&
+      pendingRecurringMovementId === null &&
+      dataReady &&
+      Boolean(currentMember?.householdId && currentMember?.userId && currentMember.displayName.trim());
+
+    if (!isOfflineManualCreate && !ensureOnlineWriteAllowed()) return false;
     if (!dataReady) {
       window.alert("Los datos todavía se están cargando. Intenta nuevamente en unos segundos.");
+      return false;
+    }
+
+    if (id && pendingMovementIdsRef.current.has(id)) {
+      window.alert("Este movimiento está pendiente de sincronización y no puede modificarse todavía.");
       return false;
     }
 
@@ -277,6 +474,25 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
       registeredByUserId: existingMovement?.registeredByUserId ?? currentMember?.userId ?? null,
       createdAt: id ? existingMovement?.createdAt ?? new Date().toISOString() : new Date().toISOString(),
     };
+
+    if (isOfflineManualCreate && currentMember) {
+      try {
+        await enqueueCreateMovement(currentMember, savedMovement);
+      } catch {
+        window.alert("No se pudo guardar el movimiento en este dispositivo. Intenta nuevamente.");
+        return false;
+      }
+
+      updatePendingMovementIds([...pendingMovementIdsRef.current, savedMovement.id]);
+      setPendingSyncState("idle");
+      setData((current) => ({ ...current, movements: [savedMovement, ...current.movements] }));
+      setMovementDraft(null);
+      setPendingRecurringPaymentId(null);
+      setPendingRecurringMovementId(null);
+      setView("movimientos");
+      showToast("Movimiento guardado en este dispositivo. Se sincronizará al recuperar conexión.");
+      return true;
+    }
 
     if (recurringPayment) {
       if (isSupabaseConfigured) {
@@ -366,6 +582,11 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     if (!ensureOnlineWriteAllowed()) return false;
     if (!dataReady) {
       window.alert("Los datos todavía se están cargando. Intenta nuevamente en unos segundos.");
+      return false;
+    }
+
+    if (pendingMovementIdsRef.current.has(id)) {
+      window.alert("Este movimiento está pendiente de sincronización y no puede eliminarse todavía.");
       return false;
     }
 
@@ -709,16 +930,21 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
               <h1 className="text-3xl font-bold text-slate-900">{titles[view]}</h1>
               <p className="text-slate-600">Las finanzas de la familia en un solo lugar.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              {currentMember && <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-800">Sesión: {currentMember.displayName}</span>}
-              <SyncStatus status={syncStatus} />
+              <div className="flex flex-wrap items-center gap-3">
+                {currentMember && <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-800">Sesión: {currentMember.displayName}</span>}
+              <SyncStatus status={syncStatus} pendingCount={pendingMovementCount} />
+              {isSupabaseConfigured && isBrowserOnline && pendingSyncState === "problem" && (
+                <button type="button" onClick={() => { setPendingSyncState("idle"); setSyncAttempt((attempt) => attempt + 1); }} className="rounded-full border border-red-200 bg-white px-3 py-1 text-sm font-bold text-red-700 hover:bg-red-50">
+                  Reintentar sincronización
+                </button>
+              )}
             </div>
           </div>
         </header>
 
         <div className="p-4 lg:p-8">
           {view === "dashboard" && (
-            <Dashboard movements={data.movements} cashCounts={data.cashCounts} recurringPayments={data.recurringPayments} initialBalance={data.initialBalance} onNavigate={navigate} onOpenPayment={openPayment} />
+            <Dashboard movements={data.movements} pendingMovementIds={pendingMovementIds} cashCounts={data.cashCounts} recurringPayments={data.recurringPayments} initialBalance={data.initialBalance} onNavigate={navigate} onOpenPayment={openPayment} />
           )}
           {(view === "registrar-ingreso" || view === "registrar-gasto") && (
             <MovementForm
@@ -746,6 +972,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
               movements={data.movements}
               categories={data.categories}
               currentMember={currentMember}
+              pendingMovementIds={pendingMovementIds}
               onQuickCreateCategory={saveCategory}
               onSave={saveMovement}
               onDelete={deleteMovement}
@@ -860,19 +1087,45 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   );
 }
 
-function SyncStatus({ status }: { status: SyncStatus }) {
+function mergePendingMovements(data: AppData, operations: OfflineCreateMovementOperation[]): AppData {
+  const remoteMovementIds = new Set(data.movements.map((movement) => movement.id));
+  const overlayMovementIds = new Set<string>();
+  const pendingMovements = operations
+    .map((operation) => operation.movement)
+    .filter((movement) => {
+      if (remoteMovementIds.has(movement.id) || overlayMovementIds.has(movement.id)) return false;
+      overlayMovementIds.add(movement.id);
+      return true;
+    });
+
+  return pendingMovements.length > 0 ? { ...data, movements: [...pendingMovements, ...data.movements] } : data;
+}
+
+function SyncStatus({ status, pendingCount }: { status: SyncStatus; pendingCount: number }) {
   const config = {
     loading: { label: "Conectando...", className: "bg-amber-400", textClassName: "text-slate-600" },
     connected: { label: "Conectado", className: "bg-emerald-500", textClassName: "text-emerald-700" },
     local: { label: "Modo local", className: "bg-slate-400", textClassName: "text-slate-600" },
     offline: { label: "Sin conexión", className: "bg-red-500", textClassName: "text-red-700" },
     problem: { label: "Problema de conexión", className: "bg-red-500", textClassName: "text-red-700" },
+    syncing: { label: "Sincronizando...", className: "bg-amber-400", textClassName: "text-amber-700" },
   }[status];
+  const pendingLabel = pendingCount === 1 ? "1 pendiente" : `${pendingCount} pendientes`;
+  const label =
+    status === "offline" && pendingCount > 0
+      ? `Sin conexión · ${pendingLabel}`
+      : status === "syncing"
+        ? `Sincronizando ${pendingCount}...`
+        : status === "problem" && pendingCount > 0
+          ? `Problema de sincronización · ${pendingLabel}`
+          : status === "connected" && pendingCount > 0
+            ? `Conectado · ${pendingLabel}`
+            : config.label;
 
   return (
     <div className={`flex items-center gap-2 text-sm font-bold ${config.textClassName}`} role="status" aria-live="polite">
       <span className={`h-2.5 w-2.5 rounded-full ${config.className}`} aria-hidden="true" />
-      {config.label}
+      {label}
     </div>
   );
 }

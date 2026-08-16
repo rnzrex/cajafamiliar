@@ -139,6 +139,29 @@ export async function createMovement(movement: Movement) {
   if (error) throw error;
 }
 
+export async function createMovementIdempotent(movement: Movement): Promise<Movement> {
+  if (!isSupabaseConfigured || !supabase) return movement;
+
+  const { data, error } = await supabase.from("movements").insert(toMovementRow(movement)).select("*").maybeSingle();
+  if (!error) {
+    if (!data) throw new Error("Supabase no devolvió el movimiento creado.");
+    return fromMovementRow(data);
+  }
+
+  if (error.code !== "23505") throw error;
+
+  const { data: existingMovement, error: lookupError } = await supabase
+    .from("movements")
+    .select("*")
+    .eq("id", movement.id)
+    .eq("household_id", householdId)
+    .maybeSingle();
+
+  if (lookupError) throw lookupError;
+  if (!existingMovement) throw error;
+  return fromMovementRow(existingMovement);
+}
+
 export async function updateMovement(movement: Movement) {
   if (!isSupabaseConfigured || !supabase) return;
 

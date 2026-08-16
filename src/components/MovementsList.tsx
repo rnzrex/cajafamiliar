@@ -1,5 +1,5 @@
 import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Category, HouseholdMember, Movement, MovementFormInput, paymentMethods } from "../types";
 import { formatMoney } from "../utils/calculations";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters";
@@ -7,6 +7,7 @@ import { MovementForm } from "./MovementForm";
 
 interface MovementsListProps {
   movements: Movement[];
+  pendingMovementIds: ReadonlySet<string>;
   categories: Category[];
   currentMember?: HouseholdMember;
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
@@ -14,13 +15,17 @@ interface MovementsListProps {
   onDelete: (id: string) => void | Promise<boolean>;
 }
 
-export function MovementsList({ movements, categories, currentMember, onQuickCreateCategory, onSave, onDelete }: MovementsListProps) {
+export function MovementsList({ movements, pendingMovementIds, categories, currentMember, onQuickCreateCategory, onSave, onDelete }: MovementsListProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
   const [editing, setEditing] = useState<Movement | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const filtered = useMemo(() => filterMovements(movements, filters), [movements, filters]);
+
+  useEffect(() => {
+    if (editing && pendingMovementIds.has(editing.id)) setEditing(null);
+  }, [editing, pendingMovementIds]);
 
   async function handleDelete(id: string) {
     if (deletingId !== null) return;
@@ -46,7 +51,7 @@ export function MovementsList({ movements, categories, currentMember, onQuickCre
     }
   }
 
-  if (editing) {
+  if (editing && !pendingMovementIds.has(editing.id)) {
     return (
       <MovementForm
         movement={editing}
@@ -175,7 +180,10 @@ export function MovementsList({ movements, categories, currentMember, onQuickCre
           <article key={movement.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className={`text-xs font-black uppercase tracking-wide ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "Ingreso" : "Gasto"}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className={`text-xs font-black uppercase tracking-wide ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "Ingreso" : "Gasto"}</p>
+                  {pendingMovementIds.has(movement.id) && <PendingMovementBadge />}
+                </div>
                 <h3 className="mt-1 break-words text-lg font-black text-slate-900">{movement.description}</h3>
               </div>
               <p className={`shrink-0 text-xl font-black ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "+" : "-"}{formatMoney(movement.amount)}</p>
@@ -183,11 +191,11 @@ export function MovementsList({ movements, categories, currentMember, onQuickCre
             <p className="mt-3 text-sm font-semibold text-slate-600">{formatMovementDate(movement.date)} · {movement.method}</p>
             <p className="mt-1 text-sm text-slate-500">{movement.category} · {movement.person}</p>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setEditing(movement)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-blue-100 px-3 text-base font-black text-blue-800 hover:bg-blue-200">
+              <button type="button" disabled={pendingMovementIds.has(movement.id)} onClick={() => setEditing(movement)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-blue-100 px-3 text-base font-black text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-60">
                 <Edit className="h-5 w-5" />
                 Editar
               </button>
-              <button type="button" disabled={deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-100 px-3 text-base font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="button" disabled={pendingMovementIds.has(movement.id) || deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-100 px-3 text-base font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60">
                 <Trash2 className="h-5 w-5" />
                 {deletingId === movement.id ? "Eliminando..." : "Eliminar"}
               </button>
@@ -214,7 +222,12 @@ export function MovementsList({ movements, categories, currentMember, onQuickCre
             {filtered.map((movement) => (
               <tr key={movement.id} className="rounded-2xl bg-slate-50 text-base">
                 <td className="rounded-l-2xl px-3 py-4">{movement.date}</td>
-                <td className={`px-3 py-4 font-black ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "Ingreso" : "Gasto"}</td>
+                <td className={`px-3 py-4 font-black ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>
+                  <div className="flex flex-col items-start gap-2">
+                    <span>{movement.type === "ingreso" ? "Ingreso" : "Gasto"}</span>
+                    {pendingMovementIds.has(movement.id) && <PendingMovementBadge />}
+                  </div>
+                </td>
                 <td className="px-3 py-4">{movement.description}</td>
                 <td className="px-3 py-4">{movement.category}</td>
                 <td className="px-3 py-4">{movement.method}</td>
@@ -222,11 +235,11 @@ export function MovementsList({ movements, categories, currentMember, onQuickCre
                 <td className="px-3 py-4">{movement.person}</td>
                 <td className="rounded-r-2xl px-3 py-4">
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setEditing(movement)} className="flex min-h-12 items-center gap-2 rounded-xl bg-blue-100 px-3 text-sm font-black text-blue-800 hover:bg-blue-200">
+                    <button type="button" disabled={pendingMovementIds.has(movement.id)} onClick={() => setEditing(movement)} className="flex min-h-12 items-center gap-2 rounded-xl bg-blue-100 px-3 text-sm font-black text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-60">
                       <Edit className="h-5 w-5" />
                       Editar
                     </button>
-                    <button type="button" disabled={deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center gap-2 rounded-xl bg-red-100 px-3 text-sm font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    <button type="button" disabled={pendingMovementIds.has(movement.id) || deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center gap-2 rounded-xl bg-red-100 px-3 text-sm font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60">
                       <Trash2 className="h-5 w-5" />
                       {deletingId === movement.id ? "Eliminando..." : "Eliminar"}
                     </button>
@@ -241,6 +254,10 @@ export function MovementsList({ movements, categories, currentMember, onQuickCre
       {filtered.length === 0 && <p className="rounded-3xl bg-white p-8 text-center text-lg text-slate-500 shadow-sm">No hay movimientos para la búsqueda o los filtros elegidos.</p>}
     </section>
   );
+}
+
+function PendingMovementBadge() {
+  return <span role="status" className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-800">Pendiente de sincronizar</span>;
 }
 
 function formatMovementDate(value: string) {

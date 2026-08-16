@@ -14,6 +14,7 @@ import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAmountL
 
 interface DashboardProps {
   movements: Movement[];
+  pendingMovementIds: ReadonlySet<string>;
   cashCounts: CashCount[];
   recurringPayments: RecurringPayment[];
   initialBalance: number;
@@ -21,7 +22,7 @@ interface DashboardProps {
   onOpenPayment: (id: string) => void;
 }
 
-export function Dashboard({ movements, cashCounts, recurringPayments, initialBalance, onNavigate, onOpenPayment }: DashboardProps) {
+export function Dashboard({ movements, pendingMovementIds, cashCounts, recurringPayments, initialBalance, onNavigate, onOpenPayment }: DashboardProps) {
   const expected = expectedCash(movements, initialBalance);
   const lastCount = lastCashCount(cashCounts);
   const hasCount = Boolean(lastCount);
@@ -130,6 +131,7 @@ export function Dashboard({ movements, cashCounts, recurringPayments, initialBal
                       <span className={`rounded-full px-2.5 py-1 text-xs font-black ${movement.type === "ingreso" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
                         {movement.type === "ingreso" ? "Ingreso" : "Gasto"}
                       </span>
+                      {pendingMovementIds.has(movement.id) && <PendingMovementBadge />}
                       <h3 className="truncate text-lg font-bold text-slate-900">{movement.description}</h3>
                     </div>
                     <p className="mt-2 text-sm text-slate-600">{formatMovementDate(movement.date)} · {movement.method}</p>
@@ -184,6 +186,10 @@ export function Dashboard({ movements, cashCounts, recurringPayments, initialBal
       </section>
     </div>
   );
+}
+
+function PendingMovementBadge() {
+  return <span role="status" className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-black text-amber-800">Pendiente de sincronizar</span>;
 }
 
 function formatMovementDate(value: string) {
