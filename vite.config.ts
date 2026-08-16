@@ -16,6 +16,7 @@ export default defineConfig({
       scope: "/",
       workbox: {
         cleanupOutdatedCaches: true,
+        importScripts: ["/push-sw.js"],
         navigateFallback: "/index.html",
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff,woff2,ttf,eot}"],
         runtimeCaching: [],
