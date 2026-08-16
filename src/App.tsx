@@ -233,6 +233,17 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   }, [currentMember?.householdId, currentMember?.userId]);
 
   useEffect(() => {
+    if (!dataReady || typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("view") !== "pagos") return;
+
+    setView("pagos");
+    setFocusedPaymentId(params.get("payment")?.trim() || null);
+    window.history.replaceState(window.history.state, document.title, `${window.location.pathname}${window.location.hash}`);
+  }, [dataReady]);
+
+  useEffect(() => {
     if (!dataReady) return;
     if (!isSupabaseConfigured) {
       saveData(data);
@@ -992,6 +1003,8 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
               categories={data.categories}
               alertSummary={urgentPaymentSummary}
               focusedPaymentId={focusedPaymentId}
+              currentMember={currentMember}
+              isBrowserOnline={isBrowserOnline}
               onSave={savePayment}
               onMarkPaid={markPaymentPaid}
               onDeactivate={deactivatePayment}

@@ -1,6 +1,6 @@
-import { Archive, CalendarDays, CheckCircle2, Edit3, Plus, RotateCcw, Save, X } from "lucide-react";
+import { Archive, Bell, BellOff, CalendarDays, CheckCircle2, Edit3, Plus, RotateCcw, Save, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { Category, PaymentAmountMode, RecurrenceType, RecurringPayment } from "../types";
+import { Category, HouseholdMember, PaymentAmountMode, RecurrenceType, RecurringPayment } from "../types";
 import {
   isPaymentFinished,
   isPaymentPaidThisMonth,
@@ -10,12 +10,15 @@ import {
   paymentStatus,
 } from "../utils/calculations";
 import { isValidLocalDate } from "../utils/date";
+import { enablePushNotifications, getPushNotificationState, PushNotificationState, unregisterPushSubscription } from "../services/pushNotifications";
 
 interface RecurringPaymentsProps {
   payments: RecurringPayment[];
   categories: Category[];
   alertSummary: PaymentAlertSummary;
   focusedPaymentId?: string | null;
+  currentMember?: HouseholdMember;
+  isBrowserOnline: boolean;
   onSave: (payment: Omit<RecurringPayment, "id">, id?: string) => void | Promise<boolean>;
   onMarkPaid: (payment: RecurringPayment, actualAmount: number | null, shouldCreateExpense: boolean) => void | Promise<void>;
   onDeactivate: (id: string) => void | Promise<boolean>;
@@ -24,7 +27,7 @@ interface RecurringPaymentsProps {
 
 type PaymentTab = "pending" | "paid" | "archived";
 
-export function RecurringPayments({ payments, categories, alertSummary, focusedPaymentId, onSave, onMarkPaid, onDeactivate, onReactivate }: RecurringPaymentsProps) {
+export function RecurringPayments({ payments, categories, alertSummary, focusedPaymentId, currentMember, isBrowserOnline, onSave, onMarkPaid, onDeactivate, onReactivate }: RecurringPaymentsProps) {
   const [tab, setTab] = useState<PaymentTab>("pending");
   const [editing, setEditing] = useState<RecurringPayment | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -275,6 +278,7 @@ export function RecurringPayments({ payments, categories, alertSummary, focusedP
         </div>
 
         <UrgentPaymentSummary summary={alertSummary} />
+        <PushNotificationSettings currentMember={currentMember} isBrowserOnline={isBrowserOnline} />
 
         <div className="mt-6 grid grid-cols-3 gap-2 rounded-2xl bg-slate-100 p-1" role="tablist" aria-label="Estado de pagos">
           <TabButton active={tab === "pending"} label="Por pagar" count={counts.pending} onClick={() => setTab("pending")} />
@@ -516,4 +520,107 @@ function emptyMessage(tab: PaymentTab) {
   if (tab === "pending") return "Cuando agregues una obligación, aparecerá aquí con su próxima fecha.";
   if (tab === "paid") return "Los pagos que marques como pagados aparecerán aquí.";
   return "Los pagos que archives quedarán guardados en esta sección.";
+}
+
+function PushNotificationSettings({ currentMember, isBrowserOnline }: { currentMember?: HouseholdMember; isBrowserOnline: boolean }) {
+  const [state, setState] = useState<PushNotificationState>({ kind: "checking" });
+  const [isBusy, setIsBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setState({ kind: "checking" });
+    void getPushNotificationState(currentMember, isBrowserOnline).then((nextState) => {
+      if (active) setState(nextState);
+    });
+    return () => {
+      active = false;
+    };
+  }, [currentMember?.householdId, currentMember?.userId, isBrowserOnline]);
+
+  async function activate() {
+    if (!currentMember || isBusy) return;
+    setIsBusy(true);
+    setState({ kind: "requesting" });
+    try {
+      setState(await enablePushNotifications(currentMember));
+    } catch (error) {
+      setState({ kind: "error", message: pushErrorMessage(error) });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function deactivate() {
+    if (!currentMember || isBusy) return;
+    setIsBusy(true);
+    try {
+      await unregisterPushSubscription(currentMember, { isBrowserOnline });
+      setState({ kind: "inactive" });
+    } catch {
+      setState({ kind: "error", message: "No se pudieron desactivar las alertas. Intenta nuevamente." });
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  const isActive = state.kind === "active";
+  const canChange = Boolean(currentMember && isBrowserOnline && (state.kind === "inactive" || state.kind === "active"));
+
+  return (
+    <section className="mt-6 rounded-2xl border border-blue-100 bg-blue-50 p-4 sm:p-5" aria-labelledby="push-notification-settings-title">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex gap-3">
+          <div className="rounded-2xl bg-white p-3 text-blue-700 shadow-sm">{isActive ? <Bell className="h-6 w-6" /> : <BellOff className="h-6 w-6" />}</div>
+          <div>
+            <p className="text-sm font-black uppercase tracking-wide text-blue-700">Recordatorios</p>
+            <h3 id="push-notification-settings-title" className="mt-1 text-xl font-black text-slate-900">Alertas de pagos</h3>
+            <p className="mt-1 max-w-2xl text-sm text-slate-700">{pushStateMessage(state)}</p>
+          </div>
+        </div>
+        {canChange && (
+          <button
+            type="button"
+            disabled={isBusy}
+            onClick={() => void (isActive ? deactivate() : activate())}
+            className={`min-h-12 rounded-xl px-4 py-2 text-sm font-black disabled:cursor-not-allowed disabled:opacity-60 ${isActive ? "border border-blue-200 bg-white text-blue-800 hover:bg-blue-100" : "bg-blue-600 text-white hover:bg-blue-700"}`}
+          >
+            {isBusy ? "Guardando..." : isActive ? "Desactivar alertas" : "Activar alertas"}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function pushStateMessage(state: PushNotificationState) {
+  switch (state.kind) {
+    case "checking":
+      return "Comprobando la configuración de este dispositivo...";
+    case "unsupported":
+      return "Este navegador no admite notificaciones Web Push.";
+    case "ios-install-required":
+      return "En iPhone o iPad, instala Caja Familiar en la pantalla de inicio para activar alertas.";
+    case "not-configured":
+      return "Las alertas requieren que Web Push esté configurado para este proyecto.";
+    case "inactive":
+      return "Activa las alertas para recibir un resumen diario de pagos vencidos, de hoy o de mañana.";
+    case "requesting":
+      return "Solicitando permiso al navegador...";
+    case "active":
+      return "Alertas activas. Recibirás como máximo un resumen diario por dispositivo.";
+    case "denied":
+      return "El navegador bloqueó las alertas. Habilítalas desde los permisos del sitio.";
+    case "offline":
+      return "Conéctate a internet para verificar o cambiar las alertas.";
+    case "error":
+      return state.message ?? "No se pudo verificar la configuración de alertas.";
+  }
+}
+
+function pushErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message === "PUSH_WORKER_NOT_READY") return "El servicio de notificaciones todavía no está listo. Recarga la aplicación e intenta nuevamente.";
+  if (error instanceof Error && error.message === "PUSH_IOS_INSTALL_REQUIRED") return "Instala Caja Familiar en la pantalla de inicio antes de activar alertas.";
+  if (error instanceof Error && error.message === "PUSH_UNSUPPORTED") return "Este navegador no admite notificaciones Web Push.";
+  if (error instanceof Error && error.message === "PUSH_NOT_CONFIGURED") return "Las alertas todavía no están configuradas para este proyecto.";
+  return "No se pudieron activar las alertas. Intenta nuevamente.";
 }

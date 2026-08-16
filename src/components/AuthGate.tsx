@@ -1,6 +1,7 @@
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import App from "../App";
+import { unregisterPushSubscription } from "../services/pushNotifications";
 import { householdId, isSupabaseConfigured, supabase } from "../services/supabaseClient";
 import type { HouseholdMember } from "../types";
 import { clearLocalAppData, loadOfflineAccessRecord, loadTrustedSnapshot, saveOfflineAccessRecord } from "../utils/storage";
@@ -245,6 +246,11 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
     if (isSigningOut) return;
     setIsSigningOut(true);
     setLoginError(null);
+    try {
+      if (currentMember) await unregisterPushSubscription(currentMember, { isBrowserOnline: browserOnline, bestEffort: true });
+    } catch {
+      // Push cleanup is best effort and must not block logout or offline data cleanup.
+    }
     try {
       const { error } = await client.auth.signOut();
       if (error) throw error;
