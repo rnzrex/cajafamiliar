@@ -1,8 +1,8 @@
 import webpush from "web-push";
-import type { RecurringPayment } from "../../src/types";
-import { paymentAlert } from "../../src/utils/calculations";
-import { localDateString } from "../../src/utils/date";
-import { createSupabaseAdmin, readServerEnvironment } from "./supabaseAdmin";
+import type { RecurringPayment } from "../../src/types.js";
+import { paymentAlert } from "../../src/utils/calculations.js";
+import { localDateString } from "../../src/utils/date.js";
+import { createSupabaseAdmin, readServerEnvironment } from "./supabaseAdmin.js";
 
 const NOTIFICATION_TYPE = "urgent-payments-v1";
 

@@ -1,4 +1,4 @@
-import { runPaymentReminderJob } from "../_lib/paymentReminders";
+import { runPaymentReminderJob } from "../_lib/paymentReminders.js";
 
 interface CronRequest {
   method?: string;

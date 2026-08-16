@@ -1,5 +1,5 @@
-import { CashCount, Movement, RecurringPayment } from "../types";
-import { formatLocalDate, localDateString, localMonthString, parseLocalDate } from "./date";
+import type { CashCount, Movement, RecurringPayment } from "../types.js";
+import { formatLocalDate, localDateString, localMonthString, parseLocalDate } from "./date.js";
 
 export type PaymentStatusKind = "overdue" | "today" | "tomorrow" | "upcoming" | "later" | "paid" | "completed" | "inactive";
 
