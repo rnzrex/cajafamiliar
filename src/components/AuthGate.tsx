@@ -3,9 +3,12 @@ import { FormEvent, ReactNode, useEffect, useRef, useState } from "react";
 import App from "../App";
 import { householdId, isSupabaseConfigured, supabase } from "../services/supabaseClient";
 import type { HouseholdMember } from "../types";
-import { clearLocalAppData } from "../utils/storage";
+import { clearLocalAppData, loadOfflineAccessRecord, loadTrustedSnapshot, saveOfflineAccessRecord } from "../utils/storage";
 
-type MembershipState = "idle" | "checking" | "authorized" | "denied" | "provisioning" | "error";
+type MembershipState = "idle" | "checking" | "authorized" | "denied" | "provisioning" | "error" | "offline-unavailable";
+type RemoteStatus = "connected" | "problem" | null;
+
+const offlineAccessMessage = "Este dispositivo todavía no tiene una copia verificada para usar Caja Familiar sin conexión. Conéctate a internet al menos una vez.";
 
 export function AuthGate() {
   if (!isSupabaseConfigured || !supabase) return <App />;
@@ -24,9 +27,29 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [browserOnline, setBrowserOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
+  const [remoteStatus, setRemoteStatus] = useState<RemoteStatus>(null);
   const sessionUserId = useRef<string | null>(null);
   const authEventVersion = useRef(0);
+  const offlineFallbackRef = useRef(false);
   const currentUserId = session?.user.id ?? null;
+
+  useEffect(() => {
+    function handleOnline() {
+      setBrowserOnline(true);
+    }
+
+    function handleOffline() {
+      setBrowserOnline(false);
+    }
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -39,7 +62,11 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
         if (error) {
           setAuthError("No se pudo restaurar la sesión. Revisa tu conexión e intenta nuevamente.");
         } else {
-          if (!data.session) clearLocalAppData();
+          if (!data.session) {
+            clearLocalAppData();
+            offlineFallbackRef.current = false;
+            setRemoteStatus(null);
+          }
           sessionUserId.current = data.session?.user.id ?? null;
           setSession(data.session);
         }
@@ -58,6 +85,8 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
       authEventVersion.current += 1;
       if (nextSession?.user.id !== sessionUserId.current) {
         clearLocalAppData();
+        offlineFallbackRef.current = false;
+        setRemoteStatus(null);
         setMembershipState(nextSession ? "checking" : "idle");
         setCurrentMember(null);
       }
@@ -65,7 +94,11 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
       setSession(nextSession);
       setAuthError(null);
       setAuthReady(true);
-      if (!nextSession) clearLocalAppData();
+      if (!nextSession) {
+        clearLocalAppData();
+        offlineFallbackRef.current = false;
+        setRemoteStatus(null);
+      }
     });
 
     return () => {
@@ -84,9 +117,56 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
     }
 
     let active = true;
-    setMembershipState("checking");
-    setMembershipError(null);
-    setCurrentMember(null);
+    const revalidatingOfflineAccess = offlineFallbackRef.current && browserOnline;
+
+    if (!browserOnline) {
+      const cachedRecord = loadOfflineAccessRecord();
+      const trustedSnapshot =
+        cachedRecord &&
+        cachedRecord.householdId === householdId &&
+        cachedRecord.userId === currentUserId &&
+        cachedRecord.displayName.trim() &&
+        cachedRecord.snapshotReady
+          ? loadTrustedSnapshot(householdId, currentUserId)
+          : null;
+
+      if (cachedRecord && trustedSnapshot) {
+        offlineFallbackRef.current = true;
+        setCurrentMember({
+          householdId: cachedRecord.householdId,
+          userId: cachedRecord.userId,
+          displayName: cachedRecord.displayName,
+          role: cachedRecord.role,
+        });
+        setMembershipError(null);
+        setMembershipState("authorized");
+      } else {
+        offlineFallbackRef.current = false;
+        setCurrentMember(null);
+        setMembershipError(offlineAccessMessage);
+        setMembershipState("offline-unavailable");
+      }
+      setRemoteStatus(null);
+      return () => {
+        active = false;
+      };
+    }
+
+    if (!revalidatingOfflineAccess) {
+      setMembershipState("checking");
+      setMembershipError(null);
+      setCurrentMember(null);
+    }
+    setRemoteStatus(null);
+
+    function handleMembershipFailure() {
+      if (revalidatingOfflineAccess) {
+        setRemoteStatus("problem");
+        return;
+      }
+      setMembershipState("error");
+      setMembershipError("Problema de conexión. No se pudo verificar el acceso. Revisa tu conexión e intenta nuevamente.");
+    }
 
     void client
       .from("household_members")
@@ -97,30 +177,40 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
       .then(({ data, error }) => {
         if (!active) return;
         if (error) {
-          setMembershipState("error");
-          setMembershipError("No se pudo verificar el acceso. Revisa tu conexión e intenta nuevamente.");
+          handleMembershipFailure();
         } else if (!data) {
           clearLocalAppData();
+          offlineFallbackRef.current = false;
+          setCurrentMember(null);
           setMembershipState("denied");
         } else if (typeof data.display_name !== "string" || !data.display_name.trim()) {
+          clearLocalAppData();
+          offlineFallbackRef.current = false;
           setCurrentMember(null);
           setMembershipError("Tu cuenta tiene acceso, pero falta configurar display_name. Un administrador debe completar el provisioning antes de usar Caja Familiar.");
           setMembershipState("provisioning");
         } else {
-          setCurrentMember({
+          const verifiedMember: HouseholdMember = {
             householdId: data.household_id,
             userId: data.user_id,
             displayName: data.display_name.trim(),
             role: data.role === "owner" ? "owner" : "member",
-          });
+          };
+          saveOfflineAccessRecord(verifiedMember);
+          offlineFallbackRef.current = false;
+          setRemoteStatus("connected");
+          setCurrentMember(verifiedMember);
           setMembershipState("authorized");
         }
+      }, () => {
+        if (!active) return;
+        handleMembershipFailure();
       });
 
     return () => {
       active = false;
     };
-  }, [authError, authReady, client, currentUserId, membershipAttempt]);
+  }, [authError, authReady, browserOnline, client, currentUserId, membershipAttempt]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -192,6 +282,19 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
   if (membershipState === "denied") {
     return <GateMessage title="Caja Familiar" message="Esta cuenta no tiene acceso a Caja Familiar." actionLabel="Cerrar sesión" onAction={() => void handleSignOut()} actionDisabled={isSigningOut} />;
   }
+  if (membershipState === "offline-unavailable") {
+    return (
+      <GateMessage
+        title="Caja Familiar"
+        message={membershipError ?? offlineAccessMessage}
+        actionLabel="Reintentar"
+        onAction={retryMembership}
+        secondaryLabel="Cerrar sesión"
+        onSecondary={() => void handleSignOut()}
+        actionDisabled={isSigningOut}
+      />
+    );
+  }
   if (membershipState === "provisioning") {
     return (
       <GateMessage
@@ -219,7 +322,7 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
     );
   }
 
-  if (membershipState === "authorized" && currentMember) return <App currentMember={currentMember} onSignOut={handleSignOut} />;
+  if (membershipState === "authorized" && currentMember) return <App currentMember={currentMember} onSignOut={handleSignOut} remoteStatus={remoteStatus} />;
   return <GateMessage title="Caja Familiar" message="Verificando acceso..." />;
 }
 

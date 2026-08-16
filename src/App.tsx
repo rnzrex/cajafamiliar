@@ -41,6 +41,7 @@ import {
   RecurringPaymentAuthenticationError,
   RecurringPaymentInactiveError,
   RecurringPaymentNotFoundError,
+  TrustedOfflineSnapshotUnavailableError,
   setCategoryActive,
   setRecurringPaymentActive,
   updateCategoryDetails,
@@ -53,7 +54,8 @@ import { makeId, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
 
 type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "saldo-inicial";
-type SyncStatus = "loading" | "connected" | "local" | "offline";
+type SyncStatus = "loading" | "connected" | "local" | "offline" | "problem";
+type RemoteContactStatus = "unknown" | "success" | "failure";
 
 const Reports = lazy(() =>
   import("./components/Reports").then(({ Reports: ReportsComponent }) => ({
@@ -64,6 +66,7 @@ const Reports = lazy(() =>
 interface AppProps {
   currentMember?: HouseholdMember;
   onSignOut?: () => void | Promise<void>;
+  remoteStatus?: "connected" | "problem" | null;
 }
 
 const navItems: Array<{ view: View; label: string; icon: typeof Home }> = [
@@ -96,54 +99,98 @@ const titles: Record<View, string> = {
   "saldo-inicial": "Saldo inicial",
 };
 
-export default function App({ currentMember, onSignOut }: AppProps = {}) {
-  const [data, setData] = useState<AppData>(() => loadData());
+const EMPTY_APP_DATA: AppData = {
+  movements: [],
+  cashCounts: [],
+  recurringPayments: [],
+  categories: [],
+  initialBalance: 0,
+};
+
+const OFFLINE_WRITE_MESSAGE = "Estás sin conexión. Puedes consultar tu información, pero para registrar o modificar datos necesitas conectarte a internet.";
+
+export default function App({ currentMember, onSignOut, remoteStatus }: AppProps = {}) {
+  const [data, setData] = useState<AppData>(() => (isSupabaseConfigured ? EMPTY_APP_DATA : loadData()));
   const [view, setView] = useState<View>("dashboard");
   const [moreOpen, setMoreOpen] = useState(false);
   const [movementDraft, setMovementDraft] = useState<MovementDraft | null>(null);
   const [pendingRecurringPaymentId, setPendingRecurringPaymentId] = useState<string | null>(null);
   const [pendingRecurringMovementId, setPendingRecurringMovementId] = useState<string | null>(null);
   const [focusedPaymentId, setFocusedPaymentId] = useState<string | null>(null);
-  const [dataReady, setDataReady] = useState(false);
+  const [dataReady, setDataReady] = useState(!isSupabaseConfigured);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>("loading");
+  const [isBrowserOnline, setIsBrowserOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
+  const [lastRemoteContact, setLastRemoteContact] = useState<RemoteContactStatus>("unknown");
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const expected = useMemo(() => expectedCash(data.movements, data.initialBalance), [data.movements, data.initialBalance]);
   const urgentPaymentSummary = useMemo(() => paymentAlertSummary(data.recurringPayments), [data.recurringPayments]);
   const urgentPaymentLabel = urgentPaymentSummary.total === 1 ? "1 pago requiere atención" : `${urgentPaymentSummary.total} pagos requieren atención`;
+  const syncStatus: SyncStatus = !isSupabaseConfigured
+    ? "local"
+    : !isBrowserOnline
+      ? "offline"
+      : lastRemoteContact === "success"
+        ? "connected"
+        : lastRemoteContact === "failure"
+          ? "problem"
+          : "loading";
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    function handleOnline() {
+      setIsBrowserOnline(true);
+      setLastRemoteContact("unknown");
+    }
+
+    function handleOffline() {
+      setIsBrowserOnline(false);
+    }
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured || !remoteStatus) return;
+    setLastRemoteContact(remoteStatus === "connected" ? "success" : "failure");
+  }, [remoteStatus]);
 
   useEffect(() => {
     let active = true;
 
-    loadAppData()
+    loadAppData(currentMember)
       .then(({ data: loadedData, source }) => {
         if (!active) return;
         setData(loadedData);
-        setSyncStatus(source === "fallback" ? "offline" : source === "local" ? "local" : "connected");
-        if (source === "fallback") {
-          window.alert("No se pudo cargar la información desde Supabase. Se conservará la copia local y no se sincronizarán datos automáticamente.");
-        }
+        setLastRemoteContact(source === "remote" ? "success" : source === "fallback" ? "failure" : "unknown");
         setDataReady(true);
       })
       .catch((error) => {
         if (!active) return;
-        setSyncStatus("offline");
+        setLastRemoteContact("failure");
         setDataLoadError(
-          error instanceof HouseholdNotProvisionedError
-            ? "Este hogar todavía no está provisionado en Supabase. Contacta al administrador para habilitarlo."
-            : "No se pudo cargar la información financiera. Intenta nuevamente más tarde."
+          error instanceof TrustedOfflineSnapshotUnavailableError
+            ? "Este dispositivo todavía no tiene una copia verificada para usar Caja Familiar sin conexión. Conéctate a internet al menos una vez."
+            : error instanceof HouseholdNotProvisionedError
+              ? "Este hogar todavía no está provisionado en Supabase. Contacta al administrador para habilitarlo."
+              : "Problema de conexión. No se pudo cargar la información financiera. Intenta nuevamente más tarde."
         );
       });
 
     return () => {
       active = false;
     };
-  }, []);
+  }, [currentMember?.householdId, currentMember?.userId]);
 
   useEffect(() => {
     if (!dataReady) return;
-    saveData(data);
-  }, [data, dataReady]);
+    if (!isSupabaseConfigured || isBrowserOnline) saveData(data);
+  }, [data, dataReady, isBrowserOnline]);
 
   useEffect(() => {
     if (!toast) return;
@@ -156,11 +203,11 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   function markRemoteSuccess() {
-    if (isSupabaseConfigured) setSyncStatus("connected");
+    if (isSupabaseConfigured) setLastRemoteContact("success");
   }
 
   function markRemoteFailure() {
-    if (isSupabaseConfigured) setSyncStatus("offline");
+    if (isSupabaseConfigured) setLastRemoteContact("failure");
   }
 
   function navigate(nextView: string) {
@@ -190,7 +237,14 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
     return false;
   }
 
+  function ensureOnlineWriteAllowed() {
+    if (!isSupabaseConfigured || typeof navigator === "undefined" || navigator.onLine) return true;
+    window.alert(OFFLINE_WRITE_MESSAGE);
+    return false;
+  }
+
   async function saveMovement(movement: MovementFormInput, id?: string): Promise<boolean> {
+    if (!ensureOnlineWriteAllowed()) return false;
     if (!dataReady) {
       window.alert("Los datos todavía se están cargando. Intenta nuevamente en unos segundos.");
       return false;
@@ -287,7 +341,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
         window.alert("Este movimiento ya no existe en la base de datos. Es posible que haya sido eliminado desde otro dispositivo. Actualiza la información antes de continuar.");
         return false;
       }
-      setSyncStatus("offline");
+      markRemoteFailure();
       window.alert("No se pudo guardar el movimiento. No se realizó ningún cambio en tu caja. Intenta nuevamente.");
       return false;
     }
@@ -309,6 +363,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   async function deleteMovement(id: string): Promise<boolean> {
+    if (!ensureOnlineWriteAllowed()) return false;
     if (!dataReady) {
       window.alert("Los datos todavía se están cargando. Intenta nuevamente en unos segundos.");
       return false;
@@ -319,7 +374,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
     try {
       await deleteRemoteMovement(id);
     } catch {
-      setSyncStatus("offline");
+      markRemoteFailure();
       window.alert("No se pudo eliminar el movimiento. No se realizó ningún cambio en tu caja. Intenta nuevamente.");
       return false;
     }
@@ -331,6 +386,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   async function saveCashCount(cashCount: Omit<CashCount, "id">): Promise<boolean> {
+    if (!ensureOnlineWriteAllowed()) return false;
     if (!ensureDataReady()) return false;
 
     const savedCount: CashCount = { ...cashCount, id: makeId("count") };
@@ -348,6 +404,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   async function savePayment(payment: Omit<RecurringPayment, "id">, id?: string): Promise<boolean> {
+    if (!ensureOnlineWriteAllowed()) return false;
     if (!ensureDataReady()) return false;
 
     const savedPayment: RecurringPayment = { ...payment, id: id ?? makeId("pay") };
@@ -373,6 +430,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   async function markPaymentPaid(payment: RecurringPayment, actualAmount: number | null, shouldCreateExpense: boolean) {
+    if (!ensureOnlineWriteAllowed()) return;
     if (!ensureDataReady()) return;
 
     const paymentAmount = actualAmount ?? payment.amount;
@@ -430,6 +488,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   async function setPaymentActive(id: string, isActive: boolean): Promise<boolean> {
+    if (!ensureOnlineWriteAllowed()) return false;
     if (!ensureDataReady()) return false;
 
     const payment = data.recurringPayments.find((item) => item.id === id);
@@ -460,6 +519,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   async function saveCategory(category: Omit<Category, "id" | "created_at">, id?: string): Promise<Category | null> {
+    if (!ensureOnlineWriteAllowed()) return null;
     if (!ensureDataReady()) return null;
 
     const name = category.name.trim();
@@ -503,6 +563,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   async function deleteCategory(id: string): Promise<boolean> {
+    if (!ensureOnlineWriteAllowed()) return false;
     if (!ensureDataReady()) return false;
 
     const category = data.categories.find((item) => item.id === id);
@@ -527,6 +588,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   async function toggleCategory(id: string): Promise<boolean> {
+    if (!ensureOnlineWriteAllowed()) return false;
     if (!ensureDataReady()) return false;
 
     const category = data.categories.find((item) => item.id === id);
@@ -549,6 +611,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   async function saveInitialBalance(value: number): Promise<boolean> {
+    if (!ensureOnlineWriteAllowed()) return false;
     if (!ensureDataReady()) return false;
 
     if (!Number.isFinite(value) || value < 0) {
@@ -588,6 +651,7 @@ export default function App({ currentMember, onSignOut }: AppProps = {}) {
   }
 
   if (dataLoadError) return <DataLoadErrorScreen message={dataLoadError} onSignOut={onSignOut} />;
+  if (isSupabaseConfigured && !dataReady) return <AppLoadingScreen />;
 
   const initialType: MovementType = view === "registrar-ingreso" ? "ingreso" : "egreso";
 
@@ -800,8 +864,9 @@ function SyncStatus({ status }: { status: SyncStatus }) {
   const config = {
     loading: { label: "Conectando...", className: "bg-amber-400", textClassName: "text-slate-600" },
     connected: { label: "Conectado", className: "bg-emerald-500", textClassName: "text-emerald-700" },
-    local: { label: "Trabajando con copia local", className: "bg-slate-400", textClassName: "text-slate-600" },
+    local: { label: "Modo local", className: "bg-slate-400", textClassName: "text-slate-600" },
     offline: { label: "Sin conexión", className: "bg-red-500", textClassName: "text-red-700" },
+    problem: { label: "Problema de conexión", className: "bg-red-500", textClassName: "text-red-700" },
   }[status];
 
   return (
@@ -809,6 +874,17 @@ function SyncStatus({ status }: { status: SyncStatus }) {
       <span className={`h-2.5 w-2.5 rounded-full ${config.className}`} aria-hidden="true" />
       {config.label}
     </div>
+  );
+}
+
+function AppLoadingScreen() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
+      <section className="w-full max-w-md rounded-3xl bg-white p-6 text-center shadow-xl sm:p-8">
+        <h1 className="text-3xl font-black text-slate-900">Caja Familiar</h1>
+        <p className="mt-4 text-lg text-slate-600" role="status" aria-live="polite">Conectando...</p>
+      </section>
+    </main>
   );
 }
 

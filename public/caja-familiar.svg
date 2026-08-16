@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="title desc">
+  <title id="title">Caja Familiar</title>
+  <desc id="desc">Icono azul de una alcancía</desc>
+  <rect width="192" height="192" rx="42" fill="#1d4ed8"/>
+  <path fill="#fff" d="M48 91c0-25 21-45 47-45h16c24 0 43 16 47 38h10c5 0 9 4 9 9v20c0 5-4 9-9 9h-9c-5 19-22 32-42 35v13H92v-13H77c-16 0-29-13-29-29V91Zm47-25c-17 0-31 11-35 26h91c-4-15-17-26-34-26H95Zm-20 43a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm75-7h12v13h-12v-13Zm-49-45h14v10H101V57Z"/>
+  <circle cx="135" cy="83" r="5" fill="#1d4ed8"/>
+</svg>
