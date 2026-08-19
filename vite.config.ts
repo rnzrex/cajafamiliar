@@ -11,12 +11,12 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: "prompt",
-      injectRegister: "script",
+      injectRegister: null,
       strategies: "generateSW",
       scope: "/",
       workbox: {
         cleanupOutdatedCaches: true,
-        importScripts: ["/push-sw.js"],
+        importScripts: ["/push-sw.js", "/pwa-update-migration-sw.js"],
         navigateFallback: "/index.html",
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff,woff2,ttf,eot}"],
         runtimeCaching: [],
