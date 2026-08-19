@@ -39,7 +39,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
   const [amount, setAmount] = useState(movement?.amount.toString() ?? draft?.amount?.toString() ?? "");
   const [description, setDescription] = useState(movement?.description ?? draft?.description ?? "");
   const [method, setMethod] = useState<PaymentMethod>(movement?.method ?? draft?.method ?? "efectivo");
-  const [category, setCategory] = useState(movement?.category ?? draft?.category ?? "Otros");
+  const [category, setCategory] = useState(movement?.category ?? draft?.category ?? "Negocio");
   const [person, setPerson] = useState(() => initialPersonValue(movement, draft, currentMember));
   const [personChoice, setPersonChoice] = useState<PersonChoice>(() => initialPersonChoice(movement, draft, currentMember));
   const [categoryTouched, setCategoryTouched] = useState(Boolean(movement || draft?.category));
@@ -63,7 +63,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
     setAmount(movement?.amount.toString() ?? draft?.amount?.toString() ?? "");
     setDescription(movement?.description ?? draft?.description ?? "");
     setMethod(movement?.method ?? draft?.method ?? "efectivo");
-    setCategory(movement?.category ?? draft?.category ?? "Otros");
+    setCategory(movement?.category ?? draft?.category ?? "Negocio");
     setPerson(nextPerson);
     setPersonChoice(initialPersonChoice(movement, draft, currentMember));
     setCategoryTouched(Boolean(movement || draft?.category));
@@ -75,13 +75,13 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
     if (!categoryTouched) {
       const detected = detectCategory(description);
       const isAllowed = availableCategories.some((item) => item.name === detected);
-      setCategory(isAllowed ? detected : "Otros");
+      setCategory(isAllowed ? detected : "Negocio");
     }
   }, [availableCategories, description, categoryTouched]);
 
   useEffect(() => {
     if (!availableCategories.some((item) => item.name === category)) {
-      setCategory(availableCategories.find((item) => item.name === "Otros")?.name ?? availableCategories[0]?.name ?? "");
+      setCategory(availableCategories.find((item) => item.name === "Negocio")?.name ?? availableCategories[0]?.name ?? "");
     }
   }, [availableCategories, category]);
 
@@ -311,7 +311,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-bold uppercase tracking-wide text-slate-500">Categoría sugerida</p>
-                <p className="mt-1 text-xl font-black text-slate-900">{category || "Otros"}</p>
+                <p className="mt-1 text-xl font-black text-slate-900">{category || "Negocio"}</p>
               </div>
               <button type="button" onClick={() => setShowCategorySelector((current) => !current)} className="min-h-12 rounded-xl bg-white px-4 py-2 text-base font-black text-blue-700 shadow-sm hover:bg-blue-50" aria-expanded={showCategorySelector}>
                 {showCategorySelector ? "Ocultar" : "Cambiar"}
