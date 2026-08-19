@@ -22,5 +22,5 @@ const normalize = (text: string) =>
 
 export function detectCategory(description: string): string {
   const cleanText = normalize(description);
-  return rules.find((rule) => rule.words.some((word) => cleanText.includes(word)))?.category ?? "Otros";
+  return rules.find((rule) => rule.words.some((word) => cleanText.includes(word)))?.category ?? "Negocio";
 }
