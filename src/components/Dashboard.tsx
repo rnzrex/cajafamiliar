@@ -9,12 +9,14 @@ import {
   PiggyBank,
   Scale,
 } from "lucide-react";
-import { CashCount, FinancialAccount, Movement, RecurringPayment } from "../types";
+import { CashCount, DebtEvent, FinancialAccount, Movement, RecurringPayment } from "../types";
 import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAmountLabel, paymentScheduleLabel, paymentStatus, topExpenseCategory } from "../utils/calculations";
 import { accountNameForMovement, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
+import { movementLabel } from "../utils/movementEconomics";
 
 interface DashboardProps {
   movements: Movement[];
+  debtEvents: DebtEvent[];
   pendingMovementIds: ReadonlySet<string>;
   cashCounts: CashCount[];
   recurringPayments: RecurringPayment[];
@@ -24,14 +26,14 @@ interface DashboardProps {
   onOpenPayment: (id: string) => void;
 }
 
-export function Dashboard({ movements, pendingMovementIds, cashCounts, recurringPayments, initialBalance, accounts, onNavigate, onOpenPayment }: DashboardProps) {
+export function Dashboard({ movements, debtEvents, pendingMovementIds, cashCounts, recurringPayments, initialBalance, accounts, onNavigate, onOpenPayment }: DashboardProps) {
   const cashAccount = getActiveCashAccount(accounts);
   const expected = expectedCash(movements, cashAccount ? cashAccount.openingBalance : initialBalance, cashAccount?.id ?? null);
   const lastCount = lastCashCount(cashCounts);
   const hasCount = Boolean(lastCount);
   const difference = hasCount ? (lastCount?.total ?? 0) - expected : null;
-  const totals = monthlyTotals(movements);
-  const topCategory = topExpenseCategory(movements);
+  const totals = monthlyTotals(movements, undefined, debtEvents);
+  const topCategory = topExpenseCategory(movements, undefined, debtEvents);
   const latestMovements = [...movements]
     .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
     .slice(0, 5);
@@ -43,7 +45,8 @@ export function Dashboard({ movements, pendingMovementIds, cashCounts, recurring
 
   const secondaryStats = [
     { label: "Ingresos del mes", value: formatMoney(totals.income), icon: ArrowUpCircle, tone: "text-emerald-700 bg-emerald-50" },
-    { label: "Egresos del mes", value: formatMoney(totals.expense), icon: ArrowDownCircle, tone: "text-red-700 bg-red-50" },
+    { label: "Salidas de dinero", value: formatMoney(totals.cashOutflow), icon: ArrowDownCircle, tone: "text-red-700 bg-red-50" },
+    { label: "Gastos del mes", value: formatMoney(totals.expense), icon: CreditCard, tone: "text-amber-800 bg-amber-50" },
     { label: "Categoría con más gasto", value: topCategory, icon: CreditCard, tone: "text-amber-800 bg-amber-50" },
     { label: "Pagos próximos", value: `${attentionPayments.length}`, icon: CalendarClock, tone: "text-orange-800 bg-orange-50" },
   ];
@@ -161,8 +164,8 @@ export function Dashboard({ movements, pendingMovementIds, cashCounts, recurring
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-black ${movement.type === "ingreso" ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>
-                        {movement.type === "ingreso" ? "Ingreso" : "Gasto"}
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-black ${movement.type === "ingreso" ? "bg-emerald-100 text-emerald-800" : movement.movementContext === "debt_service" ? "bg-blue-100 text-blue-800" : "bg-red-100 text-red-800"}`}>
+                        {movementLabel(movement)}
                       </span>
                       {pendingMovementIds.has(movement.id) && <PendingMovementBadge />}
                       <h3 className="truncate text-lg font-bold text-slate-900">{movement.description}</h3>

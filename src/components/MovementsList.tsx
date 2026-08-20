@@ -1,13 +1,15 @@
 import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Category, FinancialAccount, HouseholdMember, Movement, MovementFormInput } from "../types";
+import { Category, DebtEvent, FinancialAccount, HouseholdMember, Movement, MovementFormInput } from "../types";
 import { formatMoney } from "../utils/calculations";
 import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "../utils/accountHelpers";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters";
+import { movementLabel } from "../utils/movementEconomics";
 import { MovementForm } from "./MovementForm";
 
 interface MovementsListProps {
   movements: Movement[];
+  debtEvents: DebtEvent[];
   pendingMovementIds: ReadonlySet<string>;
   categories: Category[];
   accounts: FinancialAccount[];
@@ -17,7 +19,7 @@ interface MovementsListProps {
   onDelete: (id: string) => void | Promise<boolean>;
 }
 
-export function MovementsList({ movements, pendingMovementIds, categories, accounts, currentMember, onQuickCreateCategory, onSave, onDelete }: MovementsListProps) {
+export function MovementsList({ movements, debtEvents, pendingMovementIds, categories, accounts, currentMember, onQuickCreateCategory, onSave, onDelete }: MovementsListProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
   const [editing, setEditing] = useState<Movement | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, accou
 
     try {
       const { exportMovementsExcel } = await import("../utils/excelExport");
-      exportMovementsExcel(filtered, accounts);
+       exportMovementsExcel(filtered, accounts, debtEvents);
     } catch {
       window.alert("No se pudo preparar el archivo Excel. Intenta nuevamente.");
     }
@@ -160,7 +162,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, accou
               <select value={filters.type} onChange={(event) => setFilters((current) => ({ ...current, type: event.target.value as typeof current.type }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3">
                 <option value="todos">Todos</option>
                 <option value="ingreso">Ingreso</option>
-                <option value="egreso">Gasto</option>
+                <option value="egreso">Egreso</option>
               </select>
             </label>
           </div>
@@ -185,21 +187,21 @@ export function MovementsList({ movements, pendingMovementIds, categories, accou
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <p className={`text-xs font-black uppercase tracking-wide ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "Ingreso" : "Gasto"}</p>
+                  <p className={`text-xs font-black uppercase tracking-wide ${movement.type === "ingreso" ? "text-emerald-700" : movement.movementContext === "debt_service" ? "text-blue-700" : "text-red-700"}`}>{movementLabel(movement)}</p>
                   {pendingMovementIds.has(movement.id) && <PendingMovementBadge />}
                 </div>
                 <h3 className="mt-1 break-words text-lg font-black text-slate-900">{movement.description}</h3>
               </div>
-              <p className={`shrink-0 text-xl font-black ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "+" : "-"}{formatMoney(movement.amount)}</p>
+              <p className={`shrink-0 text-xl font-black ${movement.type === "ingreso" ? "text-emerald-700" : movement.movementContext === "debt_service" ? "text-blue-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "+" : "-"}{formatMoney(movement.amount)}</p>
             </div>
             <p className="mt-3 text-sm font-semibold text-slate-600">{formatMovementDate(movement.date)} · {accountNameForMovement(movement, accounts)}</p>
             <p className="mt-1 text-sm text-slate-500">{movement.category} · {movement.person}</p>
             <div className="mt-4 grid grid-cols-2 gap-2">
-              <button type="button" disabled={pendingMovementIds.has(movement.id)} onClick={() => setEditing(movement)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-blue-100 px-3 text-base font-black text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="button" disabled={pendingMovementIds.has(movement.id) || movement.movementContext === "debt_service"} onClick={() => setEditing(movement)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-blue-100 px-3 text-base font-black text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-60" title={movement.movementContext === "debt_service" ? "Se corrige desde Deudas" : undefined}>
                 <Edit className="h-5 w-5" />
                 Editar
               </button>
-              <button type="button" disabled={pendingMovementIds.has(movement.id) || deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-100 px-3 text-base font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+              <button type="button" disabled={pendingMovementIds.has(movement.id) || movement.movementContext === "debt_service" || deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-100 px-3 text-base font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60" title={movement.movementContext === "debt_service" ? "Se corrige desde Deudas" : undefined}>
                 <Trash2 className="h-5 w-5" />
                 {deletingId === movement.id ? "Eliminando..." : "Eliminar"}
               </button>
@@ -228,7 +230,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, accou
                 <td className="rounded-l-2xl px-3 py-4">{movement.date}</td>
                 <td className={`px-3 py-4 font-black ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>
                   <div className="flex flex-col items-start gap-2">
-                    <span>{movement.type === "ingreso" ? "Ingreso" : "Gasto"}</span>
+                  <span>{movementLabel(movement)}</span>
                     {pendingMovementIds.has(movement.id) && <PendingMovementBadge />}
                   </div>
                 </td>
@@ -239,11 +241,11 @@ export function MovementsList({ movements, pendingMovementIds, categories, accou
                 <td className="px-3 py-4">{movement.person}</td>
                 <td className="rounded-r-2xl px-3 py-4">
                   <div className="flex gap-2">
-                    <button type="button" disabled={pendingMovementIds.has(movement.id)} onClick={() => setEditing(movement)} className="flex min-h-12 items-center gap-2 rounded-xl bg-blue-100 px-3 text-sm font-black text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    <button type="button" disabled={pendingMovementIds.has(movement.id) || movement.movementContext === "debt_service"} onClick={() => setEditing(movement)} className="flex min-h-12 items-center gap-2 rounded-xl bg-blue-100 px-3 text-sm font-black text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-60" title={movement.movementContext === "debt_service" ? "Se corrige desde Deudas" : undefined}>
                       <Edit className="h-5 w-5" />
                       Editar
                     </button>
-                    <button type="button" disabled={pendingMovementIds.has(movement.id) || deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center gap-2 rounded-xl bg-red-100 px-3 text-sm font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60">
+                    <button type="button" disabled={pendingMovementIds.has(movement.id) || movement.movementContext === "debt_service" || deletingId !== null} onClick={() => void handleDelete(movement.id)} className="flex min-h-12 items-center gap-2 rounded-xl bg-red-100 px-3 text-sm font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60" title={movement.movementContext === "debt_service" ? "Se corrige desde Deudas" : undefined}>
                       <Trash2 className="h-5 w-5" />
                       {deletingId === movement.id ? "Eliminando..." : "Eliminar"}
                     </button>

@@ -1,5 +1,6 @@
-import type { CashCount, Movement, RecurringPayment } from "../types.js";
+import type { CashCount, DebtEvent, Movement, RecurringPayment } from "../types.js";
 import { formatLocalDate, localDateString, localMonthString, parseLocalDate } from "./date.js";
+import { getMovementEconomics } from "./movementEconomics.js";
 
 export type PaymentStatusKind = "overdue" | "today" | "tomorrow" | "upcoming" | "later" | "paid" | "completed" | "inactive";
 
@@ -30,24 +31,32 @@ export function expectedCash(movements: Movement[], initialBalance: number, cash
   }, initialBalance);
 }
 
-export function monthlyTotals(movements: Movement[], selectedMonth = localMonthString()) {
+export function monthlyTotals(movements: Movement[], selectedMonth = localMonthString(), debtEvents: DebtEvent[] = []) {
   return movements
     .filter((movement) => monthKey(movement.date) === selectedMonth)
     .reduce(
       (totals, movement) => {
-        if (movement.type === "ingreso") totals.income += movement.amount;
-        if (movement.type === "egreso") totals.expense += movement.amount;
+        if (movement.type === "ingreso") {
+          totals.income += movement.amount;
+        } else {
+          const economics = getMovementEconomics(movement, debtEvents);
+          totals.cashOutflow += economics.cashOutflow;
+          totals.expense += economics.economicExpense;
+        }
         return totals;
       },
-      { income: 0, expense: 0 }
+      { income: 0, cashOutflow: 0, expense: 0 }
     );
 }
 
-export function topExpenseCategory(movements: Movement[], selectedMonth = localMonthString()) {
+export function topExpenseCategory(movements: Movement[], selectedMonth = localMonthString(), debtEvents: DebtEvent[] = []) {
   const totals = new Map<string, number>();
   movements
     .filter((movement) => movement.type === "egreso" && monthKey(movement.date) === selectedMonth)
-    .forEach((movement) => totals.set(movement.category, (totals.get(movement.category) ?? 0) + movement.amount));
+    .forEach((movement) => {
+      const expense = getMovementEconomics(movement, debtEvents).economicExpense;
+      if (expense > 0) totals.set(movement.category, (totals.get(movement.category) ?? 0) + expense);
+    });
 
   return [...totals.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Sin gastos";
 }

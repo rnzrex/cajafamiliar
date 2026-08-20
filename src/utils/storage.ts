@@ -8,7 +8,7 @@ const PREFERRED_PERSON_KEY = "caja-familiar-preferred-person";
 const CUSTOM_PERSON_PREFIX = "custom:";
 const OFFLINE_ACCESS_KEY = "caja-familiar-offline-access";
 const TRUSTED_SNAPSHOT_KEY = "caja-familiar-trusted-snapshot";
-const OFFLINE_CACHE_VERSION = 1 as const;
+const OFFLINE_CACHE_VERSION = 2 as const;
 
 export interface AppDataSnapshotInput {
   movements: Movement[];
@@ -55,6 +55,7 @@ const sampleMovements: Movement[] = [
     category: "Negocio",
     person: "Mama",
     accountId: null,
+    movementContext: "standard",
   },
   {
     id: "mov-2",
@@ -66,6 +67,7 @@ const sampleMovements: Movement[] = [
     category: "Mercado",
     person: "Papa",
     accountId: null,
+    movementContext: "standard",
   },
   {
     id: "mov-3",
@@ -77,6 +79,7 @@ const sampleMovements: Movement[] = [
     category: "Teléfono",
     person: "Mama",
     accountId: null,
+    movementContext: "standard",
   },
   {
     id: "mov-4",
@@ -88,6 +91,7 @@ const sampleMovements: Movement[] = [
     category: "Comida / cenas",
     person: "Hijo",
     accountId: null,
+    movementContext: "standard",
   },
   {
     id: "mov-5",
@@ -99,6 +103,7 @@ const sampleMovements: Movement[] = [
     category: "Préstamos",
     person: "Papa",
     accountId: null,
+    movementContext: "standard",
   },
   {
     id: "mov-6",
@@ -110,6 +115,7 @@ const sampleMovements: Movement[] = [
     category: "Cigarrillos",
     person: "Papa",
     accountId: null,
+    movementContext: "standard",
   },
 ];
 
@@ -371,6 +377,7 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
       ...movement,
       category: movementCategoryMap[movement.category] ?? movement.category,
       accountId: movement.accountId ?? null,
+      movementContext: movement.movementContext === "debt_service" ? "debt_service" : "standard",
       registeredByUserId: movement.registeredByUserId ?? null,
     })),
     cashCounts: (data.cashCounts ?? []).map((count) => ({

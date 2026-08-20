@@ -1,7 +1,8 @@
-import { FinancialAccount, Movement, MovementType } from "../types";
+import { DebtEvent, FinancialAccount, Movement, MovementType } from "../types";
 import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "./accountHelpers";
 import { monthKey } from "./calculations";
 import { localDateString, localMonthString } from "./date";
+import { getMovementEconomics } from "./movementEconomics";
 
 export type DateFilterMode = "all" | "month" | "date" | "range";
 export type MovementTypeFilter = MovementType | "todos";
@@ -79,8 +80,35 @@ export function describeFilters(filters: MovementFilters, accountName?: string) 
   return parts.join(" - ");
 }
 
-export function movementTotals(movements: Movement[]) {
-  const income = movements.filter((movement) => movement.type === "ingreso").reduce((sum, movement) => sum + movement.amount, 0);
-  const expense = movements.filter((movement) => movement.type === "egreso").reduce((sum, movement) => sum + movement.amount, 0);
-  return { income, expense, balance: income - expense };
+export function movementTotals(movements: Movement[], debtEvents: DebtEvent[] = []) {
+  const totals = movements.reduce(
+    (totals, movement) => {
+      if (movement.type === "ingreso") {
+        totals.income += movement.amount;
+        return totals;
+      }
+
+      const economics = getMovementEconomics(movement, debtEvents);
+      totals.cashOutflow += economics.cashOutflow;
+      totals.expense += economics.economicExpense;
+      totals.principalReduction += economics.principalReduction;
+      totals.unresolvedDebtServiceOutflow += economics.unresolvedDebtServiceOutflow;
+      totals.unclassifiedDebtCost += economics.unclassifiedDebtCost;
+      return totals;
+    },
+    {
+      income: 0,
+      cashOutflow: 0,
+      expense: 0,
+      principalReduction: 0,
+      unresolvedDebtServiceOutflow: 0,
+      unclassifiedDebtCost: 0,
+    }
+  );
+
+  return {
+    ...totals,
+    balance: totals.income - totals.cashOutflow,
+    economicBalance: totals.income - totals.expense,
+  };
 }
