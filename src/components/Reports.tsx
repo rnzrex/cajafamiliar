@@ -16,13 +16,15 @@ import {
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Download, RotateCcw } from "lucide-react";
-import { Category, FinancialAccount, Movement } from "../types";
+import { Category, DebtEvent, FinancialAccount, Movement } from "../types";
 import { expectedCash, formatMoney } from "../utils/calculations";
 import { UNASSIGNED_ACCOUNT_ID, getActiveCashAccount } from "../utils/accountHelpers";
-import { defaultMovementFilters, filterMovements } from "../utils/movementFilters";
+import { defaultMovementFilters, filterMovements, movementTotals, type MovementFilters } from "../utils/movementFilters";
+import { getMovementEconomics } from "../utils/movementEconomics";
 
 interface ReportsProps {
   movements: Movement[];
+  debtEvents: DebtEvent[];
   categories: Category[];
   accounts: FinancialAccount[];
   initialBalance: number;
@@ -30,18 +32,28 @@ interface ReportsProps {
 
 const colors = ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#7c3aed", "#0f766e", "#db2777", "#64748b"];
 
-export function Reports({ movements, categories, accounts, initialBalance }: ReportsProps) {
+export async function exportReportFromReports(movements: Movement[], filters: MovementFilters, accounts: FinancialAccount[], debtEvents: DebtEvent[]) {
+  const { exportReportExcel } = await import("../utils/excelExport");
+  exportReportExcel(movements, filters, accounts, debtEvents);
+}
+
+export function Reports({ movements, debtEvents, categories, accounts, initialBalance }: ReportsProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
   const filteredMovements = useMemo(() => filterMovements(movements, filters, accounts), [movements, filters, accounts]);
-  const expenses = filteredMovements.filter((movement) => movement.type === "egreso");
+  const expenses = filteredMovements
+    .filter((movement) => movement.type === "egreso")
+    .map((movement) => ({ ...movement, amount: getMovementEconomics(movement, debtEvents).economicExpense }))
+    .filter((movement) => movement.amount > 0);
   const incomes = filteredMovements.filter((movement) => movement.type === "ingreso");
   const cashAccount = getActiveCashAccount(accounts);
+  const totals = movementTotals(filteredMovements, debtEvents);
 
   const byCategory = groupBy(expenses, "category");
   const byAccount = groupBy(expenses, "accountId", accounts);
   const incomeExpense = [
     { name: "Ingresos", monto: incomes.reduce((sum, movement) => sum + movement.amount, 0) },
-    { name: "Egresos", monto: expenses.reduce((sum, movement) => sum + movement.amount, 0) },
+    { name: "Salidas de dinero", monto: totals.cashOutflow },
+    { name: "Gastos", monto: totals.expense },
   ];
   const topFive = [...byCategory].sort((a, b) => b.monto - a.monto).slice(0, 5);
   const cashEvolution = buildCashEvolution(filteredMovements, cashAccount?.openingBalance ?? initialBalance, cashAccount?.id ?? null);
@@ -53,8 +65,7 @@ export function Reports({ movements, categories, accounts, initialBalance }: Rep
     }
 
     try {
-      const { exportReportExcel } = await import("../utils/excelExport");
-      exportReportExcel(filteredMovements, filters, accounts);
+      await exportReportFromReports(filteredMovements, filters, accounts, debtEvents);
     } catch {
       window.alert("No se pudo preparar el archivo Excel. Intenta nuevamente.");
     }
@@ -158,7 +169,7 @@ export function Reports({ movements, categories, accounts, initialBalance }: Rep
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Ingresos vs egresos">
+        <ChartCard title="Flujo y gasto económico">
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={incomeExpense}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -168,6 +179,7 @@ export function Reports({ movements, categories, accounts, initialBalance }: Rep
               <Bar dataKey="monto" radius={[8, 8, 0, 0]}>
                 <Cell fill="#16a34a" />
                 <Cell fill="#dc2626" />
+                <Cell fill="#f59e0b" />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
@@ -236,7 +248,7 @@ function readableAccountName(key: string, accounts: FinancialAccount[]) {
   return accounts.find((account) => account.id === key)?.name ?? "Sin cuenta (historico)";
 }
 
-function buildCashEvolution(movements: Movement[], initialBalance: number, cashAccountId: string | null) {
+export function buildCashEvolution(movements: Movement[], initialBalance: number, cashAccountId: string | null) {
   const cashMovements = movements
     .filter((movement) => (cashAccountId ? movement.accountId === cashAccountId : movement.method === "efectivo"))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -246,7 +258,7 @@ function buildCashEvolution(movements: Movement[], initialBalance: number, cashA
   let balance = initialBalance;
   const result = [{ date: "Inicio", saldo: initialBalance }];
   [...grouped.entries()].forEach(([date, dayMovements]) => {
-    balance = expectedCash(dayMovements, balance);
+    balance = expectedCash(dayMovements, balance, cashAccountId);
     result.push({ date: date.slice(5), saldo: balance });
   });
 

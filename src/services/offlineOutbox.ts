@@ -7,6 +7,13 @@ const IDENTITY_INDEX = "household-user";
 const QUEUED_AT_INDEX = "queued-at";
 const OPERATION_VERSION = 1 as const;
 
+export class DebtServiceOfflineUnsupportedError extends Error {
+  constructor() {
+    super("DEBT_SERVICE_OFFLINE_UNSUPPORTED");
+    this.name = "DebtServiceOfflineUnsupportedError";
+  }
+}
+
 export interface OfflineCreateMovementOperation {
   version: typeof OPERATION_VERSION;
   operationId: string;
@@ -18,6 +25,8 @@ export interface OfflineCreateMovementOperation {
 }
 
 export async function enqueueCreateMovement(member: HouseholdMember, movement: Movement): Promise<void> {
+  if (movement.movementContext === "debt_service") throw new DebtServiceOfflineUnsupportedError();
+
   const database = await openOutbox();
   const operation: OfflineCreateMovementOperation = {
     version: OPERATION_VERSION,
@@ -26,7 +35,7 @@ export async function enqueueCreateMovement(member: HouseholdMember, movement: M
     householdId: member.householdId,
     userId: member.userId,
     queuedAt: new Date().toISOString(),
-    movement: { ...movement },
+    movement: { ...movement, movementContext: "standard" },
   };
 
   try {
@@ -46,7 +55,14 @@ export async function listPendingCreateMovements(member: HouseholdMember): Promi
     return operations
       .filter((operation) => operation.version === OPERATION_VERSION && operation.kind === "create-movement")
       .sort((left, right) => left.queuedAt.localeCompare(right.queuedAt) || left.operationId.localeCompare(right.operationId))
-      .map((operation) => ({ ...operation, movement: { ...operation.movement, accountId: operation.movement.accountId ?? null } }));
+      .map((operation) => ({
+        ...operation,
+        movement: {
+          ...operation.movement,
+          accountId: operation.movement.accountId ?? null,
+          movementContext: operation.movement.movementContext === "debt_service" ? "debt_service" : "standard",
+        },
+      }));
   } finally {
     database.close();
   }

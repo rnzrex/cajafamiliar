@@ -1,29 +1,39 @@
 import * as XLSX from "xlsx";
-import { FinancialAccount, Movement } from "../types";
+import { DebtEvent, FinancialAccount, Movement } from "../types";
 import { localDateString } from "./date";
 import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "./accountHelpers";
 import { describeFilters, MovementFilters, movementTotals } from "./movementFilters";
+import { getMovementEconomics, movementLabel } from "./movementEconomics";
 
 const moneyFormat = '"S/" #,##0.00';
 
-export function exportMovementsExcel(movements: Movement[], accounts: FinancialAccount[] = []) {
+export function exportMovementsExcel(movements: Movement[], accounts: FinancialAccount[] = [], debtEvents: DebtEvent[] = []) {
   if (movements.length === 0) {
     window.alert("No hay movimientos para descargar con los filtros actuales.");
     return;
   }
 
-  const rows = movements.map((movement) => ({
-    Fecha: movement.date,
-    Tipo: movement.type,
-    Descripcion: movement.description,
-    Categoria: movement.category,
-    Cuenta: accountNameForMovement(movement, accounts),
-    Monto: movement.amount,
-    "Persona que registra": movement.person,
-    "Fecha de creacion": formatDateTime(movement.createdAt ?? movement.date),
-  }));
+  const rows = movements.map((movement) => {
+    const economics = getMovementEconomics(movement, debtEvents);
+    return {
+      Fecha: movement.date,
+      Tipo: movementLabel(movement),
+      Contexto: movement.movementContext,
+      Descripcion: movement.description,
+      Categoria: movement.category,
+      Cuenta: accountNameForMovement(movement, accounts),
+      Monto: movement.amount,
+      "Salida de dinero": economics.cashOutflow,
+      "Reduccion de principal": economics.principalReduction,
+      "Gasto economico": economics.economicExpense,
+      "Costo Debt sin clasificar": economics.unclassifiedDebtCost,
+      "Salida Debt sin clasificar": economics.unresolvedDebtServiceOutflow,
+      "Persona que registra": movement.person,
+      "Fecha de creacion": formatDateTime(movement.createdAt ?? movement.date),
+    };
+  });
 
-  const totals = movementTotals(movements);
+  const totals = movementTotals(movements, debtEvents);
   const summaryStart = rows.length + 3;
   const worksheet = XLSX.utils.json_to_sheet(rows);
   XLSX.utils.sheet_add_aoa(
@@ -31,29 +41,36 @@ export function exportMovementsExcel(movements: Movement[], accounts: FinancialA
     [
       ["Resumen", ""],
       ["Total ingresos", totals.income],
-      ["Total egresos", totals.expense],
+      ["Salidas de dinero", totals.cashOutflow],
+      ["Gasto economico", totals.expense],
+      ["Reduccion de principal", totals.principalReduction],
+      ["Costo Debt sin clasificar", totals.unclassifiedDebtCost],
+      ["Salida Debt sin clasificar", totals.unresolvedDebtServiceOutflow],
       ["Balance", totals.balance],
       ["Cantidad de movimientos exportados", movements.length],
     ],
     { origin: `A${summaryStart}` }
   );
 
-  styleWorksheet(worksheet, [5]);
-  worksheet["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 30 }, { wch: 22 }, { wch: 20 }, { wch: 14 }, { wch: 24 }, { wch: 22 }];
+  styleWorksheet(worksheet, [6, 7, 8, 9, 10, 11]);
+  worksheet["!cols"] = [14, 12, 16, 30, 22, 20, 14, 18, 20, 16, 22, 22, 24, 22].map((wch) => ({ wch }));
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Movimientos");
   XLSX.writeFile(workbook, `movimientos-caja-familiar-${todayFileName()}.xlsx`);
 }
 
-export function exportReportExcel(movements: Movement[], filters: MovementFilters, accounts: FinancialAccount[] = []) {
+export function exportReportExcel(movements: Movement[], filters: MovementFilters, accounts: FinancialAccount[] = [], debtEvents: DebtEvent[] = []) {
   if (movements.length === 0) {
     window.alert("No hay movimientos para descargar con los filtros actuales.");
     return;
   }
 
-  const expenses = movements.filter((movement) => movement.type === "egreso");
-  const totals = movementTotals(movements);
+  const expenses = movements
+    .filter((movement) => movement.type === "egreso")
+    .map((movement) => ({ ...movement, amount: getMovementEconomics(movement, debtEvents).economicExpense }))
+    .filter((movement) => movement.amount > 0);
+  const totals = movementTotals(movements, debtEvents);
   const byCategory = groupBy(expenses, "category", accounts).sort((a, b) => b.total - a.total);
   const byAccount = groupBy(expenses, "accountId", accounts).sort((a, b) => b.total - a.total);
   const topFive = byCategory.slice(0, 5);
@@ -67,7 +84,11 @@ export function exportReportExcel(movements: Movement[], filters: MovementFilter
     [
       ["Periodo seleccionado", describeFilters(filters, accountFilterName)],
       ["Total ingresos", totals.income],
-      ["Total egresos", totals.expense],
+      ["Salidas de dinero", totals.cashOutflow],
+      ["Gasto economico", totals.expense],
+      ["Reduccion de principal", totals.principalReduction],
+      ["Costo Debt sin clasificar", totals.unclassifiedDebtCost],
+      ["Salida Debt sin clasificar", totals.unresolvedDebtServiceOutflow],
       ["Balance", totals.balance],
       ["Total movimientos", movements.length],
       ["Categoria con mayor gasto", byCategory[0]?.name ?? "Sin gastos"],
@@ -82,17 +103,20 @@ export function exportReportExcel(movements: Movement[], filters: MovementFilter
     [["Categoria", "Total gastado", "Porcentaje del gasto total"], ...byCategory.map((item) => [item.name, item.total, item.total / totalExpense])],
     [1]
   );
-  appendSheet(workbook, "Ingresos vs egresos", [["Tipo", "Total"], ["Ingresos", totals.income], ["Egresos", totals.expense]], [1]);
+  appendSheet(workbook, "Flujo y gasto", [["Tipo", "Total"], ["Ingresos", totals.income], ["Salidas de dinero", totals.cashOutflow], ["Gastos", totals.expense]], [1]);
   appendSheet(workbook, "Gastos por cuenta", [["Cuenta", "Total"], ...byAccount.map((item) => [item.name, item.total])], [1]);
   appendSheet(workbook, "Top 5 categorias", [["Categoria", "Total"], ...topFive.map((item) => [item.name, item.total])], [1]);
   appendSheet(
     workbook,
     "Movimientos incluidos",
     [
-      ["Fecha", "Tipo", "Descripcion", "Categoria", "Cuenta", "Monto", "Persona que registra"],
-      ...movements.map((movement) => [movement.date, movement.type, movement.description, movement.category, accountNameForMovement(movement, accounts), movement.amount, movement.person]),
+      ["Fecha", "Tipo", "Contexto", "Descripcion", "Categoria", "Cuenta", "Monto", "Salida de dinero", "Reduccion de principal", "Gasto economico", "Costo Debt sin clasificar", "Salida Debt sin clasificar", "Persona que registra"],
+      ...movements.map((movement) => {
+        const economics = getMovementEconomics(movement, debtEvents);
+        return [movement.date, movementLabel(movement), movement.movementContext, movement.description, movement.category, accountNameForMovement(movement, accounts), movement.amount, economics.cashOutflow, economics.principalReduction, economics.economicExpense, economics.unclassifiedDebtCost, economics.unresolvedDebtServiceOutflow, movement.person];
+      }),
     ],
-    [5]
+    [6, 7, 8, 9, 10, 11]
   );
 
   XLSX.writeFile(workbook, `reporte-caja-familiar-${todayFileName()}.xlsx`);

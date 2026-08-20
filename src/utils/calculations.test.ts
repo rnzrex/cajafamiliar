@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { CashCount, Movement, RecurringPayment } from "../types";
+import type { CashCount, DebtEvent, Movement, RecurringPayment } from "../types";
 import { expectedCash, isPaymentFinished, lastCashCount, monthlyTotals, paymentStatus, topExpenseCategory } from "./calculations";
 
 function movement(overrides: Partial<Movement>): Movement {
@@ -13,6 +13,7 @@ function movement(overrides: Partial<Movement>): Movement {
     category: "Otros",
     person: "Renzo",
     accountId: null,
+    movementContext: "standard",
     ...overrides,
   };
 }
@@ -104,6 +105,11 @@ describe("expectedCash", () => {
     expect(expectedCash(movements, 1000, "cash-1")).toBe(1100);
   });
 
+  it("debt_service reduce Caja por el cash completo", () => {
+    const movements = [movement({ type: "egreso", amount: 1000, method: "transferencia", accountId: "cash-1", movementContext: "debt_service" })];
+    expect(expectedCash(movements, 2000, "cash-1")).toBe(1000);
+  });
+
   it("no incluye efectivo legacy sin cuenta cuando existe una cuenta cash", () => {
     const movements = [
       movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
@@ -133,6 +139,7 @@ describe("monthlyTotals", () => {
   it("filtra por mes", () => {
     const totals = monthlyTotals(movements, "2026-08");
     expect(totals.income).toBe(350);
+    expect(totals.cashOutflow).toBe(120);
     expect(totals.expense).toBe(120);
   });
 
@@ -145,12 +152,36 @@ describe("monthlyTotals", () => {
   });
 
   it("devuelve ceros para un mes sin movimientos", () => {
-    expect(monthlyTotals(movements, "2025-01")).toEqual({ income: 0, expense: 0 });
+    expect(monthlyTotals(movements, "2025-01")).toEqual({ income: 0, cashOutflow: 0, expense: 0 });
   });
 
   it("usa el mes local actual por defecto", () => {
     setSystemTime("2026-08-20T12:00:00Z");
-    expect(monthlyTotals(movements)).toEqual({ income: 350, expense: 120 });
+    expect(monthlyTotals(movements)).toEqual({ income: 350, cashOutflow: 120, expense: 120 });
+  });
+
+  it("separa salida de dinero y gasto económico de debt_service", () => {
+    const debtMovement = movement({ id: "debt-movement", amount: 1000, movementContext: "debt_service", date: "2026-08-20" });
+    const debtEvent: DebtEvent = {
+      id: "debt-event",
+      debtId: "debt-1",
+      eventDate: "2026-08-20",
+      eventType: "payment",
+      cashAmount: 1000,
+      principalDelta: -780,
+      interestPaid: 190,
+      feesPaid: 0,
+      insurancePaid: 30,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "debt-movement",
+      reversalOfEventId: null,
+      description: "Pago",
+      registeredByUserId: "u1",
+      createdAt: "2026-08-20T00:00:00.000Z",
+    };
+
+    expect(monthlyTotals([debtMovement], "2026-08", [debtEvent])).toEqual({ income: 0, cashOutflow: 1000, expense: 220 });
   });
 });
 
@@ -177,6 +208,31 @@ describe("topExpenseCategory", () => {
 
   it("devuelve 'Sin gastos' cuando no hay gastos en el mes", () => {
     expect(topExpenseCategory(movements, "2025-01")).toBe("Sin gastos");
+  });
+
+  it("usa el gasto económico de debt_service y no el cash completo", () => {
+    const debtMovement = movement({ id: "debt-movement", date: "2026-08-20", amount: 1000, category: "Préstamos", movementContext: "debt_service" });
+    const otherMovement = movement({ id: "other-movement", date: "2026-08-20", amount: 300, category: "Mercado" });
+    const debtEvent: DebtEvent = {
+      id: "debt-event",
+      debtId: "debt-1",
+      eventDate: "2026-08-20",
+      eventType: "payment",
+      cashAmount: 1000,
+      principalDelta: -780,
+      interestPaid: 220,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "debt-movement",
+      reversalOfEventId: null,
+      description: "Pago",
+      registeredByUserId: "u1",
+      createdAt: "2026-08-20T00:00:00.000Z",
+    };
+
+    expect(topExpenseCategory([debtMovement, otherMovement], "2026-08", [debtEvent])).toBe("Mercado");
   });
 });
 

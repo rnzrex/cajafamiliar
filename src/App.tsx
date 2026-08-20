@@ -33,6 +33,7 @@ import {
   createMovement,
   createMovementIdempotent,
   createRecurringPayment,
+  DebtMovementProtectedError,
   completeRecurringPayment,
   deleteCategory as deleteRemoteCategory,
   deleteMovement as deleteRemoteMovement,
@@ -44,6 +45,7 @@ import {
   HouseholdNotProvisionedError,
   InvalidMovementError,
   loadAppData,
+  MovementContextImmutableError,
   MovementNotFoundError,
   RecurringPaymentAlreadyPaidError,
   RecurringPaymentAuthenticationError,
@@ -492,6 +494,10 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     }
 
     const existingMovement = id ? data.movements.find((item) => item.id === id) : undefined;
+    if (id && existingMovement?.movementContext === "debt_service") {
+      window.alert("Los pagos de deuda se corrigen desde el dominio de deudas y no pueden editarse aquí.");
+      return false;
+    }
     const person = existingMovement?.person ?? currentMember?.displayName ?? movement.person ?? "";
     if (!person.trim() && !(recurringPayment && isSupabaseConfigured)) {
       window.alert("No se pudo determinar quién registra el movimiento. Verifica el provisioning de tu cuenta.");
@@ -503,6 +509,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
       id: movementId,
       person,
       accountId: movement.accountId ?? null,
+      movementContext: existingMovement?.movementContext ?? "standard",
       registeredByUserId: existingMovement?.registeredByUserId ?? currentMember?.userId ?? null,
       createdAt: id ? existingMovement?.createdAt ?? new Date().toISOString() : new Date().toISOString(),
     };
@@ -593,6 +600,10 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         window.alert("Este movimiento ya no existe en la base de datos. Es posible que haya sido eliminado desde otro dispositivo. Actualiza la información antes de continuar.");
         return false;
       }
+      if (error instanceof DebtMovementProtectedError || error instanceof MovementContextImmutableError) {
+        window.alert(error.message);
+        return false;
+      }
       markRemoteFailure();
       window.alert("No se pudo guardar el movimiento. No se realizó ningún cambio en tu caja. Intenta nuevamente.");
       return false;
@@ -626,11 +637,21 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
       return false;
     }
 
+    const movement = data.movements.find((item) => item.id === id);
+    if (movement?.movementContext === "debt_service") {
+      window.alert("Los pagos de deuda se corrigen desde el dominio de deudas y no pueden eliminarse aquí.");
+      return false;
+    }
+
     if (!window.confirm("Seguro que deseas eliminar este movimiento?")) return false;
 
     try {
       await deleteRemoteMovement(id);
-    } catch {
+    } catch (error) {
+      if (error instanceof DebtMovementProtectedError) {
+        window.alert(error.message);
+        return false;
+      }
       markRemoteFailure();
       window.alert("No se pudo eliminar el movimiento. No se realizó ningún cambio en tu caja. Intenta nuevamente.");
       return false;
@@ -1084,7 +1105,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
 
         <div className="p-4 lg:p-8">
           {view === "dashboard" && (
-            <Dashboard movements={data.movements} pendingMovementIds={pendingMovementIds} cashCounts={data.cashCounts} recurringPayments={data.recurringPayments} initialBalance={data.initialBalance} accounts={data.financialAccounts} onNavigate={navigate} onOpenPayment={openPayment} />
+            <Dashboard movements={data.movements} debtEvents={data.debtEvents} pendingMovementIds={pendingMovementIds} cashCounts={data.cashCounts} recurringPayments={data.recurringPayments} initialBalance={data.initialBalance} accounts={data.financialAccounts} onNavigate={navigate} onOpenPayment={openPayment} />
           )}
           {(view === "registrar-ingreso" || view === "registrar-gasto") && (
             <MovementForm
@@ -1111,6 +1132,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
           {view === "movimientos" && (
             <MovementsList
               movements={data.movements}
+              debtEvents={data.debtEvents}
               categories={data.categories}
               accounts={data.financialAccounts}
               currentMember={currentMember}
@@ -1145,7 +1167,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
           )}
           {view === "reportes" && (
             <Suspense fallback={<section className="rounded-lg bg-white p-5 text-slate-600 soft-shadow">Cargando reportes...</section>}>
-              <Reports movements={data.movements} categories={data.categories} accounts={data.financialAccounts} initialBalance={data.initialBalance} />
+              <Reports movements={data.movements} debtEvents={data.debtEvents} categories={data.categories} accounts={data.financialAccounts} initialBalance={data.initialBalance} />
             </Suspense>
           )}
           {view === "categorias" && <CategoriesManager categories={data.categories} onSave={saveCategory} onDelete={deleteCategory} onToggle={toggleCategory} />}

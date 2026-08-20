@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { FinancialAccount, Movement } from "../types";
+import type { DebtEvent, FinancialAccount, Movement } from "../types";
 import { defaultMovementFilters, filterMovements, movementTotals } from "./movementFilters";
 import type { MovementFilters } from "./movementFilters";
 
@@ -28,6 +28,7 @@ function movement(overrides: Partial<Movement>): Movement {
     category: "Otros",
     person: "Renzo",
     accountId: null,
+    movementContext: "standard",
     ...overrides,
   };
 }
@@ -162,11 +163,56 @@ describe("movementTotals", () => {
   it("suma ingresos, egresos y saldo", () => {
     const totals = movementTotals(movements);
     expect(totals.income).toBe(800);
+    expect(totals.cashOutflow).toBe(245);
     expect(totals.expense).toBe(245);
+    expect(totals.principalReduction).toBe(0);
+    expect(totals.unresolvedDebtServiceOutflow).toBe(0);
+    expect(totals.unclassifiedDebtCost).toBe(0);
     expect(totals.balance).toBe(555);
+    expect(totals.economicBalance).toBe(555);
   });
 
   it("devuelve ceros sin movimientos", () => {
-    expect(movementTotals([])).toEqual({ income: 0, expense: 0, balance: 0 });
+    expect(movementTotals([])).toEqual({
+      income: 0,
+      cashOutflow: 0,
+      expense: 0,
+      principalReduction: 0,
+      unresolvedDebtServiceOutflow: 0,
+      unclassifiedDebtCost: 0,
+      balance: 0,
+      economicBalance: 0,
+    });
+  });
+
+  it("usa el costo económico de un debt_service", () => {
+    const debtMovement = movement({ id: "debt-movement", amount: 1000, movementContext: "debt_service" });
+    const debtEvent: DebtEvent = {
+      id: "debt-event",
+      debtId: "debt-1",
+      eventDate: "2026-08-15",
+      eventType: "payment",
+      cashAmount: 1000,
+      principalDelta: -780,
+      interestPaid: 190,
+      feesPaid: 0,
+      insurancePaid: 30,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "debt-movement",
+      reversalOfEventId: null,
+      description: "Pago",
+      registeredByUserId: "u1",
+      createdAt: "2026-08-15T00:00:00.000Z",
+    };
+
+    expect(movementTotals([debtMovement], [debtEvent])).toMatchObject({
+      cashOutflow: 1000,
+      expense: 220,
+      principalReduction: 780,
+      unclassifiedDebtCost: 0,
+      balance: -1000,
+      economicBalance: -220,
+    });
   });
 });

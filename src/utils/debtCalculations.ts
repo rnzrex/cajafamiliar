@@ -1,4 +1,4 @@
-import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtScheduleVersion } from "../types";
+import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtScheduleVersion } from "../types.js";
 
 export function effectiveDebtEvents(events: DebtEvent[], debtId?: string): DebtEvent[] {
   const reversedIds = new Set(

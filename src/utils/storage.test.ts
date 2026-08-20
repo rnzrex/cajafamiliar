@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AppData, CashCount, Debt, DebtEvent, Movement } from "../types";
-import { loadCachedData, makeUuid, normalizeData, type AppDataSnapshotInput } from "./storage";
+import { loadCachedData, loadOfflineAccessRecord, makeUuid, normalizeData, type AppDataSnapshotInput } from "./storage";
 
 function movement(overrides: Partial<Movement>): Movement {
   return {
@@ -13,6 +13,7 @@ function movement(overrides: Partial<Movement>): Movement {
     category: "Otros",
     person: "Renzo",
     accountId: null,
+    movementContext: "standard",
     ...overrides,
   };
 }
@@ -92,6 +93,13 @@ describe("normalizeData con cuentas financieras", () => {
     delete (legacyMovement as { accountId?: unknown }).accountId;
     const result = normalizeData(snapshot({ movements: [legacyMovement] }));
     expect(result.movements[0].accountId).toBeNull();
+  });
+
+  it("movement legacy sin movementContext produce standard", () => {
+    const legacyMovement = movement({}) as Partial<Movement>;
+    delete legacyMovement.movementContext;
+    const result = normalizeData(snapshot({ movements: [legacyMovement as Movement] }));
+    expect(result.movements[0].movementContext).toBe("standard");
   });
 
   it("cashCount legacy sin accountId produce null", () => {
@@ -258,5 +266,21 @@ describe("makeUuid", () => {
 
   it("genera UUIDs distintos en llamadas consecutivas", () => {
     expect(makeUuid()).not.toBe(makeUuid());
+  });
+});
+
+describe("version de acceso offline", () => {
+  it("rechaza el registro de una PWA anterior a la versión 2", () => {
+    const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", {
+      value: { getItem: () => JSON.stringify({ version: 1, householdId: "h1", userId: "u1", displayName: "Renzo", role: "owner", snapshotReady: true }) },
+      configurable: true,
+    });
+    try {
+      expect(loadOfflineAccessRecord()).toBeNull();
+    } finally {
+      if (originalDescriptor) Object.defineProperty(globalThis, "localStorage", originalDescriptor);
+      else delete (globalThis as { localStorage?: unknown }).localStorage;
+    }
   });
 });

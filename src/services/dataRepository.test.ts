@@ -14,8 +14,10 @@ describe("serializers de dataRepository", () => {
         category: "Mercado",
         person: "Renzo",
         accountId: "acc-bcp-1",
+        movementContext: "standard",
       });
       expect(row.account_id).toBe("acc-bcp-1");
+      expect(row.movement_context).toBe("standard");
       expect(row.household_id).toBeDefined();
     });
 
@@ -30,8 +32,10 @@ describe("serializers de dataRepository", () => {
         category: "Negocio",
         person: "Renzo",
         accountId: null,
+        movementContext: "standard",
       });
       expect(row.account_id).toBeNull();
+      expect(row.movement_context).toBe("standard");
     });
   });
 

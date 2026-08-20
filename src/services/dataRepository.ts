@@ -30,6 +30,20 @@ export class MovementNotFoundError extends Error {
   }
 }
 
+export class DebtMovementProtectedError extends Error {
+  constructor() {
+    super("Este movimiento está ligado a una deuda y solo puede corregirse desde el dominio de deudas.");
+    this.name = "DebtMovementProtectedError";
+  }
+}
+
+export class MovementContextImmutableError extends Error {
+  constructor() {
+    super("El contexto financiero del movimiento no puede cambiarse.");
+    this.name = "MovementContextImmutableError";
+  }
+}
+
 export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoadResult> {
   if (!isSupabaseConfigured || !supabase) return { data: loadData(), source: "local" };
   if (!member || member.householdId !== householdId) throw new TrustedOfflineSnapshotUnavailableError();
@@ -205,7 +219,7 @@ export async function createMovement(movement: Movement): Promise<Movement> {
   if (!isSupabaseConfigured || !supabase) return movement;
 
   const { data, error } = await supabase.from("movements").insert(toMovementRow(movement)).select("*").single();
-  if (error) throw error;
+  if (error) throw mapMovementWriteError(error) ?? error;
   return fromMovementRow(data);
 }
 
@@ -218,7 +232,7 @@ export async function createMovementIdempotent(movement: Movement): Promise<Move
     return fromMovementRow(data);
   }
 
-  if (error.code !== "23505") throw error;
+  if (error.code !== "23505") throw mapMovementWriteError(error) ?? error;
 
   const { data: existingMovement, error: lookupError } = await supabase
     .from("movements")
@@ -251,7 +265,7 @@ export async function updateMovement(movement: Movement): Promise<Movement> {
     .select("*")
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) throw mapMovementWriteError(error) ?? error;
   if (!data) throw new MovementNotFoundError();
   return fromMovementRow(data);
 }
@@ -260,7 +274,7 @@ export async function deleteMovement(id: string) {
   if (!isSupabaseConfigured || !supabase) return;
 
   const { error } = await supabase.from("movements").delete().eq("id", id).eq("household_id", householdId).select("id");
-  if (error) throw error;
+  if (error) throw mapMovementWriteError(error) ?? error;
 }
 
 export async function createCategory(category: Category): Promise<Category> {
@@ -453,6 +467,17 @@ export async function setFinancialAccountActive(account: FinancialAccount, isAct
   return fromFinancialAccountRow(data);
 }
 
+function mapMovementWriteError(error: { message?: string }) {
+  switch (error.message) {
+    case "DEBT_MOVEMENT_PROTECTED":
+      return new DebtMovementProtectedError();
+    case "MOVEMENT_CONTEXT_IMMUTABLE":
+      return new MovementContextImmutableError();
+    default:
+      return null;
+  }
+}
+
 function mapCompleteRecurringPaymentError(message: string) {
   switch (message) {
     case "AUTH_REQUIRED":
@@ -489,6 +514,7 @@ export function toMovementRow(movement: Movement) {
     person: movement.person,
     registered_by_user_id: movement.registeredByUserId ?? null,
     account_id: movement.accountId ?? null,
+    movement_context: movement.movementContext,
     created_at: movement.createdAt ?? new Date().toISOString(),
   };
 }
@@ -505,6 +531,7 @@ function fromMovementRow(row: Record<string, any>): Movement {
     person: row.person,
     registeredByUserId: row.registered_by_user_id ?? null,
     accountId: row.account_id ?? null,
+    movementContext: row.movement_context === "debt_service" ? "debt_service" : "standard",
     createdAt: row.created_at,
   };
 }

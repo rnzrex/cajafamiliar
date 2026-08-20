@@ -87,3 +87,16 @@ npm run dev
 npm run build
 npm run preview
 ```
+
+## DEBT-2B rollout contract
+
+La base de semántica de movimientos de DEBT-2B.1 no habilita pagos de
+Deudas. Antes de activar un futuro payment engine, los dispositivos de la
+familia deben actualizarse a una versión que entienda `movement_context` y
+separe salidas de dinero de gasto económico. No se debe confiar únicamente
+en que una PWA antigua ignore columnas nuevas.
+
+Las operaciones futuras de pago, prepayment, payoff y reversal serán
+online-only mediante RPCs atómicas. No se enviarán inicialmente al
+`offlineOutbox`; los reintentos se resolverán con IDs e idempotencia del
+dominio Debt.

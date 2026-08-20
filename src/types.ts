@@ -1,4 +1,5 @@
 export type MovementType = "ingreso" | "egreso";
+export type MovementContext = "standard" | "debt_service";
 export type PaymentMethod = "efectivo" | "Yape" | "transferencia" | "tarjeta";
 export type AccountReconciliationType = "cash" | "balance";
 export type RecurringStatus = "pendiente" | "pagado";
@@ -42,11 +43,12 @@ export interface Movement {
   person: string;
   registeredByUserId?: string | null;
   accountId: string | null;
+  movementContext: MovementContext;
   createdAt?: string;
 }
 
-export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId"> & { person?: string };
-export type MovementDraft = Partial<Omit<Movement, "id">>;
+export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId" | "movementContext"> & { person?: string };
+export type MovementDraft = Partial<Omit<Movement, "id" | "movementContext">>;
 
 export interface Debt {
   id: string;

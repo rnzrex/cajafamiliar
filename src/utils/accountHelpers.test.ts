@@ -27,6 +27,7 @@ function movement(overrides: Partial<Movement>): Movement {
     category: "Otros",
     person: "Renzo",
     accountId: null,
+    movementContext: "standard",
     ...overrides,
   };
 }
@@ -113,6 +114,11 @@ describe("expectedAccountBalance", () => {
       movement({ type: "egreso", amount: 999, accountId: null }),
     ];
     expect(expectedAccountBalance(movements, "a", 100)).toBe(250);
+  });
+
+  it("debt_service reduce la cuenta por el cash completo", () => {
+    const movements = [movement({ amount: 1000, accountId: "a", method: "transferencia", movementContext: "debt_service" })];
+    expect(expectedAccountBalance(movements, "a", 2000)).toBe(1000);
   });
 });
 
