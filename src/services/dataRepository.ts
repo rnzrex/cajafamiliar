@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, FinancialAccount, HouseholdMember, Movement, RecurringPayment } from "../types";
+import { AppData, CashCount, Category, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -41,16 +41,48 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
   }
 
   try {
-    const [settingsResult, movementsResult, categoriesResult, countsResult, paymentsResult, accountsResult] = await Promise.all([
+    const [
+      settingsResult,
+      movementsResult,
+      categoriesResult,
+      countsResult,
+      paymentsResult,
+      accountsResult,
+      debtsResult,
+      debtEventsResult,
+      debtScheduleVersionsResult,
+      debtInstallmentsResult,
+      debtAllocationsResult,
+      debtCollateralsResult,
+    ] = await Promise.all([
       supabase.from("settings").select("*").eq("household_id", householdId).maybeSingle(),
       supabase.from("movements").select("*").eq("household_id", householdId).order("date", { ascending: false }),
       supabase.from("categories").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
       supabase.from("cash_counts").select("*").eq("household_id", householdId).order("created_at", { ascending: false }),
       supabase.from("recurring_payments").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
       supabase.from("financial_accounts").select("*").eq("household_id", householdId).order("sort_order", { ascending: true }),
+      supabase.from("debts").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
+      supabase.from("debt_events").select("*").eq("household_id", householdId).order("event_date", { ascending: true }).order("created_at", { ascending: true }),
+      supabase.from("debt_schedule_versions").select("*").eq("household_id", householdId).order("version_number", { ascending: true }),
+      supabase.from("debt_installments").select("*").eq("household_id", householdId).order("due_date", { ascending: true }).order("installment_number", { ascending: true }),
+      supabase.from("debt_event_installment_allocations").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
+      supabase.from("debt_collaterals").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
     ]);
 
-    const queryError = [settingsResult, movementsResult, categoriesResult, countsResult, paymentsResult, accountsResult].find((result) => result.error)?.error;
+    const queryError = [
+      settingsResult,
+      movementsResult,
+      categoriesResult,
+      countsResult,
+      paymentsResult,
+      accountsResult,
+      debtsResult,
+      debtEventsResult,
+      debtScheduleVersionsResult,
+      debtInstallmentsResult,
+      debtAllocationsResult,
+      debtCollateralsResult,
+    ].find((result) => result.error)?.error;
     if (queryError) throw queryError;
 
     const hasRemoteData =
@@ -70,6 +102,12 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       cashCounts: (countsResult.data ?? []).map(fromCashCountRow),
       recurringPayments: (paymentsResult.data ?? []).map(fromRecurringPaymentRow),
       financialAccounts: (accountsResult.data ?? []).map(fromFinancialAccountRow),
+      debts: (debtsResult.data ?? []).map(fromDebtRow),
+      debtEvents: (debtEventsResult.data ?? []).map(fromDebtEventRow),
+      debtScheduleVersions: (debtScheduleVersionsResult.data ?? []).map(fromDebtScheduleVersionRow),
+      debtInstallments: (debtInstallmentsResult.data ?? []).map(fromDebtInstallmentRow),
+      debtEventInstallmentAllocations: (debtAllocationsResult.data ?? []).map(fromDebtEventInstallmentAllocationRow),
+      debtCollaterals: (debtCollateralsResult.data ?? []).map(fromDebtCollateralRow),
     });
 
     saveData(remoteData);
@@ -529,6 +567,114 @@ function fromFinancialAccountRow(row: Record<string, any>): FinancialAccount {
     openingBalance: Number(row.opening_balance ?? 0),
     isActive: Boolean(row.is_active),
     sortOrder: Number(row.sort_order ?? 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function fromDebtRow(row: Record<string, any>): Debt {
+  return {
+    id: row.id,
+    name: row.name,
+    creditorName: row.creditor_name,
+    debtKind: row.debt_kind,
+    currencyCode: row.currency_code,
+    originDate: row.origin_date ?? null,
+    trackingStartDate: row.tracking_start_date,
+    originalPrincipal: row.original_principal == null ? null : Number(row.original_principal),
+    openingPrincipalBalance: Number(row.opening_principal_balance),
+    plannedInstallmentCount: row.planned_installment_count == null ? null : Number(row.planned_installment_count),
+    plannedInstallmentAmount: row.planned_installment_amount == null ? null : Number(row.planned_installment_amount),
+    installmentAmountMode: row.installment_amount_mode,
+    paymentFrequency: row.payment_frequency ?? null,
+    customFrequencyDays: row.custom_frequency_days == null ? null : Number(row.custom_frequency_days),
+    firstDueDate: row.first_due_date ?? null,
+    teaPercent: row.tea_percent == null ? null : Number(row.tea_percent),
+    tceaPercent: row.tcea_percent == null ? null : Number(row.tcea_percent),
+    notes: row.notes ?? "",
+    status: row.status,
+    isArchived: Boolean(row.is_archived),
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function fromDebtEventRow(row: Record<string, any>): DebtEvent {
+  return {
+    id: row.id,
+    debtId: row.debt_id,
+    eventDate: row.event_date,
+    eventType: row.event_type,
+    cashAmount: Number(row.cash_amount),
+    principalDelta: Number(row.principal_delta),
+    interestPaid: Number(row.interest_paid),
+    feesPaid: Number(row.fees_paid),
+    insurancePaid: Number(row.insurance_paid),
+    otherCostPaid: Number(row.other_cost_paid),
+    breakdownComplete: Boolean(row.breakdown_complete),
+    movementId: row.movement_id ?? null,
+    reversalOfEventId: row.reversal_of_event_id ?? null,
+    description: row.description ?? "",
+    registeredByUserId: row.registered_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromDebtScheduleVersionRow(row: Record<string, any>): DebtScheduleVersion {
+  return {
+    id: row.id,
+    debtId: row.debt_id,
+    versionNumber: Number(row.version_number),
+    effectiveDate: row.effective_date,
+    reason: row.reason,
+    triggerEventId: row.trigger_event_id ?? null,
+    notes: row.notes ?? "",
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromDebtInstallmentRow(row: Record<string, any>): DebtInstallment {
+  return {
+    id: row.id,
+    scheduleVersionId: row.schedule_version_id,
+    debtId: row.debt_id,
+    installmentNumber: Number(row.installment_number),
+    dueDate: row.due_date,
+    expectedAmount: row.expected_amount == null ? null : Number(row.expected_amount),
+    expectedPrincipal: row.expected_principal == null ? null : Number(row.expected_principal),
+    expectedInterest: row.expected_interest == null ? null : Number(row.expected_interest),
+    expectedFees: row.expected_fees == null ? null : Number(row.expected_fees),
+    expectedInsurance: row.expected_insurance == null ? null : Number(row.expected_insurance),
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromDebtEventInstallmentAllocationRow(row: Record<string, any>): DebtEventInstallmentAllocation {
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    installmentId: row.installment_id,
+    debtId: row.debt_id,
+    allocatedAmount: Number(row.allocated_amount),
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromDebtCollateralRow(row: Record<string, any>): DebtCollateral {
+  return {
+    id: row.id,
+    debtId: row.debt_id,
+    description: row.description,
+    pledgedValue: row.pledged_value == null ? null : Number(row.pledged_value),
+    estimatedValue: row.estimated_value == null ? null : Number(row.estimated_value),
+    redemptionDeadline: row.redemption_deadline ?? null,
+    status: row.status,
+    notes: row.notes ?? "",
+    createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

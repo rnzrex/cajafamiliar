@@ -119,6 +119,12 @@ const EMPTY_APP_DATA: AppData = {
   categories: [],
   initialBalance: 0,
   financialAccounts: [],
+  debts: [],
+  debtEvents: [],
+  debtScheduleVersions: [],
+  debtInstallments: [],
+  debtEventInstallmentAllocations: [],
+  debtCollaterals: [],
 };
 
 const OFFLINE_WRITE_MESSAGE = "Estás sin conexión. Puedes consultar tu información, pero para registrar o modificar datos necesitas conectarte a internet.";
