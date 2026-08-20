@@ -605,10 +605,10 @@ alter table public.debt_installments
   add constraint debt_installments_expected_components_within_amount_check
     check (
       expected_amount is null
-      or pg_catalog.coalesce(expected_principal, 0)
-         + pg_catalog.coalesce(expected_interest, 0)
-         + pg_catalog.coalesce(expected_fees, 0)
-         + pg_catalog.coalesce(expected_insurance, 0)
+      or coalesce(expected_principal, 0)
+         + coalesce(expected_interest, 0)
+         + coalesce(expected_fees, 0)
+         + coalesce(expected_insurance, 0)
          <= expected_amount
     );
 
