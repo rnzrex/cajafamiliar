@@ -1,4 +1,4 @@
-import { AppData, Category, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
+import { AppData, CashCount, Category, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
 import { localDateString } from "./date";
 import { isSupabaseConfigured } from "../services/supabaseClient";
 
@@ -8,6 +8,15 @@ const CUSTOM_PERSON_PREFIX = "custom:";
 const OFFLINE_ACCESS_KEY = "caja-familiar-offline-access";
 const TRUSTED_SNAPSHOT_KEY = "caja-familiar-trusted-snapshot";
 const OFFLINE_CACHE_VERSION = 1 as const;
+
+export interface AppDataSnapshotInput {
+  movements: Movement[];
+  cashCounts: CashCount[];
+  recurringPayments: RecurringPayment[];
+  categories: Category[];
+  initialBalance: number;
+  financialAccounts?: FinancialAccount[];
+}
 
 export interface OfflineAccessRecord {
   version: typeof OFFLINE_CACHE_VERSION;
@@ -38,6 +47,7 @@ const sampleMovements: Movement[] = [
     method: "efectivo",
     category: "Negocio",
     person: "Mama",
+    accountId: null,
   },
   {
     id: "mov-2",
@@ -48,6 +58,7 @@ const sampleMovements: Movement[] = [
     method: "efectivo",
     category: "Mercado",
     person: "Papa",
+    accountId: null,
   },
   {
     id: "mov-3",
@@ -58,6 +69,7 @@ const sampleMovements: Movement[] = [
     method: "Yape",
     category: "Teléfono",
     person: "Mama",
+    accountId: null,
   },
   {
     id: "mov-4",
@@ -68,6 +80,7 @@ const sampleMovements: Movement[] = [
     method: "efectivo",
     category: "Comida / cenas",
     person: "Hijo",
+    accountId: null,
   },
   {
     id: "mov-5",
@@ -78,6 +91,7 @@ const sampleMovements: Movement[] = [
     method: "transferencia",
     category: "Préstamos",
     person: "Papa",
+    accountId: null,
   },
   {
     id: "mov-6",
@@ -88,6 +102,7 @@ const sampleMovements: Movement[] = [
     method: "efectivo",
     category: "Cigarrillos",
     person: "Papa",
+    accountId: null,
   },
 ];
 
@@ -151,6 +166,7 @@ export const defaultData: AppData = {
   recurringPayments: samplePayments,
   categories: baseCategories,
   initialBalance: 100,
+  financialAccounts: [],
 };
 
 export function loadCachedData(): AppData | null {
@@ -320,17 +336,23 @@ export function makeId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-export function normalizeData(data: AppData): AppData {
+export function normalizeData(data: AppDataSnapshotInput): AppData {
   const categories = normalizeCategories(data.categories ?? []);
   const movementCategoryMap: Record<string, string> = { Telefono: "Teléfono", Prestamos: "Préstamos", "TelÃ©fono": "Teléfono", "PrÃ©stamos": "Préstamos" };
 
   return {
     ...data,
     categories,
+    financialAccounts: normalizeFinancialAccounts(data.financialAccounts ?? []),
     movements: data.movements.map((movement) => ({
       ...movement,
       category: movementCategoryMap[movement.category] ?? movement.category,
+      accountId: movement.accountId ?? null,
       registeredByUserId: movement.registeredByUserId ?? null,
+    })),
+    cashCounts: (data.cashCounts ?? []).map((count) => ({
+      ...count,
+      accountId: count.accountId ?? null,
     })),
     recurringPayments: data.recurringPayments.map((payment) => ({
       ...payment,
@@ -373,7 +395,7 @@ function normalizeCategories(savedCategories: Category[]) {
   return [...byName.values()];
 }
 
-function isAppDataSnapshot(value: unknown): value is AppData {
+function isAppDataSnapshot(value: unknown): value is AppDataSnapshotInput {
   if (!isRecord(value)) return false;
   if (!Number.isFinite(Number(value.initialBalance))) return false;
   if (!Array.isArray(value.movements) || !Array.isArray(value.cashCounts) || !Array.isArray(value.recurringPayments) || !Array.isArray(value.categories)) return false;
@@ -382,8 +404,21 @@ function isAppDataSnapshot(value: unknown): value is AppData {
     value.movements.every((movement) => isRecord(movement) && typeof movement.id === "string" && typeof movement.date === "string" && Number.isFinite(Number(movement.amount))) &&
     value.cashCounts.every((count) => isRecord(count) && typeof count.id === "string" && typeof count.createdAt === "string" && Number.isFinite(Number(count.total))) &&
     value.recurringPayments.every((payment) => isRecord(payment) && typeof payment.id === "string" && typeof payment.name === "string") &&
-    value.categories.every((category) => isRecord(category) && typeof category.id === "string" && typeof category.name === "string")
+    value.categories.every((category) => isRecord(category) && typeof category.id === "string" && typeof category.name === "string") &&
+    (value.financialAccounts === undefined || (Array.isArray(value.financialAccounts) && value.financialAccounts.every((account) => isRecord(account) && typeof account.id === "string" && typeof account.name === "string")))
   );
+}
+
+function normalizeFinancialAccounts(savedAccounts: FinancialAccount[]): FinancialAccount[] {
+  return savedAccounts.map((account, index) => ({
+    ...account,
+    reconciliationType: account.reconciliationType === "balance" ? "balance" : "cash",
+    openingBalance: Number.isFinite(Number(account.openingBalance)) ? Number(account.openingBalance) : 0,
+    isActive: account.isActive ?? true,
+    sortOrder: account.sortOrder ?? index,
+    createdAt: account.createdAt ?? new Date().toISOString(),
+    updatedAt: account.updatedAt ?? new Date().toISOString(),
+  }));
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

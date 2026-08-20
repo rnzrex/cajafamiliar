@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, HouseholdMember, Movement, RecurringPayment } from "../types";
+import { AppData, CashCount, Category, FinancialAccount, HouseholdMember, Movement, RecurringPayment } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -41,15 +41,16 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
   }
 
   try {
-    const [settingsResult, movementsResult, categoriesResult, countsResult, paymentsResult] = await Promise.all([
+    const [settingsResult, movementsResult, categoriesResult, countsResult, paymentsResult, accountsResult] = await Promise.all([
       supabase.from("settings").select("*").eq("household_id", householdId).maybeSingle(),
       supabase.from("movements").select("*").eq("household_id", householdId).order("date", { ascending: false }),
       supabase.from("categories").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
       supabase.from("cash_counts").select("*").eq("household_id", householdId).order("created_at", { ascending: false }),
       supabase.from("recurring_payments").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
+      supabase.from("financial_accounts").select("*").eq("household_id", householdId).order("sort_order", { ascending: true }),
     ]);
 
-    const queryError = [settingsResult, movementsResult, categoriesResult, countsResult, paymentsResult].find((result) => result.error)?.error;
+    const queryError = [settingsResult, movementsResult, categoriesResult, countsResult, paymentsResult, accountsResult].find((result) => result.error)?.error;
     if (queryError) throw queryError;
 
     const hasRemoteData =
@@ -57,6 +58,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       (categoriesResult.data?.length ?? 0) > 0 ||
       (countsResult.data?.length ?? 0) > 0 ||
       (paymentsResult.data?.length ?? 0) > 0 ||
+      (accountsResult.data?.length ?? 0) > 0 ||
       Boolean(settingsResult.data);
 
     if (!hasRemoteData) throw new HouseholdNotProvisionedError();
@@ -67,6 +69,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       categories: (categoriesResult.data ?? []).map(fromCategoryRow),
       cashCounts: (countsResult.data ?? []).map(fromCashCountRow),
       recurringPayments: (paymentsResult.data ?? []).map(fromRecurringPaymentRow),
+      financialAccounts: (accountsResult.data ?? []).map(fromFinancialAccountRow),
     });
 
     saveData(remoteData);
@@ -132,11 +135,12 @@ export class InvalidMovementError extends Error {
   }
 }
 
-export async function createMovement(movement: Movement) {
-  if (!isSupabaseConfigured || !supabase) return;
+export async function createMovement(movement: Movement): Promise<Movement> {
+  if (!isSupabaseConfigured || !supabase) return movement;
 
-  const { error } = await supabase.from("movements").insert(toMovementRow(movement));
+  const { data, error } = await supabase.from("movements").insert(toMovementRow(movement)).select("*").single();
   if (error) throw error;
+  return fromMovementRow(data);
 }
 
 export async function createMovementIdempotent(movement: Movement): Promise<Movement> {
@@ -162,8 +166,8 @@ export async function createMovementIdempotent(movement: Movement): Promise<Move
   return fromMovementRow(existingMovement);
 }
 
-export async function updateMovement(movement: Movement) {
-  if (!isSupabaseConfigured || !supabase) return;
+export async function updateMovement(movement: Movement): Promise<Movement> {
+  if (!isSupabaseConfigured || !supabase) return movement;
 
   const { data, error } = await supabase
     .from("movements")
@@ -177,11 +181,12 @@ export async function updateMovement(movement: Movement) {
     })
     .eq("id", movement.id)
     .eq("household_id", householdId)
-    .select("id")
+    .select("*")
     .maybeSingle();
 
   if (error) throw error;
   if (!data) throw new MovementNotFoundError();
+  return fromMovementRow(data);
 }
 
 export async function deleteMovement(id: string) {
@@ -381,6 +386,7 @@ function fromMovementRow(row: Record<string, any>): Movement {
     category: row.category,
     person: row.person,
     registeredByUserId: row.registered_by_user_id ?? null,
+    accountId: row.account_id ?? null,
     createdAt: row.created_at,
   };
 }
@@ -430,6 +436,20 @@ function fromCashCountRow(row: Record<string, any>): CashCount {
     total: Number(row.total),
     expected: Number(row.expected),
     difference: Number(row.difference),
+    accountId: row.account_id ?? null,
+  };
+}
+
+function fromFinancialAccountRow(row: Record<string, any>): FinancialAccount {
+  return {
+    id: row.id,
+    name: row.name,
+    reconciliationType: row.reconciliation_type === "balance" ? "balance" : "cash",
+    openingBalance: Number(row.opening_balance ?? 0),
+    isActive: Boolean(row.is_active),
+    sortOrder: Number(row.sort_order ?? 0),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

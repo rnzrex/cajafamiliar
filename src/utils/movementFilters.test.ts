@@ -13,6 +13,7 @@ function movement(overrides: Partial<Movement>): Movement {
     method: "efectivo",
     category: "Otros",
     person: "Renzo",
+    accountId: null,
     ...overrides,
   };
 }

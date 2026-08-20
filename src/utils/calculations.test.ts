@@ -12,6 +12,7 @@ function movement(overrides: Partial<Movement>): Movement {
     method: "efectivo",
     category: "Otros",
     person: "Renzo",
+    accountId: null,
     ...overrides,
   };
 }
@@ -148,8 +149,8 @@ describe("topExpenseCategory", () => {
 
 describe("lastCashCount", () => {
   const counts: CashCount[] = [
-    { id: "c1", createdAt: "2026-08-10T00:00:00.000Z", denominations: {}, total: 100, expected: 100, difference: 0 },
-    { id: "c2", createdAt: "2026-08-15T00:00:00.000Z", denominations: {}, total: 200, expected: 210, difference: -10 },
+    { id: "c1", createdAt: "2026-08-10T00:00:00.000Z", denominations: {}, total: 100, expected: 100, difference: 0, accountId: null },
+    { id: "c2", createdAt: "2026-08-15T00:00:00.000Z", denominations: {}, total: 200, expected: 210, difference: -10, accountId: null },
   ];
 
   it("devuelve el conteo más reciente por createdAt", () => {
