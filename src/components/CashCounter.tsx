@@ -108,7 +108,7 @@ export function CashCounter({ movements, initialBalance, cashCounts, cashAccount
           <Save className="h-6 w-6" />
           {isSaving ? "Guardando..." : "Guardar conteo"}
         </button>
-        {!cashAccount && <p className="mt-3 rounded-2xl bg-yellow-50 p-4 text-base font-bold text-yellow-900">Crea la cuenta de Efectivo desde la sección Cuentas para poder guardar conteos.</p>}
+        {!cashAccount && <p className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-base font-bold text-amber-900">La cuenta de Efectivo no está disponible. Recarga la página o intenta nuevamente más tarde.</p>}
       </div>
 
       <div className="rounded-3xl bg-white p-5 shadow-sm sm:p-6">

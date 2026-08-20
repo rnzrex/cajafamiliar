@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CashCount, Movement } from "../types";
-import { normalizeData, type AppDataSnapshotInput } from "./storage";
+import { makeUuid, normalizeData, type AppDataSnapshotInput } from "./storage";
 
 function movement(overrides: Partial<Movement>): Movement {
   return {
@@ -99,5 +99,17 @@ describe("normalizeData con cuentas financieras", () => {
       { id: "acc-cash-1", name: "Efectivo", reconciliationType: "cash", openingBalance: 120.5, isActive: true, sortOrder: 0, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
       { id: "acc-banco-1", name: "Banco", reconciliationType: "balance", openingBalance: 0, isActive: true, sortOrder: 1, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
     ]);
+  });
+});
+
+describe("makeUuid", () => {
+  it("genera un UUID v4 sin prefijo para cuentas", () => {
+    const value = makeUuid();
+    expect(value).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(value.startsWith("acc-")).toBe(false);
+  });
+
+  it("genera UUIDs distintos en llamadas consecutivas", () => {
+    expect(makeUuid()).not.toBe(makeUuid());
   });
 });

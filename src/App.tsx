@@ -39,6 +39,7 @@ import {
   FinancialAccountMethodMismatchError,
   FinancialAccountNotAvailableError,
   FinancialAccountNotFoundError,
+  FinancialAccountProtectedError,
   HouseholdMemberNotProvisionedError,
   HouseholdNotProvisionedError,
   InvalidMovementError,
@@ -60,7 +61,7 @@ import {
 } from "./services/dataRepository";
 import { enqueueCreateMovement, listPendingCreateMovements, removeOfflineOperation, type OfflineCreateMovementOperation } from "./services/offlineOutbox";
 import { isSupabaseConfigured } from "./services/supabaseClient";
-import { makeId, loadData, saveData } from "./utils/storage";
+import { makeId, makeUuid, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
 
 type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "cuentas" | "saldo-inicial";
@@ -884,11 +885,18 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     return null;
   }
 
+  const existingAccount = id ? data.financialAccounts.find((item) => item.id === id) : undefined;
+  if (id && existingAccount?.reconciliationType !== "balance") {
+    window.alert("La cuenta de Efectivo no se puede editar aquí. Usa Editar saldo inicial.");
+    return null;
+  }
+
   const savedAccount: FinancialAccount = {
     ...account,
     name,
-    id: id ?? makeId("acc"),
-    createdAt: id ? (data.financialAccounts.find((item) => item.id === id)?.createdAt ?? new Date().toISOString()) : new Date().toISOString(),
+    id: id ?? makeUuid(),
+    reconciliationType: "balance",
+    createdAt: id ? (existingAccount?.createdAt ?? new Date().toISOString()) : new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 
@@ -905,6 +913,8 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   } catch (error) {
     if (error instanceof FinancialAccountNotFoundError) {
       window.alert("Esta cuenta ya no existe. Es posible que haya sido eliminada desde otro dispositivo.");
+    } else if (error instanceof FinancialAccountProtectedError) {
+      window.alert("La cuenta de Efectivo no se puede editar aquí. Usa Editar saldo inicial.");
     } else {
       markRemoteFailure();
       window.alert("No se pudo guardar la cuenta. Intenta nuevamente.");
@@ -919,9 +929,17 @@ async function toggleAccount(id: string, isActive: boolean): Promise<boolean> {
 
   const account = data.financialAccounts.find((item) => item.id === id);
   if (!account) return false;
-  if (!isActive && isDefaultCashAccount(account)) {
-    window.alert("La cuenta Efectivo no se puede archivar.");
-    return false;
+
+  if (!isActive) {
+    if (account.reconciliationType === "cash") {
+      window.alert("La cuenta de Efectivo no se puede archivar.");
+      return false;
+    }
+    const hasPendingOnAccount = data.movements.some((movement) => pendingMovementIdsRef.current.has(movement.id) && movement.accountId === account.id);
+    if (hasPendingOnAccount) {
+      window.alert("Esta cuenta tiene movimientos pendientes de sincronizar. Conéctate y espera a que terminen de sincronizarse antes de archivarla.");
+      return false;
+    }
   }
 
   try {
@@ -932,6 +950,8 @@ async function toggleAccount(id: string, isActive: boolean): Promise<boolean> {
   } catch (error) {
     if (error instanceof FinancialAccountNotFoundError) {
       window.alert("Esta cuenta ya no existe. Es posible que haya sido eliminada desde otro dispositivo.");
+    } else if (error instanceof FinancialAccountProtectedError) {
+      window.alert("La cuenta de Efectivo no se puede archivar.");
     } else {
       markRemoteFailure();
       window.alert("No se pudo cambiar el estado de la cuenta. Intenta nuevamente.");
@@ -1123,7 +1143,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
             </Suspense>
           )}
           {view === "categorias" && <CategoriesManager categories={data.categories} onSave={saveCategory} onDelete={deleteCategory} onToggle={toggleCategory} />}
-          {view === "cuentas" && <AccountsManager accounts={data.financialAccounts} movements={data.movements} onSave={saveAccount} onToggle={toggleAccount} />}
+          {view === "cuentas" && <AccountsManager accounts={data.financialAccounts} movements={data.movements} onSave={saveAccount} onToggle={toggleAccount} onEditInitialBalance={() => navigate("saldo-inicial")} />}
           {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={saveInitialBalance} />}
         </div>
       </main>

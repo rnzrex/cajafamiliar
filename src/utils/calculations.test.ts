@@ -104,12 +104,20 @@ describe("expectedCash", () => {
     expect(expectedCash(movements, 1000, "cash-1")).toBe(1100);
   });
 
-  it("incluye movimientos legacy en efectivo sin cuenta como respaldo de la cuenta cash", () => {
+  it("no incluye efectivo legacy sin cuenta cuando existe una cuenta cash", () => {
     const movements = [
-      movement({ type: "egreso", amount: 40, method: "efectivo", accountId: null }),
-      movement({ type: "egreso", amount: 30, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 500, method: "efectivo", accountId: null }),
     ];
-    expect(expectedCash(movements, 1000, "cash-1")).toBe(930);
+    expect(expectedCash(movements, 0, "cash-1")).toBe(100);
+  });
+
+  it("fallback legacy por método solo se usa sin cashAccountId", () => {
+    const movements = [
+      movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 500, method: "efectivo", accountId: null }),
+    ];
+    expect(expectedCash(movements, 0)).toBe(600);
   });
 });
 

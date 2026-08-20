@@ -23,7 +23,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, accou
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const filtered = useMemo(() => filterMovements(movements, filters), [movements, filters]);
+  const filtered = useMemo(() => filterMovements(movements, filters, accounts), [movements, filters, accounts]);
 
   useEffect(() => {
     if (editing && pendingMovementIds.has(editing.id)) setEditing(null);
@@ -47,7 +47,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, accou
 
     try {
       const { exportMovementsExcel } = await import("../utils/excelExport");
-      exportMovementsExcel(filtered);
+      exportMovementsExcel(filtered, accounts);
     } catch {
       window.alert("No se pudo preparar el archivo Excel. Intenta nuevamente.");
     }

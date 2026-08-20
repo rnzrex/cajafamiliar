@@ -336,6 +336,10 @@ export function makeId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+export function makeUuid() {
+  return crypto.randomUUID();
+}
+
 export function normalizeData(data: AppDataSnapshotInput): AppData {
   const categories = normalizeCategories(data.categories ?? []);
   const movementCategoryMap: Record<string, string> = { Telefono: "Teléfono", Prestamos: "Préstamos", "TelÃ©fono": "Teléfono", "PrÃ©stamos": "Préstamos" };

@@ -18,7 +18,6 @@ export function exportMovementsExcel(movements: Movement[], accounts: FinancialA
     Descripcion: movement.description,
     Categoria: movement.category,
     Cuenta: accountNameForMovement(movement, accounts),
-    "Metodo de pago": movement.method,
     Monto: movement.amount,
     "Persona que registra": movement.person,
     "Fecha de creacion": formatDateTime(movement.createdAt ?? movement.date),
@@ -39,8 +38,8 @@ export function exportMovementsExcel(movements: Movement[], accounts: FinancialA
     { origin: `A${summaryStart}` }
   );
 
-  styleWorksheet(worksheet, [6, 11, 12, 13]);
-  worksheet["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 30 }, { wch: 22 }, { wch: 20 }, { wch: 18 }, { wch: 14 }, { wch: 24 }, { wch: 22 }];
+  styleWorksheet(worksheet, [5]);
+  worksheet["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 30 }, { wch: 22 }, { wch: 20 }, { wch: 14 }, { wch: 24 }, { wch: 22 }];
 
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Movimientos");
@@ -90,10 +89,10 @@ export function exportReportExcel(movements: Movement[], filters: MovementFilter
     workbook,
     "Movimientos incluidos",
     [
-      ["Fecha", "Tipo", "Descripcion", "Categoria", "Cuenta", "Metodo de pago", "Monto", "Persona que registra"],
-      ...movements.map((movement) => [movement.date, movement.type, movement.description, movement.category, accountNameForMovement(movement, accounts), movement.method, movement.amount, movement.person]),
+      ["Fecha", "Tipo", "Descripcion", "Categoria", "Cuenta", "Monto", "Persona que registra"],
+      ...movements.map((movement) => [movement.date, movement.type, movement.description, movement.category, accountNameForMovement(movement, accounts), movement.amount, movement.person]),
     ],
-    [6]
+    [5]
   );
 
   XLSX.writeFile(workbook, `reporte-caja-familiar-${todayFileName()}.xlsx`);

@@ -1,7 +1,6 @@
 import type { FinancialAccount, Movement, PaymentMethod } from "../types";
 
 export const UNASSIGNED_ACCOUNT_ID = "__unassigned__";
-export const LEGACY_CASH_ACCOUNT_NAME = "Efectivo";
 const UNASSIGNED_ACCOUNT_LABEL = "Sin cuenta (histórico)";
 
 export function getActiveCashAccount(accounts: FinancialAccount[]): FinancialAccount | null {
@@ -9,7 +8,7 @@ export function getActiveCashAccount(accounts: FinancialAccount[]): FinancialAcc
 }
 
 export function isDefaultCashAccount(account: FinancialAccount) {
-  return account.name === LEGACY_CASH_ACCOUNT_NAME && account.reconciliationType === "cash";
+  return account.reconciliationType === "cash";
 }
 
 export function accountNameForMovement(movement: Movement, accounts: FinancialAccount[]): string {

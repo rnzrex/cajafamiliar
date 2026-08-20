@@ -156,6 +156,13 @@ export class FinancialAccountNotFoundError extends Error {
   }
 }
 
+export class FinancialAccountProtectedError extends Error {
+  constructor() {
+    super("La cuenta de Efectivo no se puede modificar ni archivar.");
+    this.name = "FinancialAccountProtectedError";
+  }
+}
+
 export async function createMovement(movement: Movement): Promise<Movement> {
   if (!isSupabaseConfigured || !supabase) return movement;
 
@@ -366,19 +373,20 @@ export async function updateInitialBalance(value: number): Promise<number> {
 export async function createFinancialAccount(account: FinancialAccount): Promise<FinancialAccount> {
   if (!isSupabaseConfigured || !supabase) return account;
 
-  const { data, error } = await supabase.from("financial_accounts").insert(toFinancialAccountRow(account)).select("*").single();
+  const balanceAccount: FinancialAccount = { ...account, reconciliationType: "balance" };
+  const { data, error } = await supabase.from("financial_accounts").insert(toFinancialAccountRow(balanceAccount)).select("*").single();
   if (error) throw error;
   return fromFinancialAccountRow(data);
 }
 
 export async function updateFinancialAccountDetails(account: FinancialAccount): Promise<FinancialAccount> {
   if (!isSupabaseConfigured || !supabase) return account;
+  if (account.reconciliationType === "cash") throw new FinancialAccountProtectedError();
 
   const { data, error } = await supabase
     .from("financial_accounts")
     .update({
       name: account.name,
-      reconciliation_type: account.reconciliationType,
       opening_balance: account.openingBalance,
       sort_order: account.sortOrder,
     })
@@ -393,6 +401,7 @@ export async function updateFinancialAccountDetails(account: FinancialAccount): 
 
 export async function setFinancialAccountActive(account: FinancialAccount, isActive: boolean): Promise<FinancialAccount> {
   if (!isSupabaseConfigured || !supabase) return { ...account, isActive };
+  if (!isActive && account.reconciliationType === "cash") throw new FinancialAccountProtectedError();
 
   const { data, error } = await supabase
     .from("financial_accounts")
@@ -429,7 +438,7 @@ function mapCompleteRecurringPaymentError(message: string) {
   }
 }
 
-function toMovementRow(movement: Movement) {
+export function toMovementRow(movement: Movement) {
   return {
     id: movement.id,
     household_id: householdId,
@@ -487,7 +496,7 @@ function fromCategoryRow(row: Record<string, any>): Category {
   };
 }
 
-function toCashCountRow(count: CashCount) {
+export function toCashCountRow(count: CashCount) {
   return {
     id: count.id,
     household_id: householdId,
@@ -525,7 +534,7 @@ function fromFinancialAccountRow(row: Record<string, any>): FinancialAccount {
   };
 }
 
-function toFinancialAccountRow(account: FinancialAccount) {
+export function toFinancialAccountRow(account: FinancialAccount) {
   return {
     id: account.id,
     household_id: householdId,

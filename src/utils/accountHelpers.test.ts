@@ -52,12 +52,17 @@ describe("getActiveCashAccount", () => {
 });
 
 describe("isDefaultCashAccount", () => {
-  it("identifica la cuenta Efectivo de tipo cash", () => {
+  it("identifica la cuenta cash estructuralmente, sin depender del nombre", () => {
     expect(isDefaultCashAccount(account({ name: "Efectivo", reconciliationType: "cash" }))).toBe(true);
+    expect(isDefaultCashAccount(account({ name: "Caja chica", reconciliationType: "cash" }))).toBe(true);
   });
 
   it("no confunde una cuenta de saldo llamada Efectivo", () => {
     expect(isDefaultCashAccount(account({ name: "Efectivo", reconciliationType: "balance" }))).toBe(false);
+  });
+
+  it("una cuenta balance nunca es la cuenta cash protegida", () => {
+    expect(isDefaultCashAccount(account({ reconciliationType: "balance" }))).toBe(false);
   });
 });
 

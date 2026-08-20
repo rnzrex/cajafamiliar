@@ -1,5 +1,5 @@
-import { Movement, MovementType } from "../types";
-import { UNASSIGNED_ACCOUNT_ID } from "./accountHelpers";
+import { FinancialAccount, Movement, MovementType } from "../types";
+import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "./accountHelpers";
 import { monthKey } from "./calculations";
 import { localDateString, localMonthString } from "./date";
 
@@ -30,7 +30,7 @@ export const defaultMovementFilters = (): MovementFilters => ({
   type: "todos",
 });
 
-export function filterMovements(movements: Movement[], filters: MovementFilters) {
+export function filterMovements(movements: Movement[], filters: MovementFilters, accounts: FinancialAccount[] = []) {
   const search = normalizeSearch(filters.search);
 
   return movements
@@ -46,7 +46,7 @@ export function filterMovements(movements: Movement[], filters: MovementFilters)
     })
     .filter((movement) => {
       if (!search) return true;
-      return [movement.description, movement.category, movement.person].some((value) => normalizeSearch(value).includes(search));
+      return [movement.description, movement.category, movement.person, accountNameForMovement(movement, accounts)].some((value) => normalizeSearch(value).includes(search));
     })
     .filter((movement) => filters.category === "todas" || movement.category === filters.category)
     .filter((movement) => {

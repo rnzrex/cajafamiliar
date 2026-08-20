@@ -1,7 +1,21 @@
 import { describe, expect, it } from "vitest";
-import type { Movement } from "../types";
+import type { FinancialAccount, Movement } from "../types";
 import { defaultMovementFilters, filterMovements, movementTotals } from "./movementFilters";
 import type { MovementFilters } from "./movementFilters";
+
+function account(overrides: Partial<FinancialAccount>): FinancialAccount {
+  return {
+    id: "acc-1",
+    name: "Cuenta",
+    reconciliationType: "balance",
+    openingBalance: 0,
+    isActive: true,
+    sortOrder: 0,
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
 
 function movement(overrides: Partial<Movement>): Movement {
   return {
@@ -127,6 +141,13 @@ describe("filterMovements — búsqueda", () => {
 
   it("sin coincidencias devuelve vacío", () => {
     expect(filterMovements(movements, filters({ search: "inexistente" }))).toEqual([]);
+  });
+
+  it("busca por nombre de cuenta", () => {
+    const bcpMovement = movement({ id: "f", type: "egreso", date: "2026-08-12", amount: 60, description: "Compra libre", category: "Otros", person: "Mama", accountId: "acc-bcp" });
+    const accounts = [account({ id: "acc-bcp", name: "BCP" })];
+    const result = filterMovements([...movements, bcpMovement], filters({ search: "bcp" }), accounts);
+    expect(result.map((item) => item.id)).toEqual(["f"]);
   });
 });
 

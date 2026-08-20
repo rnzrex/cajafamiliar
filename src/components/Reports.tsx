@@ -32,7 +32,7 @@ const colors = ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#7c3aed", "#0f766e"
 
 export function Reports({ movements, categories, accounts, initialBalance }: ReportsProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
-  const filteredMovements = useMemo(() => filterMovements(movements, filters), [movements, filters]);
+  const filteredMovements = useMemo(() => filterMovements(movements, filters, accounts), [movements, filters, accounts]);
   const expenses = filteredMovements.filter((movement) => movement.type === "egreso");
   const incomes = filteredMovements.filter((movement) => movement.type === "ingreso");
   const cashAccount = getActiveCashAccount(accounts);
@@ -238,7 +238,7 @@ function readableAccountName(key: string, accounts: FinancialAccount[]) {
 
 function buildCashEvolution(movements: Movement[], initialBalance: number, cashAccountId: string | null) {
   const cashMovements = movements
-    .filter((movement) => (cashAccountId ? movement.accountId === cashAccountId || (movement.accountId == null && movement.method === "efectivo") : movement.method === "efectivo"))
+    .filter((movement) => (cashAccountId ? movement.accountId === cashAccountId : movement.method === "efectivo"))
     .sort((a, b) => a.date.localeCompare(b.date));
   const grouped = new Map<string, Movement[]>();
   cashMovements.forEach((movement) => grouped.set(movement.date, [...(grouped.get(movement.date) ?? []), movement]));
