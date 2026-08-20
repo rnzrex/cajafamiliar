@@ -16,32 +16,35 @@ import {
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Download, RotateCcw } from "lucide-react";
-import { Category, Movement, paymentMethods } from "../types";
+import { Category, FinancialAccount, Movement } from "../types";
 import { expectedCash, formatMoney } from "../utils/calculations";
+import { UNASSIGNED_ACCOUNT_ID, getActiveCashAccount } from "../utils/accountHelpers";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters";
 
 interface ReportsProps {
   movements: Movement[];
   categories: Category[];
+  accounts: FinancialAccount[];
   initialBalance: number;
 }
 
 const colors = ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#7c3aed", "#0f766e", "#db2777", "#64748b"];
 
-export function Reports({ movements, categories, initialBalance }: ReportsProps) {
+export function Reports({ movements, categories, accounts, initialBalance }: ReportsProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
-  const filteredMovements = useMemo(() => filterMovements(movements, filters), [movements, filters]);
+  const filteredMovements = useMemo(() => filterMovements(movements, filters, accounts), [movements, filters, accounts]);
   const expenses = filteredMovements.filter((movement) => movement.type === "egreso");
   const incomes = filteredMovements.filter((movement) => movement.type === "ingreso");
+  const cashAccount = getActiveCashAccount(accounts);
 
   const byCategory = groupBy(expenses, "category");
-  const byMethod = groupBy(expenses, "method");
+  const byAccount = groupBy(expenses, "accountId", accounts);
   const incomeExpense = [
     { name: "Ingresos", monto: incomes.reduce((sum, movement) => sum + movement.amount, 0) },
     { name: "Egresos", monto: expenses.reduce((sum, movement) => sum + movement.amount, 0) },
   ];
   const topFive = [...byCategory].sort((a, b) => b.monto - a.monto).slice(0, 5);
-  const cashEvolution = buildCashEvolution(filteredMovements, initialBalance);
+  const cashEvolution = buildCashEvolution(filteredMovements, cashAccount?.openingBalance ?? initialBalance, cashAccount?.id ?? null);
 
   async function handleExport() {
     if (filteredMovements.length === 0) {
@@ -51,7 +54,7 @@ export function Reports({ movements, categories, initialBalance }: ReportsProps)
 
     try {
       const { exportReportExcel } = await import("../utils/excelExport");
-      exportReportExcel(filteredMovements, filters);
+      exportReportExcel(filteredMovements, filters, accounts);
     } catch {
       window.alert("No se pudo preparar el archivo Excel. Intenta nuevamente.");
     }
@@ -107,14 +110,15 @@ export function Reports({ movements, categories, initialBalance }: ReportsProps)
             </select>
           </label>
           <label className="space-y-1 font-semibold text-slate-700">
-            Metodo
-            <select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value as typeof current.method }))} className="h-12 w-full rounded-lg border border-slate-200 bg-white px-3">
-              <option value="todos">Todos</option>
-              {paymentMethods.map((item) => (
-                <option key={item} value={item}>
-                  {item}
+            Cuenta
+            <select value={filters.accountId} onChange={(event) => setFilters((current) => ({ ...current, accountId: event.target.value }))} className="h-12 w-full rounded-lg border border-slate-200 bg-white px-3">
+              <option value="">Todas</option>
+              {accounts.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.isActive ? item.name : `${item.name} (archivada)`}
                 </option>
               ))}
+              <option value={UNASSIGNED_ACCOUNT_ID}>Sin cuenta (historico)</option>
             </select>
           </label>
           <label className="space-y-1 font-semibold text-slate-700">
@@ -169,9 +173,9 @@ export function Reports({ movements, categories, initialBalance }: ReportsProps)
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Gastos por metodo de pago">
+        <ChartCard title="Gastos por cuenta">
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={byMethod}>
+            <BarChart data={byAccount}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="name" />
               <YAxis />
@@ -218,14 +222,24 @@ function ChartCard({ title, children }: { title: string; children: ReactNode }) 
   );
 }
 
-function groupBy(items: Movement[], key: "category" | "method") {
+function groupBy(items: Movement[], key: "category" | "accountId", accounts: FinancialAccount[] = []) {
   const totals = new Map<string, number>();
-  items.forEach((item) => totals.set(item[key], (totals.get(item[key]) ?? 0) + item.amount));
-  return [...totals.entries()].map(([name, monto]) => ({ name, monto }));
+  items.forEach((item) => {
+    const groupKey = key === "accountId" ? (item.accountId ?? UNASSIGNED_ACCOUNT_ID) : item[key];
+    totals.set(groupKey, (totals.get(groupKey) ?? 0) + item.amount);
+  });
+  return [...totals.entries()].map(([name, monto]) => ({ name: key === "accountId" ? readableAccountName(name, accounts) : name, monto }));
 }
 
-function buildCashEvolution(movements: Movement[], initialBalance: number) {
-  const cashMovements = movements.filter((movement) => movement.method === "efectivo").sort((a, b) => a.date.localeCompare(b.date));
+function readableAccountName(key: string, accounts: FinancialAccount[]) {
+  if (key === UNASSIGNED_ACCOUNT_ID) return "Sin cuenta (historico)";
+  return accounts.find((account) => account.id === key)?.name ?? "Sin cuenta (historico)";
+}
+
+function buildCashEvolution(movements: Movement[], initialBalance: number, cashAccountId: string | null) {
+  const cashMovements = movements
+    .filter((movement) => (cashAccountId ? movement.accountId === cashAccountId : movement.method === "efectivo"))
+    .sort((a, b) => a.date.localeCompare(b.date));
   const grouped = new Map<string, Movement[]>();
   cashMovements.forEach((movement) => grouped.set(movement.date, [...(grouped.get(movement.date) ?? []), movement]));
 

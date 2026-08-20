@@ -22,9 +22,10 @@ export const formatMoney = (value: number) =>
 
 export const monthKey = (date: string) => date.slice(0, 7);
 
-export function expectedCash(movements: Movement[], initialBalance: number) {
+export function expectedCash(movements: Movement[], initialBalance: number, cashAccountId?: string | null) {
   return movements.reduce((total, movement) => {
-    if (movement.method !== "efectivo") return total;
+    const belongsToCash = cashAccountId == null ? movement.method === "efectivo" : movement.accountId === cashAccountId;
+    if (!belongsToCash) return total;
     return movement.type === "ingreso" ? total + movement.amount : total - movement.amount;
   }, initialBalance);
 }

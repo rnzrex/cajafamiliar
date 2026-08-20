@@ -1,7 +1,8 @@
 import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Category, HouseholdMember, Movement, MovementFormInput, paymentMethods } from "../types";
+import { Category, FinancialAccount, HouseholdMember, Movement, MovementFormInput } from "../types";
 import { formatMoney } from "../utils/calculations";
+import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "../utils/accountHelpers";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters";
 import { MovementForm } from "./MovementForm";
 
@@ -9,19 +10,20 @@ interface MovementsListProps {
   movements: Movement[];
   pendingMovementIds: ReadonlySet<string>;
   categories: Category[];
+  accounts: FinancialAccount[];
   currentMember?: HouseholdMember;
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
   onSave: (movement: MovementFormInput, id?: string) => void | Promise<boolean>;
   onDelete: (id: string) => void | Promise<boolean>;
 }
 
-export function MovementsList({ movements, pendingMovementIds, categories, currentMember, onQuickCreateCategory, onSave, onDelete }: MovementsListProps) {
+export function MovementsList({ movements, pendingMovementIds, categories, accounts, currentMember, onQuickCreateCategory, onSave, onDelete }: MovementsListProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
   const [editing, setEditing] = useState<Movement | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const filtered = useMemo(() => filterMovements(movements, filters), [movements, filters]);
+  const filtered = useMemo(() => filterMovements(movements, filters, accounts), [movements, filters, accounts]);
 
   useEffect(() => {
     if (editing && pendingMovementIds.has(editing.id)) setEditing(null);
@@ -45,7 +47,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, curre
 
     try {
       const { exportMovementsExcel } = await import("../utils/excelExport");
-      exportMovementsExcel(filtered);
+      exportMovementsExcel(filtered, accounts);
     } catch {
       window.alert("No se pudo preparar el archivo Excel. Intenta nuevamente.");
     }
@@ -57,6 +59,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, curre
         movement={editing}
         currentMember={currentMember}
         categories={categories}
+        accounts={accounts}
         onQuickCreateCategory={onQuickCreateCategory}
         onSave={async (movement, id) => {
           const saved = await onSave(movement, id);
@@ -141,14 +144,15 @@ export function MovementsList({ movements, pendingMovementIds, categories, curre
               </select>
             </label>
             <label className="space-y-1 text-base font-bold text-slate-700">
-              Método
-              <select value={filters.method} onChange={(event) => setFilters((current) => ({ ...current, method: event.target.value as typeof current.method }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3">
-                <option value="todos">Todos</option>
-                {paymentMethods.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
+              Cuenta
+              <select value={filters.accountId} onChange={(event) => setFilters((current) => ({ ...current, accountId: event.target.value }))} className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-3">
+                <option value="">Todas</option>
+                {accounts.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.isActive ? item.name : `${item.name} (archivada)`}
                   </option>
                 ))}
+                <option value={UNASSIGNED_ACCOUNT_ID}>Sin cuenta (histórico)</option>
               </select>
             </label>
             <label className="space-y-1 text-base font-bold text-slate-700">
@@ -188,7 +192,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, curre
               </div>
               <p className={`shrink-0 text-xl font-black ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "+" : "-"}{formatMoney(movement.amount)}</p>
             </div>
-            <p className="mt-3 text-sm font-semibold text-slate-600">{formatMovementDate(movement.date)} · {movement.method}</p>
+            <p className="mt-3 text-sm font-semibold text-slate-600">{formatMovementDate(movement.date)} · {accountNameForMovement(movement, accounts)}</p>
             <p className="mt-1 text-sm text-slate-500">{movement.category} · {movement.person}</p>
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button type="button" disabled={pendingMovementIds.has(movement.id)} onClick={() => setEditing(movement)} className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-blue-100 px-3 text-base font-black text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-60">
@@ -212,7 +216,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, curre
               <th className="px-3 py-2">Tipo</th>
               <th className="px-3 py-2">Descripción</th>
               <th className="px-3 py-2">Categoría</th>
-              <th className="px-3 py-2">Método</th>
+              <th className="px-3 py-2">Cuenta</th>
               <th className="px-3 py-2">Monto</th>
               <th className="px-3 py-2">Persona</th>
               <th className="px-3 py-2">Acciones</th>
@@ -230,7 +234,7 @@ export function MovementsList({ movements, pendingMovementIds, categories, curre
                 </td>
                 <td className="px-3 py-4">{movement.description}</td>
                 <td className="px-3 py-4">{movement.category}</td>
-                <td className="px-3 py-4">{movement.method}</td>
+                <td className="px-3 py-4">{accountNameForMovement(movement, accounts)}</td>
                 <td className="px-3 py-4 font-black">{formatMoney(movement.amount)}</td>
                 <td className="px-3 py-4">{movement.person}</td>
                 <td className="rounded-r-2xl px-3 py-4">

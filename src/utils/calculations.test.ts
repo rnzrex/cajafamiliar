@@ -86,6 +86,39 @@ describe("expectedCash", () => {
     ];
     expect(expectedCash(movements, 1000)).toBe(1060);
   });
+
+  it("filtra por la cuenta de efectivo cuando se indica su id", () => {
+    const movements = [
+      movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "egreso", amount: 40, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 500, method: "Yape", accountId: "yape-1" }),
+    ];
+    expect(expectedCash(movements, 1000, "cash-1")).toBe(1060);
+  });
+
+  it("ignora movimientos de otras cuentas al filtrar por cuenta de efectivo", () => {
+    const movements = [
+      movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 500, method: "Yape", accountId: "yape-1" }),
+    ];
+    expect(expectedCash(movements, 1000, "cash-1")).toBe(1100);
+  });
+
+  it("no incluye efectivo legacy sin cuenta cuando existe una cuenta cash", () => {
+    const movements = [
+      movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 500, method: "efectivo", accountId: null }),
+    ];
+    expect(expectedCash(movements, 0, "cash-1")).toBe(100);
+  });
+
+  it("fallback legacy por método solo se usa sin cashAccountId", () => {
+    const movements = [
+      movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 500, method: "efectivo", accountId: null }),
+    ];
+    expect(expectedCash(movements, 0)).toBe(600);
+  });
 });
 
 describe("monthlyTotals", () => {
