@@ -1,6 +1,6 @@
 import { Save } from "lucide-react";
 import { useMemo, useState } from "react";
-import { CashCount, Movement } from "../types";
+import { CashCount, FinancialAccount, Movement } from "../types";
 import { expectedCash, formatMoney } from "../utils/calculations";
 
 const denominations = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200];
@@ -11,13 +11,14 @@ interface CashCounterProps {
   movements: Movement[];
   initialBalance: number;
   cashCounts: CashCount[];
+  cashAccount: FinancialAccount | null;
   onSave: (cashCount: Omit<CashCount, "id">) => void | Promise<boolean>;
 }
 
-export function CashCounter({ movements, initialBalance, cashCounts, onSave }: CashCounterProps) {
+export function CashCounter({ movements, initialBalance, cashCounts, cashAccount, onSave }: CashCounterProps) {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [isSaving, setIsSaving] = useState(false);
-  const expected = expectedCash(movements, initialBalance);
+  const expected = expectedCash(movements, cashAccount ? cashAccount.openingBalance : initialBalance, cashAccount?.id ?? null);
   const total = useMemo(() => denominations.reduce((sum, denomination) => sum + denomination * (counts[denomination] ?? 0), 0), [counts]);
   const difference = total - expected;
 
@@ -31,7 +32,7 @@ export function CashCounter({ movements, initialBalance, cashCounts, onSave }: C
         total,
         expected,
         difference,
-        accountId: null,
+        accountId: cashAccount?.id ?? null,
       });
     } finally {
       setIsSaving(false);
@@ -103,10 +104,11 @@ export function CashCounter({ movements, initialBalance, cashCounts, onSave }: C
           <div className={`rounded-2xl p-4 text-lg font-black ${message.className}`}>{message.text}</div>
         </div>
 
-        <button disabled={isSaving} type="button" onClick={() => void saveCount()} className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-xl font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto">
+        <button disabled={isSaving || !cashAccount} type="button" onClick={() => void saveCount()} className="mt-5 flex min-h-14 w-full items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-xl font-black text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto">
           <Save className="h-6 w-6" />
           {isSaving ? "Guardando..." : "Guardar conteo"}
         </button>
+        {!cashAccount && <p className="mt-3 rounded-2xl bg-yellow-50 p-4 text-base font-bold text-yellow-900">Crea la cuenta de Efectivo desde la sección Cuentas para poder guardar conteos.</p>}
       </div>
 
       <div className="rounded-3xl bg-white p-5 shadow-sm sm:p-6">

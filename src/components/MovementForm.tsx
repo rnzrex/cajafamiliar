@@ -1,8 +1,9 @@
 import { CalendarDays, Plus, Save, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { Category, CategoryType, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, paymentMethods, PaymentMethod } from "../types";
+import { Category, CategoryType, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType } from "../types";
 import { detectCategory } from "../utils/categoryDetector";
 import { localDateString } from "../utils/date";
+import { getActiveCashAccount, legacyMethodForAccount } from "../utils/accountHelpers";
 import { loadPreferredPerson, savePreferredPerson } from "../utils/storage";
 
 interface MovementFormProps {
@@ -11,6 +12,7 @@ interface MovementFormProps {
   draft?: MovementDraft | null;
   currentMember?: HouseholdMember;
   categories: Category[];
+  accounts: FinancialAccount[];
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
   onSave: (movement: MovementFormInput, id?: string) => void | Promise<boolean>;
   onCancel?: () => void;
@@ -26,19 +28,14 @@ interface ValidationError {
   message: string;
 }
 
-const methodLabels: Record<PaymentMethod, string> = {
-  efectivo: "Efectivo",
-  Yape: "Yape",
-  transferencia: "Transferencia",
-  tarjeta: "Tarjeta",
-};
+const unassignedAccountLabel = "Sin cuenta (histórico)";
 
-export function MovementForm({ initialType = "egreso", movement, draft, currentMember, categories, onQuickCreateCategory, onSave, onCancel }: MovementFormProps) {
+export function MovementForm({ initialType = "egreso", movement, draft, currentMember, categories, accounts, onQuickCreateCategory, onSave, onCancel }: MovementFormProps) {
   const [type, setType] = useState<MovementType>(movement?.type ?? draft?.type ?? initialType);
   const [date, setDate] = useState(movement?.date ?? draft?.date ?? today());
   const [amount, setAmount] = useState(movement?.amount.toString() ?? draft?.amount?.toString() ?? "");
   const [description, setDescription] = useState(movement?.description ?? draft?.description ?? "");
-  const [method, setMethod] = useState<PaymentMethod>(movement?.method ?? draft?.method ?? "efectivo");
+  const [accountId, setAccountId] = useState<string | null>(() => initialAccountId(movement, draft, accounts));
   const [category, setCategory] = useState(movement?.category ?? draft?.category ?? "Negocio");
   const [person, setPerson] = useState(() => initialPersonValue(movement, draft, currentMember));
   const [personChoice, setPersonChoice] = useState<PersonChoice>(() => initialPersonChoice(movement, draft, currentMember));
@@ -54,6 +51,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
 
   const availableCategories = categories.filter((item) => item.is_active && (item.type === type || item.type === "ambos"));
   const dateLabel = date === today() ? "Hoy" : formatDateLabel(date);
+  const selectableAccounts = accounts.filter((account) => account.isActive || account.id === movement?.accountId);
 
   useEffect(() => {
     const nextPerson = initialPersonValue(movement, draft, currentMember);
@@ -62,14 +60,14 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
     setDate(nextDate);
     setAmount(movement?.amount.toString() ?? draft?.amount?.toString() ?? "");
     setDescription(movement?.description ?? draft?.description ?? "");
-    setMethod(movement?.method ?? draft?.method ?? "efectivo");
+    setAccountId(initialAccountId(movement, draft, accounts));
     setCategory(movement?.category ?? draft?.category ?? "Negocio");
     setPerson(nextPerson);
     setPersonChoice(initialPersonChoice(movement, draft, currentMember));
     setCategoryTouched(Boolean(movement || draft?.category));
     setShowCategorySelector(Boolean(movement));
     setShowDatePicker(Boolean(movement) || nextDate !== today());
-  }, [currentMember, draft, initialType, movement]);
+  }, [accounts, currentMember, draft, initialType, movement]);
 
   useEffect(() => {
     if (!categoryTouched) {
@@ -101,8 +99,13 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
       setValidationError({ field: "person", message: "Selecciona quién está registrando el movimiento." });
       return;
     }
+    if (!accountId && !movement) {
+      setValidationError({ field: "amount", message: "Selecciona una cuenta para registrar el movimiento." });
+      return;
+    }
 
     const parsedAmount = Number(amount);
+    const selectedAccount = accounts.find((item) => item.id === accountId) ?? null;
     setValidationError(null);
 
     setIsSaving(true);
@@ -113,8 +116,9 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
           date,
           amount: parsedAmount,
           description: description.trim(),
-          method,
+          method: accountId === null ? movement?.method ?? "efectivo" : legacyMethodForAccount(selectedAccount),
           category,
+          accountId,
           ...(currentMember ? {} : { person: person.trim() }),
         },
         movement?.id
@@ -243,22 +247,23 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
             />
           </label>
 
-          <fieldset className="space-y-2">
-            <legend className="text-base font-bold text-slate-700">Método de pago</legend>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {paymentMethods.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  aria-pressed={method === item}
-                  onClick={() => setMethod(item)}
-                  className={`min-h-14 rounded-2xl border-2 px-3 py-2 text-base font-black transition ${method === item ? "border-blue-600 bg-blue-600 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-blue-300"}`}
-                >
-                  {methodLabels[item]}
-                </button>
+          <label className="block space-y-2 text-base font-bold text-slate-700">
+            Cuenta
+            <select value={accountId ?? ""} onChange={(event) => setAccountId(event.target.value || null)} className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-lg">
+              {selectableAccounts.length === 0 && !movement && <option value="">Sin cuentas disponibles</option>}
+              {selectableAccounts.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.isActive ? item.name : `${item.name} (archivada)`}
+                </option>
               ))}
-            </div>
-          </fieldset>
+              {movement && (
+                <option value="">{unassignedAccountLabel}</option>
+              )}
+            </select>
+            {selectableAccounts.length === 0 && !movement && (
+              <span className="block text-sm font-semibold text-slate-500">Crea una cuenta primero desde la sección Cuentas.</span>
+            )}
+          </label>
 
           {currentMember ? (
             <section className="rounded-2xl border border-blue-100 bg-blue-50 p-4" aria-label="Autor del movimiento">
@@ -407,6 +412,12 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
       )}
     </div>
   );
+}
+
+function initialAccountId(movement?: Movement | null, draft?: MovementDraft | null, accounts?: FinancialAccount[]): string | null {
+  if (movement) return movement.accountId;
+  if (draft?.accountId) return draft.accountId;
+  return getActiveCashAccount(accounts ?? [])?.id ?? null;
 }
 
 function initialPersonValue(movement?: Movement | null, draft?: MovementDraft | null, currentMember?: HouseholdMember) {

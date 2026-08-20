@@ -38,7 +38,7 @@ export interface Movement {
   createdAt?: string;
 }
 
-export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId" | "accountId"> & { person?: string };
+export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId"> & { person?: string };
 export type MovementDraft = Partial<Omit<Movement, "id">>;
 
 export interface CashCount {

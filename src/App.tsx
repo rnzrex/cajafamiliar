@@ -8,11 +8,12 @@ import {
   MoreHorizontal,
   PiggyBank,
   PlusCircle,
-  Settings,
   Tags,
+  Wallet,
   X,
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { AccountsManager } from "./components/AccountsManager";
 import { CashCounter } from "./components/CashCounter";
 import { CategoriesManager } from "./components/CategoriesManager";
 import { Dashboard } from "./components/Dashboard";
@@ -21,18 +22,23 @@ import { MovementForm } from "./components/MovementForm";
 import { MovementsList } from "./components/MovementsList";
 import { RecurringPayments } from "./components/RecurringPayments";
 import { Toast } from "./components/Toast";
-import { AppData, CashCount, Category, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
+import { AppData, CashCount, Category, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
+import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
 import {
   CategoryNotFoundError,
   createCashCount,
   createCategory,
+  createFinancialAccount,
   createMovement,
   createMovementIdempotent,
   createRecurringPayment,
   completeRecurringPayment,
   deleteCategory as deleteRemoteCategory,
   deleteMovement as deleteRemoteMovement,
+  FinancialAccountMethodMismatchError,
+  FinancialAccountNotAvailableError,
+  FinancialAccountNotFoundError,
   HouseholdMemberNotProvisionedError,
   HouseholdNotProvisionedError,
   InvalidMovementError,
@@ -44,8 +50,10 @@ import {
   RecurringPaymentNotFoundError,
   TrustedOfflineSnapshotUnavailableError,
   setCategoryActive,
+  setFinancialAccountActive,
   setRecurringPaymentActive,
   updateCategoryDetails,
+  updateFinancialAccountDetails,
   updateInitialBalance,
   updateMovement as updateRemoteMovement,
   updateRecurringPaymentDetails,
@@ -55,7 +63,7 @@ import { isSupabaseConfigured } from "./services/supabaseClient";
 import { makeId, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
 
-type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "saldo-inicial";
+type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "cuentas" | "saldo-inicial";
 type SyncStatus = "loading" | "connected" | "local" | "offline" | "problem" | "syncing";
 type PendingSyncState = "idle" | "flushing" | "problem";
 type RemoteContactStatus = "unknown" | "success" | "failure";
@@ -80,7 +88,7 @@ const navItems: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: "pagos", label: "Pagos", icon: CalendarClock },
   { view: "reportes", label: "Reportes", icon: BarChart3 },
   { view: "categorias", label: "Categorías", icon: Tags },
-  { view: "saldo-inicial", label: "Saldo inicial", icon: Settings },
+  { view: "cuentas", label: "Cuentas", icon: Wallet },
 ];
 
 const mobileNavItems: Array<{ view: View; label: string; icon: typeof Home }> = [
@@ -99,6 +107,7 @@ const titles: Record<View, string> = {
   pagos: "Pagos recurrentes",
   reportes: "Reportes",
   categorias: "Categorías",
+  cuentas: "Cuentas",
   "saldo-inicial": "Saldo inicial",
 };
 
@@ -132,7 +141,10 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [syncAttempt, setSyncAttempt] = useState(0);
   const flushInFlightRef = useRef(false);
   const appMountedRef = useRef(true);
-  const expected = useMemo(() => expectedCash(data.movements, data.initialBalance), [data.movements, data.initialBalance]);
+  const expected = useMemo(() => {
+    const cashAccount = getActiveCashAccount(data.financialAccounts);
+    return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null);
+  }, [data.financialAccounts, data.movements, data.initialBalance]);
   const urgentPaymentSummary = useMemo(() => paymentAlertSummary(data.recurringPayments), [data.recurringPayments]);
   const urgentPaymentLabel = urgentPaymentSummary.total === 1 ? "1 pago requiere atención" : `${urgentPaymentSummary.total} pagos requieren atención`;
   const pendingMovementCount = pendingMovementIds.size;
@@ -483,7 +495,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
       ...movement,
       id: movementId,
       person,
-      accountId: existingMovement?.accountId ?? null,
+      accountId: movement.accountId ?? null,
       registeredByUserId: existingMovement?.registeredByUserId ?? currentMember?.userId ?? null,
       createdAt: id ? existingMovement?.createdAt ?? new Date().toISOString() : new Date().toISOString(),
     };
@@ -538,6 +550,10 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
             window.alert("No se pudo verificar tu miembro del hogar. No se creó ningún gasto.");
           } else if (error instanceof InvalidMovementError) {
             window.alert("No se pudo validar el gasto. No se realizó ningún cambio. Intenta nuevamente.");
+          } else if (error instanceof FinancialAccountNotAvailableError) {
+            window.alert("La cuenta seleccionada ya no está disponible. Elige otra cuenta en el movimiento.");
+          } else if (error instanceof FinancialAccountMethodMismatchError) {
+            window.alert("El método de pago no corresponde al tipo de la cuenta seleccionada. Elige otra cuenta.");
           } else if (error instanceof RecurringPaymentAuthenticationError) {
             window.alert("Tu sesión ya no es válida. Inicia sesión nuevamente.");
           } else {
@@ -712,6 +728,10 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         window.alert("Este pago está inactivo. No se realizó ningún cambio.");
       } else if (error instanceof HouseholdMemberNotProvisionedError) {
         window.alert("No se pudo verificar tu miembro del hogar. No se realizó ningún cambio.");
+      } else if (error instanceof FinancialAccountNotAvailableError) {
+        window.alert("La cuenta seleccionada ya no está disponible. Intenta nuevamente.");
+      } else if (error instanceof FinancialAccountMethodMismatchError) {
+        window.alert("El método de pago no corresponde al tipo de la cuenta seleccionada.");
       } else if (error instanceof RecurringPaymentAuthenticationError) {
         window.alert("Tu sesión ya no es válida. Inicia sesión nuevamente.");
       } else {
@@ -844,7 +864,83 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     }
   }
 
-  async function saveInitialBalance(value: number): Promise<boolean> {
+  async function saveAccount(account: Omit<FinancialAccount, "id" | "createdAt" | "updatedAt">, id?: string): Promise<FinancialAccount | null> {
+  if (!ensureOnlineWriteAllowed()) return null;
+  if (!ensureDataReady()) return null;
+
+  const name = account.name.trim();
+  if (!name) {
+    window.alert("La cuenta no puede estar vacia.");
+    return null;
+  }
+  if (!Number.isFinite(account.openingBalance) || account.openingBalance < 0) {
+    window.alert("Ingresa un saldo inicial válido.");
+    return null;
+  }
+
+  const duplicate = data.financialAccounts.some((item) => item.id !== id && normalizeName(item.name) === normalizeName(name));
+  if (duplicate) {
+    window.alert("Ya existe una cuenta con ese nombre.");
+    return null;
+  }
+
+  const savedAccount: FinancialAccount = {
+    ...account,
+    name,
+    id: id ?? makeId("acc"),
+    createdAt: id ? (data.financialAccounts.find((item) => item.id === id)?.createdAt ?? new Date().toISOString()) : new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  try {
+    const remoteAccount = id ? await updateFinancialAccountDetails(savedAccount) : await createFinancialAccount(savedAccount);
+    markRemoteSuccess();
+    setData((current) => ({
+      ...current,
+      financialAccounts: id
+        ? current.financialAccounts.map((item) => (item.id === remoteAccount.id ? remoteAccount : item))
+        : [...current.financialAccounts, remoteAccount],
+    }));
+    return remoteAccount;
+  } catch (error) {
+    if (error instanceof FinancialAccountNotFoundError) {
+      window.alert("Esta cuenta ya no existe. Es posible que haya sido eliminada desde otro dispositivo.");
+    } else {
+      markRemoteFailure();
+      window.alert("No se pudo guardar la cuenta. Intenta nuevamente.");
+    }
+    return null;
+  }
+}
+
+async function toggleAccount(id: string, isActive: boolean): Promise<boolean> {
+  if (!ensureOnlineWriteAllowed()) return false;
+  if (!ensureDataReady()) return false;
+
+  const account = data.financialAccounts.find((item) => item.id === id);
+  if (!account) return false;
+  if (!isActive && isDefaultCashAccount(account)) {
+    window.alert("La cuenta Efectivo no se puede archivar.");
+    return false;
+  }
+
+  try {
+    const remoteAccount = await setFinancialAccountActive(account, isActive);
+    markRemoteSuccess();
+    setData((current) => ({ ...current, financialAccounts: current.financialAccounts.map((item) => (item.id === remoteAccount.id ? remoteAccount : item)) }));
+    return true;
+  } catch (error) {
+    if (error instanceof FinancialAccountNotFoundError) {
+      window.alert("Esta cuenta ya no existe. Es posible que haya sido eliminada desde otro dispositivo.");
+    } else {
+      markRemoteFailure();
+      window.alert("No se pudo cambiar el estado de la cuenta. Intenta nuevamente.");
+    }
+    return false;
+  }
+}
+
+async function saveInitialBalance(value: number): Promise<boolean> {
     if (!ensureOnlineWriteAllowed()) return false;
     if (!ensureDataReady()) return false;
 
@@ -856,7 +952,11 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     try {
       const savedValue = await updateInitialBalance(value);
       markRemoteSuccess();
-      setData((current) => ({ ...current, initialBalance: savedValue }));
+      setData((current) => ({
+        ...current,
+        initialBalance: savedValue,
+        financialAccounts: current.financialAccounts.map((account) => (isDefaultCashAccount(account) ? { ...account, openingBalance: savedValue } : account)),
+      }));
       showToast("Saldo inicial actualizado");
       return true;
     } catch {
@@ -888,6 +988,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   if (isSupabaseConfigured && !dataReady) return <AppLoadingScreen />;
 
   const initialType: MovementType = view === "registrar-ingreso" ? "ingreso" : "egreso";
+  const cashAccount = getActiveCashAccount(data.financialAccounts);
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -957,7 +1058,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
 
         <div className="p-4 lg:p-8">
           {view === "dashboard" && (
-            <Dashboard movements={data.movements} pendingMovementIds={pendingMovementIds} cashCounts={data.cashCounts} recurringPayments={data.recurringPayments} initialBalance={data.initialBalance} onNavigate={navigate} onOpenPayment={openPayment} />
+            <Dashboard movements={data.movements} pendingMovementIds={pendingMovementIds} cashCounts={data.cashCounts} recurringPayments={data.recurringPayments} initialBalance={data.initialBalance} accounts={data.financialAccounts} onNavigate={navigate} onOpenPayment={openPayment} />
           )}
           {(view === "registrar-ingreso" || view === "registrar-gasto") && (
             <MovementForm
@@ -966,6 +1067,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
               draft={movementDraft}
               currentMember={currentMember}
               categories={data.categories}
+              accounts={data.financialAccounts}
               onQuickCreateCategory={saveCategory}
               onSave={saveMovement}
               onCancel={
@@ -984,6 +1086,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
             <MovementsList
               movements={data.movements}
               categories={data.categories}
+              accounts={data.financialAccounts}
               currentMember={currentMember}
               pendingMovementIds={pendingMovementIds}
               onQuickCreateCategory={saveCategory}
@@ -996,6 +1099,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
               movements={data.movements}
               initialBalance={data.initialBalance}
               cashCounts={data.cashCounts}
+              cashAccount={cashAccount}
               onSave={saveCashCount}
             />
           )}
@@ -1015,10 +1119,11 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
           )}
           {view === "reportes" && (
             <Suspense fallback={<section className="rounded-lg bg-white p-5 text-slate-600 soft-shadow">Cargando reportes...</section>}>
-              <Reports movements={data.movements} categories={data.categories} initialBalance={data.initialBalance} />
+              <Reports movements={data.movements} categories={data.categories} accounts={data.financialAccounts} initialBalance={data.initialBalance} />
             </Suspense>
           )}
           {view === "categorias" && <CategoriesManager categories={data.categories} onSave={saveCategory} onDelete={deleteCategory} onToggle={toggleCategory} />}
+          {view === "cuentas" && <AccountsManager accounts={data.financialAccounts} movements={data.movements} onSave={saveAccount} onToggle={toggleAccount} />}
           {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={saveInitialBalance} />}
         </div>
       </main>
@@ -1042,7 +1147,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
           onClick={() => setMoreOpen(true)}
           aria-label={`Más opciones${urgentPaymentSummary.total > 0 ? `, ${urgentPaymentLabel}` : ""}`}
           className={`relative flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-1 text-xs font-bold transition sm:text-sm ${
-            moreOpen || ["pagos", "reportes", "categorias", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
+            moreOpen || ["pagos", "reportes", "categorias", "cuentas", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
           }`}
         >
           <MoreHorizontal className="h-6 w-6" />
@@ -1079,6 +1184,9 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
               </button>
               <button type="button" onClick={() => navigate("categorias")} className="min-h-14 rounded-2xl bg-emerald-50 px-4 text-left text-base font-bold text-emerald-900">
                 Categorías
+              </button>
+              <button type="button" onClick={() => navigate("cuentas")} className="min-h-14 rounded-2xl bg-blue-50 px-4 text-left text-base font-bold text-blue-900">
+                Cuentas
               </button>
               <div className="rounded-2xl bg-slate-50 p-3">
                 <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Configuración</p>

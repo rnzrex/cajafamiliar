@@ -22,12 +22,15 @@ function filters(overrides: Partial<MovementFilters>): MovementFilters {
   return { ...defaultMovementFilters(), ...overrides };
 }
 
+const accountYape = "acc-yape";
+const accountCash = "acc-cash";
+
 const movements = [
-  movement({ id: "a", type: "ingreso", date: "2026-08-20", amount: 500, description: "Ingreso negocio", method: "Yape", category: "Negocio", person: "Renzo" }),
-  movement({ id: "b", type: "egreso", date: "2026-08-15", amount: 80, description: "Compra Mercado", method: "efectivo", category: "Mercado", person: "Papa" }),
-  movement({ id: "c", type: "egreso", date: "2026-08-10", amount: 45, description: "Pago Teléfono", method: "Yape", category: "Teléfono", person: "Mama" }),
-  movement({ id: "d", type: "egreso", date: "2026-07-30", amount: 120, description: "Gasolina", method: "tarjeta", category: "Transporte", person: "Renzo" }),
-  movement({ id: "e", type: "ingreso", date: "2026-07-15", amount: 300, description: "Venta", method: "transferencia", category: "Negocio", person: "Verónica" }),
+  movement({ id: "a", type: "ingreso", date: "2026-08-20", amount: 500, description: "Ingreso negocio", method: "Yape", category: "Negocio", person: "Renzo", accountId: accountYape }),
+  movement({ id: "b", type: "egreso", date: "2026-08-15", amount: 80, description: "Compra Mercado", method: "efectivo", category: "Mercado", person: "Papa", accountId: accountCash }),
+  movement({ id: "c", type: "egreso", date: "2026-08-10", amount: 45, description: "Pago Teléfono", method: "Yape", category: "Teléfono", person: "Mama", accountId: accountYape }),
+  movement({ id: "d", type: "egreso", date: "2026-07-30", amount: 120, description: "Gasolina", method: "tarjeta", category: "Transporte", person: "Renzo", accountId: null }),
+  movement({ id: "e", type: "ingreso", date: "2026-07-15", amount: 300, description: "Venta", method: "transferencia", category: "Negocio", person: "Verónica", accountId: accountYape }),
 ];
 
 describe("filterMovements — fecha", () => {
@@ -62,7 +65,7 @@ describe("filterMovements — fecha", () => {
   });
 });
 
-describe("filterMovements — categoría, método y tipo", () => {
+describe("filterMovements — categoría, cuenta y tipo", () => {
   it("categoría", () => {
     const result = filterMovements(movements, filters({ category: "Mercado" }));
     expect(result.map((item) => item.id)).toEqual(["b"]);
@@ -72,11 +75,17 @@ describe("filterMovements — categoría, método y tipo", () => {
     expect(filterMovements(movements, filters({ category: "todas" })).length).toBe(5);
   });
 
-  it("método", () => {
-    expect(filterMovements(movements, filters({ method: "Yape" })).map((item) => item.id)).toEqual(["a", "c"]);
-    expect(filterMovements(movements, filters({ method: "efectivo" })).map((item) => item.id)).toEqual(["b"]);
-    expect(filterMovements(movements, filters({ method: "tarjeta" })).map((item) => item.id)).toEqual(["d"]);
-    expect(filterMovements(movements, filters({ method: "transferencia" })).map((item) => item.id)).toEqual(["e"]);
+  it("cuenta", () => {
+    expect(filterMovements(movements, filters({ accountId: accountYape })).map((item) => item.id)).toEqual(["a", "c", "e"]);
+    expect(filterMovements(movements, filters({ accountId: accountCash })).map((item) => item.id)).toEqual(["b"]);
+  });
+
+  it("cuenta 'sin asignar' filtra movimientos históricos", () => {
+    expect(filterMovements(movements, filters({ accountId: "__unassigned__" })).map((item) => item.id)).toEqual(["d"]);
+  });
+
+  it("cuenta vacía no filtra", () => {
+    expect(filterMovements(movements, filters({ accountId: "" })).length).toBe(5);
   });
 
   it("tipo ingreso", () => {
@@ -122,8 +131,8 @@ describe("filterMovements — búsqueda", () => {
 });
 
 describe("filterMovements — combinación", () => {
-  it("combina mes, tipo y método", () => {
-    const result = filterMovements(movements, filters({ dateMode: "month", month: "2026-08", type: "egreso", method: "Yape" }));
+  it("combina mes, tipo y cuenta", () => {
+    const result = filterMovements(movements, filters({ dateMode: "month", month: "2026-08", type: "egreso", accountId: accountYape }));
     expect(result.map((item) => item.id)).toEqual(["c"]);
   });
 });

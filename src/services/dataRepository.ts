@@ -135,6 +135,27 @@ export class InvalidMovementError extends Error {
   }
 }
 
+export class FinancialAccountNotAvailableError extends Error {
+  constructor() {
+    super("La cuenta seleccionada ya no está disponible para registrar el gasto.");
+    this.name = "FinancialAccountNotAvailableError";
+  }
+}
+
+export class FinancialAccountMethodMismatchError extends Error {
+  constructor() {
+    super("El método de pago no es coherente con el tipo de la cuenta seleccionada.");
+    this.name = "FinancialAccountMethodMismatchError";
+  }
+}
+
+export class FinancialAccountNotFoundError extends Error {
+  constructor() {
+    super("La cuenta no existe en Supabase.");
+    this.name = "FinancialAccountNotFoundError";
+  }
+}
+
 export async function createMovement(movement: Movement): Promise<Movement> {
   if (!isSupabaseConfigured || !supabase) return movement;
 
@@ -178,6 +199,7 @@ export async function updateMovement(movement: Movement): Promise<Movement> {
       description: movement.description,
       method: movement.method,
       category: movement.category,
+      account_id: movement.accountId ?? null,
     })
     .eq("id", movement.id)
     .eq("household_id", householdId)
@@ -265,7 +287,7 @@ export interface CompleteRecurringPaymentResult {
 export async function completeRecurringPayment(payment: RecurringPayment, movement: Movement | null): Promise<CompleteRecurringPaymentResult | null> {
   if (!isSupabaseConfigured || !supabase) return null;
 
-  const { data, error } = await supabase.rpc("complete_recurring_payment", {
+  const { data, error } = await supabase.rpc("complete_recurring_payment_v2", {
     p_payment_id: payment.id,
     p_create_expense: movement !== null,
     p_movement_id: movement?.id ?? null,
@@ -274,6 +296,7 @@ export async function completeRecurringPayment(payment: RecurringPayment, moveme
     p_movement_description: movement?.description ?? null,
     p_movement_method: movement?.method ?? null,
     p_movement_category: movement?.category ?? null,
+    p_account_id: movement?.accountId ?? null,
   });
 
   if (error) {
@@ -340,6 +363,49 @@ export async function updateInitialBalance(value: number): Promise<number> {
   return Number(data.initial_balance);
 }
 
+export async function createFinancialAccount(account: FinancialAccount): Promise<FinancialAccount> {
+  if (!isSupabaseConfigured || !supabase) return account;
+
+  const { data, error } = await supabase.from("financial_accounts").insert(toFinancialAccountRow(account)).select("*").single();
+  if (error) throw error;
+  return fromFinancialAccountRow(data);
+}
+
+export async function updateFinancialAccountDetails(account: FinancialAccount): Promise<FinancialAccount> {
+  if (!isSupabaseConfigured || !supabase) return account;
+
+  const { data, error } = await supabase
+    .from("financial_accounts")
+    .update({
+      name: account.name,
+      reconciliation_type: account.reconciliationType,
+      opening_balance: account.openingBalance,
+      sort_order: account.sortOrder,
+    })
+    .eq("id", account.id)
+    .eq("household_id", householdId)
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new FinancialAccountNotFoundError();
+  return fromFinancialAccountRow(data);
+}
+
+export async function setFinancialAccountActive(account: FinancialAccount, isActive: boolean): Promise<FinancialAccount> {
+  if (!isSupabaseConfigured || !supabase) return { ...account, isActive };
+
+  const { data, error } = await supabase
+    .from("financial_accounts")
+    .update({ is_active: isActive })
+    .eq("id", account.id)
+    .eq("household_id", householdId)
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new FinancialAccountNotFoundError();
+  return fromFinancialAccountRow(data);
+}
+
 function mapCompleteRecurringPaymentError(message: string) {
   switch (message) {
     case "AUTH_REQUIRED":
@@ -354,6 +420,10 @@ function mapCompleteRecurringPaymentError(message: string) {
       return new HouseholdMemberNotProvisionedError();
     case "INVALID_MOVEMENT":
       return new InvalidMovementError();
+    case "ACCOUNT_NOT_AVAILABLE":
+      return new FinancialAccountNotAvailableError();
+    case "ACCOUNT_METHOD_MISMATCH":
+      return new FinancialAccountMethodMismatchError();
     default:
       return null;
   }
@@ -371,6 +441,7 @@ function toMovementRow(movement: Movement) {
     category: movement.category,
     person: movement.person,
     registered_by_user_id: movement.registeredByUserId ?? null,
+    account_id: movement.accountId ?? null,
     created_at: movement.createdAt ?? new Date().toISOString(),
   };
 }
@@ -425,6 +496,7 @@ function toCashCountRow(count: CashCount) {
     total: count.total,
     expected: count.expected,
     difference: count.difference,
+    account_id: count.accountId ?? null,
   };
 }
 
@@ -450,6 +522,20 @@ function fromFinancialAccountRow(row: Record<string, any>): FinancialAccount {
     sortOrder: Number(row.sort_order ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function toFinancialAccountRow(account: FinancialAccount) {
+  return {
+    id: account.id,
+    household_id: householdId,
+    name: account.name,
+    reconciliation_type: account.reconciliationType,
+    opening_balance: account.openingBalance,
+    is_active: account.isActive,
+    sort_order: account.sortOrder,
+    created_at: account.createdAt,
+    updated_at: account.updatedAt,
   };
 }
 

@@ -86,6 +86,31 @@ describe("expectedCash", () => {
     ];
     expect(expectedCash(movements, 1000)).toBe(1060);
   });
+
+  it("filtra por la cuenta de efectivo cuando se indica su id", () => {
+    const movements = [
+      movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "egreso", amount: 40, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 500, method: "Yape", accountId: "yape-1" }),
+    ];
+    expect(expectedCash(movements, 1000, "cash-1")).toBe(1060);
+  });
+
+  it("ignora movimientos de otras cuentas al filtrar por cuenta de efectivo", () => {
+    const movements = [
+      movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 500, method: "Yape", accountId: "yape-1" }),
+    ];
+    expect(expectedCash(movements, 1000, "cash-1")).toBe(1100);
+  });
+
+  it("incluye movimientos legacy en efectivo sin cuenta como respaldo de la cuenta cash", () => {
+    const movements = [
+      movement({ type: "egreso", amount: 40, method: "efectivo", accountId: null }),
+      movement({ type: "egreso", amount: 30, method: "efectivo", accountId: "cash-1" }),
+    ];
+    expect(expectedCash(movements, 1000, "cash-1")).toBe(930);
+  });
 });
 
 describe("monthlyTotals", () => {

@@ -9,8 +9,9 @@ import {
   PiggyBank,
   Scale,
 } from "lucide-react";
-import { CashCount, Movement, RecurringPayment } from "../types";
+import { CashCount, FinancialAccount, Movement, RecurringPayment } from "../types";
 import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAmountLabel, paymentScheduleLabel, paymentStatus, topExpenseCategory } from "../utils/calculations";
+import { accountNameForMovement, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
 
 interface DashboardProps {
   movements: Movement[];
@@ -18,12 +19,14 @@ interface DashboardProps {
   cashCounts: CashCount[];
   recurringPayments: RecurringPayment[];
   initialBalance: number;
+  accounts: FinancialAccount[];
   onNavigate: (view: string) => void;
   onOpenPayment: (id: string) => void;
 }
 
-export function Dashboard({ movements, pendingMovementIds, cashCounts, recurringPayments, initialBalance, onNavigate, onOpenPayment }: DashboardProps) {
-  const expected = expectedCash(movements, initialBalance);
+export function Dashboard({ movements, pendingMovementIds, cashCounts, recurringPayments, initialBalance, accounts, onNavigate, onOpenPayment }: DashboardProps) {
+  const cashAccount = getActiveCashAccount(accounts);
+  const expected = expectedCash(movements, cashAccount ? cashAccount.openingBalance : initialBalance, cashAccount?.id ?? null);
   const lastCount = lastCashCount(cashCounts);
   const hasCount = Boolean(lastCount);
   const difference = hasCount ? (lastCount?.total ?? 0) - expected : null;
@@ -52,7 +55,7 @@ export function Dashboard({ movements, pendingMovementIds, cashCounts, recurring
           <p className="text-sm font-bold uppercase tracking-[0.18em] text-blue-100">Saldo esperado</p>
           <h2 className="mt-3 text-2xl font-bold sm:text-3xl">Dinero que debería haber en caja</h2>
           <p className="mt-4 text-5xl font-black tracking-tight sm:text-6xl">{formatMoney(expected)}</p>
-          <p className="mt-4 max-w-md text-sm leading-relaxed text-blue-100">Calculado con el saldo inicial y los movimientos en efectivo.</p>
+          <p className="mt-4 max-w-md text-sm leading-relaxed text-blue-100">{cashAccount ? `Calculado con el saldo inicial y los movimientos de la cuenta ${cashAccount.name}.` : "Calculado con el saldo inicial y los movimientos en efectivo."}</p>
         </div>
         <PiggyBank className="absolute -right-6 -top-5 h-44 w-44 text-blue-500/40 sm:h-56 sm:w-56" aria-hidden="true" />
       </section>
@@ -78,6 +81,36 @@ export function Dashboard({ movements, pendingMovementIds, cashCounts, recurring
             Contar caja
           </button>
         </div>
+      </section>
+
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-blue-700">Cuentas</p>
+            <h2 className="text-2xl font-bold text-slate-900">Tus cuentas</h2>
+          </div>
+          <button type="button" onClick={() => onNavigate("cuentas")} className="flex min-h-12 items-center gap-1 rounded-xl px-3 text-base font-bold text-blue-700 hover:bg-blue-50">
+            Gestionar
+            <ChevronRight className="h-5 w-5" />
+          </button>
+        </div>
+        {accounts.filter((account) => account.isActive).length === 0 ? (
+          <button type="button" onClick={() => onNavigate("cuentas")} className="w-full rounded-2xl border-2 border-dashed border-blue-200 bg-blue-50 p-5 text-left font-bold text-blue-800 hover:bg-blue-100">
+            Crea tu primera cuenta para organizar el dinero de la familia.
+          </button>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {accounts
+              .filter((account) => account.isActive)
+              .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name))
+              .map((account) => (
+                <button key={account.id} type="button" onClick={() => onNavigate("cuentas")} className="rounded-2xl border border-slate-100 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50">
+                  <p className="text-sm font-bold text-slate-500">{account.name}</p>
+                  <p className="mt-2 text-2xl font-black text-slate-900">{formatMoney(expectedAccountBalance(movements, account.id, account.openingBalance))}</p>
+                </button>
+              ))}
+          </div>
+        )}
       </section>
 
       {relevantPayments.length > 0 && (
@@ -134,7 +167,7 @@ export function Dashboard({ movements, pendingMovementIds, cashCounts, recurring
                       {pendingMovementIds.has(movement.id) && <PendingMovementBadge />}
                       <h3 className="truncate text-lg font-bold text-slate-900">{movement.description}</h3>
                     </div>
-                    <p className="mt-2 text-sm text-slate-600">{formatMovementDate(movement.date)} · {movement.method}</p>
+                    <p className="mt-2 text-sm text-slate-600">{formatMovementDate(movement.date)} · {accountNameForMovement(movement, accounts)}</p>
                     <p className="mt-1 text-sm text-slate-500">{movement.category} · {movement.person}</p>
                   </div>
                   <p className={`text-xl font-black sm:text-right ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>
