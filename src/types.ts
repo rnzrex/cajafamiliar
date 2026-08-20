@@ -1,5 +1,6 @@
 export type MovementType = "ingreso" | "egreso";
 export type PaymentMethod = "efectivo" | "Yape" | "transferencia" | "tarjeta";
+export type AccountReconciliationType = "cash" | "balance";
 export type RecurringStatus = "pendiente" | "pagado";
 export type RecurrenceType = "indefinite" | "fixed" | "one_time";
 export type PaymentAmountMode = "fixed" | "variable";
@@ -12,6 +13,17 @@ export interface HouseholdMember {
   role: "owner" | "member";
 }
 
+export interface FinancialAccount {
+  id: string;
+  name: string;
+  reconciliationType: AccountReconciliationType;
+  openingBalance: number;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Movement {
   id: string;
   type: MovementType;
@@ -22,10 +34,11 @@ export interface Movement {
   category: string;
   person: string;
   registeredByUserId?: string | null;
+  accountId: string | null;
   createdAt?: string;
 }
 
-export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId"> & { person?: string };
+export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId" | "accountId"> & { person?: string };
 export type MovementDraft = Partial<Omit<Movement, "id">>;
 
 export interface CashCount {
@@ -35,6 +48,7 @@ export interface CashCount {
   total: number;
   expected: number;
   difference: number;
+  accountId: string | null;
 }
 
 export interface Category {
@@ -72,6 +86,7 @@ export interface AppData {
   recurringPayments: RecurringPayment[];
   categories: Category[];
   initialBalance: number;
+  financialAccounts: FinancialAccount[];
 }
 
 export const baseCategories: Category[] = [

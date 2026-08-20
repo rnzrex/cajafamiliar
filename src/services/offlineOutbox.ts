@@ -46,7 +46,7 @@ export async function listPendingCreateMovements(member: HouseholdMember): Promi
     return operations
       .filter((operation) => operation.version === OPERATION_VERSION && operation.kind === "create-movement")
       .sort((left, right) => left.queuedAt.localeCompare(right.queuedAt) || left.operationId.localeCompare(right.operationId))
-      .map((operation) => ({ ...operation, movement: { ...operation.movement } }));
+      .map((operation) => ({ ...operation, movement: { ...operation.movement, accountId: operation.movement.accountId ?? null } }));
   } finally {
     database.close();
   }

@@ -108,6 +108,7 @@ const EMPTY_APP_DATA: AppData = {
   recurringPayments: [],
   categories: [],
   initialBalance: 0,
+  financialAccounts: [],
 };
 
 const OFFLINE_WRITE_MESSAGE = "Estás sin conexión. Puedes consultar tu información, pero para registrar o modificar datos necesitas conectarte a internet.";
@@ -482,6 +483,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
       ...movement,
       id: movementId,
       person,
+      accountId: existingMovement?.accountId ?? null,
       registeredByUserId: existingMovement?.registeredByUserId ?? currentMember?.userId ?? null,
       createdAt: id ? existingMovement?.createdAt ?? new Date().toISOString() : new Date().toISOString(),
     };
@@ -560,9 +562,9 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
       return true;
     }
 
+    let remoteMovement: Movement;
     try {
-      if (id) await updateRemoteMovement(savedMovement);
-      else await createMovement(savedMovement);
+      remoteMovement = id ? await updateRemoteMovement(savedMovement) : await createMovement(savedMovement);
     } catch (error) {
       if (error instanceof MovementNotFoundError) {
         window.alert("Este movimiento ya no existe en la base de datos. Es posible que haya sido eliminado desde otro dispositivo. Actualiza la información antes de continuar.");
@@ -578,8 +580,8 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     setData((current) => ({
       ...current,
       movements: id
-        ? current.movements.map((item) => (item.id === id ? savedMovement : item))
-        : [savedMovement, ...current.movements],
+        ? current.movements.map((item) => (item.id === id ? remoteMovement : item))
+        : [remoteMovement, ...current.movements],
     }));
     setMovementDraft(null);
     setPendingRecurringPaymentId(null);
@@ -621,7 +623,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     if (!ensureOnlineWriteAllowed()) return false;
     if (!ensureDataReady()) return false;
 
-    const savedCount: CashCount = { ...cashCount, id: makeId("count") };
+    const savedCount: CashCount = { ...cashCount, id: makeId("count"), accountId: cashCount.accountId ?? null };
     try {
       const remoteCount = await createCashCount(savedCount);
       markRemoteSuccess();

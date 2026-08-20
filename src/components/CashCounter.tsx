@@ -31,6 +31,7 @@ export function CashCounter({ movements, initialBalance, cashCounts, onSave }: C
         total,
         expected,
         difference,
+        accountId: null,
       });
     } finally {
       setIsSaving(false);
