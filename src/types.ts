@@ -5,6 +5,13 @@ export type RecurringStatus = "pendiente" | "pagado";
 export type RecurrenceType = "indefinite" | "fixed" | "one_time";
 export type PaymentAmountMode = "fixed" | "variable";
 export type CategoryType = MovementType | "ambos";
+export type DebtKind = "bank_loan" | "family_loan" | "installment_purchase" | "mortgage" | "pledge" | "credit_card" | "other";
+export type DebtStatus = "active" | "paid_off" | "refinanced";
+export type DebtInstallmentAmountMode = "fixed" | "variable" | "unknown";
+export type DebtPaymentFrequency = "monthly" | "biweekly" | "weekly" | "custom";
+export type DebtEventType = "payment" | "principal_prepayment" | "principal_adjustment" | "refinance" | "payoff" | "reversal";
+export type DebtScheduleReason = "initial" | "prepayment" | "rate_change" | "refinance" | "manual_adjustment";
+export type DebtCollateralStatus = "pledged" | "released" | "forfeited";
 
 export interface HouseholdMember {
   householdId: string;
@@ -40,6 +47,102 @@ export interface Movement {
 
 export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId"> & { person?: string };
 export type MovementDraft = Partial<Omit<Movement, "id">>;
+
+export interface Debt {
+  id: string;
+  name: string;
+  creditorName: string;
+  debtKind: DebtKind;
+  currencyCode: string;
+  originDate: string | null;
+  trackingStartDate: string;
+  originalPrincipal: number | null;
+  openingPrincipalBalance: number;
+  plannedInstallmentCount: number | null;
+  plannedInstallmentAmount: number | null;
+  installmentAmountMode: DebtInstallmentAmountMode;
+  paymentFrequency: DebtPaymentFrequency | null;
+  customFrequencyDays: number | null;
+  firstDueDate: string | null;
+  teaPercent: number | null;
+  tceaPercent: number | null;
+  notes: string;
+  status: DebtStatus;
+  isArchived: boolean;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DebtEvent {
+  id: string;
+  debtId: string;
+  eventDate: string;
+  eventType: DebtEventType;
+  cashAmount: number;
+  principalDelta: number;
+  interestPaid: number;
+  feesPaid: number;
+  insurancePaid: number;
+  otherCostPaid: number;
+  breakdownComplete: boolean;
+  movementId: string | null;
+  reversalOfEventId: string | null;
+  description: string;
+  registeredByUserId: string;
+  createdAt: string;
+}
+
+export interface DebtScheduleVersion {
+  id: string;
+  debtId: string;
+  versionNumber: number;
+  effectiveDate: string;
+  reason: DebtScheduleReason;
+  triggerEventId: string | null;
+  notes: string;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+export interface DebtInstallment {
+  id: string;
+  scheduleVersionId: string;
+  debtId: string;
+  installmentNumber: number;
+  dueDate: string;
+  expectedAmount: number | null;
+  expectedPrincipal: number | null;
+  expectedInterest: number | null;
+  expectedFees: number | null;
+  expectedInsurance: number | null;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+export interface DebtEventInstallmentAllocation {
+  id: string;
+  eventId: string;
+  installmentId: string;
+  debtId: string;
+  allocatedAmount: number;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+export interface DebtCollateral {
+  id: string;
+  debtId: string;
+  description: string;
+  pledgedValue: number | null;
+  estimatedValue: number | null;
+  redemptionDeadline: string | null;
+  status: DebtCollateralStatus;
+  notes: string;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface CashCount {
   id: string;
@@ -87,6 +190,12 @@ export interface AppData {
   categories: Category[];
   initialBalance: number;
   financialAccounts: FinancialAccount[];
+  debts: Debt[];
+  debtEvents: DebtEvent[];
+  debtScheduleVersions: DebtScheduleVersion[];
+  debtInstallments: DebtInstallment[];
+  debtEventInstallmentAllocations: DebtEventInstallmentAllocation[];
+  debtCollaterals: DebtCollateral[];
 }
 
 export const baseCategories: Category[] = [

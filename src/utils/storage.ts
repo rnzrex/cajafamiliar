@@ -1,6 +1,7 @@
-import { AppData, CashCount, Category, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
+import { AppData, CashCount, Category, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
 import { localDateString } from "./date";
 import { isSupabaseConfigured } from "../services/supabaseClient";
+import { normalizeDebtCollaterals, normalizeDebtEventInstallmentAllocations, normalizeDebtEvents, normalizeDebtInstallments, normalizeDebtScheduleVersions, normalizeDebts } from "./debtNormalizers";
 
 const STORAGE_KEY = "caja-familiar-data";
 const PREFERRED_PERSON_KEY = "caja-familiar-preferred-person";
@@ -16,6 +17,12 @@ export interface AppDataSnapshotInput {
   categories: Category[];
   initialBalance: number;
   financialAccounts?: FinancialAccount[];
+  debts?: Debt[];
+  debtEvents?: DebtEvent[];
+  debtScheduleVersions?: DebtScheduleVersion[];
+  debtInstallments?: DebtInstallment[];
+  debtEventInstallmentAllocations?: DebtEventInstallmentAllocation[];
+  debtCollaterals?: DebtCollateral[];
 }
 
 export interface OfflineAccessRecord {
@@ -167,6 +174,12 @@ export const defaultData: AppData = {
   categories: baseCategories,
   initialBalance: 100,
   financialAccounts: [],
+  debts: [],
+  debtEvents: [],
+  debtScheduleVersions: [],
+  debtInstallments: [],
+  debtEventInstallmentAllocations: [],
+  debtCollaterals: [],
 };
 
 export function loadCachedData(): AppData | null {
@@ -348,6 +361,12 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
     ...data,
     categories,
     financialAccounts: normalizeFinancialAccounts(data.financialAccounts ?? []),
+    debts: normalizeDebts(data.debts ?? []),
+    debtEvents: normalizeDebtEvents(data.debtEvents ?? []),
+    debtScheduleVersions: normalizeDebtScheduleVersions(data.debtScheduleVersions ?? []),
+    debtInstallments: normalizeDebtInstallments(data.debtInstallments ?? []),
+    debtEventInstallmentAllocations: normalizeDebtEventInstallmentAllocations(data.debtEventInstallmentAllocations ?? []),
+    debtCollaterals: normalizeDebtCollaterals(data.debtCollaterals ?? []),
     movements: data.movements.map((movement) => ({
       ...movement,
       category: movementCategoryMap[movement.category] ?? movement.category,
@@ -409,7 +428,88 @@ function isAppDataSnapshot(value: unknown): value is AppDataSnapshotInput {
     value.cashCounts.every((count) => isRecord(count) && typeof count.id === "string" && typeof count.createdAt === "string" && Number.isFinite(Number(count.total))) &&
     value.recurringPayments.every((payment) => isRecord(payment) && typeof payment.id === "string" && typeof payment.name === "string") &&
     value.categories.every((category) => isRecord(category) && typeof category.id === "string" && typeof category.name === "string") &&
-    (value.financialAccounts === undefined || (Array.isArray(value.financialAccounts) && value.financialAccounts.every((account) => isRecord(account) && typeof account.id === "string" && typeof account.name === "string")))
+    (value.financialAccounts === undefined || (Array.isArray(value.financialAccounts) && value.financialAccounts.every((account) => isRecord(account) && typeof account.id === "string" && typeof account.name === "string"))) &&
+    (value.debts === undefined ||
+      (Array.isArray(value.debts) &&
+        value.debts.every(
+          (debt) =>
+            isRecord(debt) &&
+            typeof debt.id === "string" &&
+            debt.id.length > 0 &&
+            typeof debt.name === "string" &&
+            typeof debt.creditorName === "string" &&
+            typeof debt.debtKind === "string" &&
+            typeof debt.currencyCode === "string" &&
+            debt.currencyCode.length > 0 &&
+            typeof debt.trackingStartDate === "string" &&
+            isPresentNumeric(debt.openingPrincipalBalance) &&
+            typeof debt.installmentAmountMode === "string" &&
+            typeof debt.status === "string" &&
+            typeof debt.isArchived === "boolean" &&
+            typeof debt.createdByUserId === "string" &&
+            typeof debt.createdAt === "string" &&
+            typeof debt.updatedAt === "string"
+        ))) &&
+    (value.debtEvents === undefined ||
+      (Array.isArray(value.debtEvents) &&
+        value.debtEvents.every(
+          (event) =>
+            isRecord(event) &&
+            typeof event.id === "string" &&
+            typeof event.debtId === "string" &&
+            typeof event.eventDate === "string" &&
+            typeof event.eventType === "string" &&
+            isPresentNumeric(event.cashAmount) &&
+            isPresentNumeric(event.principalDelta) &&
+            typeof event.breakdownComplete === "boolean" &&
+            typeof event.registeredByUserId === "string" &&
+            typeof event.createdAt === "string"
+        ))) &&
+    (value.debtScheduleVersions === undefined ||
+      (Array.isArray(value.debtScheduleVersions) &&
+        value.debtScheduleVersions.every(
+          (version) =>
+            isRecord(version) &&
+            typeof version.id === "string" &&
+            typeof version.debtId === "string" &&
+            isPresentNumeric(version.versionNumber) &&
+            typeof version.effectiveDate === "string"
+        ))) &&
+    (value.debtInstallments === undefined ||
+      (Array.isArray(value.debtInstallments) &&
+        value.debtInstallments.every(
+          (installment) =>
+            isRecord(installment) &&
+            typeof installment.id === "string" &&
+            typeof installment.scheduleVersionId === "string" &&
+            typeof installment.debtId === "string" &&
+            isPresentNumeric(installment.installmentNumber) &&
+            typeof installment.dueDate === "string"
+        ))) &&
+    (value.debtEventInstallmentAllocations === undefined ||
+      (Array.isArray(value.debtEventInstallmentAllocations) &&
+        value.debtEventInstallmentAllocations.every(
+          (allocation) =>
+            isRecord(allocation) &&
+            typeof allocation.id === "string" &&
+            typeof allocation.eventId === "string" &&
+            typeof allocation.installmentId === "string" &&
+            typeof allocation.debtId === "string" &&
+            isPresentNumeric(allocation.allocatedAmount)
+        ))) &&
+    (value.debtCollaterals === undefined ||
+      (Array.isArray(value.debtCollaterals) &&
+        value.debtCollaterals.every(
+          (collateral) =>
+            isRecord(collateral) &&
+            typeof collateral.id === "string" &&
+            typeof collateral.debtId === "string" &&
+            typeof collateral.description === "string" &&
+            typeof collateral.status === "string" &&
+            typeof collateral.createdByUserId === "string" &&
+            typeof collateral.createdAt === "string" &&
+            typeof collateral.updatedAt === "string"
+        )))
   );
 }
 
@@ -427,6 +527,11 @@ function normalizeFinancialAccounts(savedAccounts: FinancialAccount[]): Financia
 
 function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === "object" && value !== null;
+}
+
+function isPresentNumeric(value: unknown): value is string | number {
+  if (value === null || value === undefined || value === "") return false;
+  return Number.isFinite(Number(value));
 }
 
 function normalizeName(name: string) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { CashCount, Movement } from "../types";
-import { makeUuid, normalizeData, type AppDataSnapshotInput } from "./storage";
+import type { AppData, CashCount, Debt, DebtEvent, Movement } from "../types";
+import { loadCachedData, makeUuid, normalizeData, type AppDataSnapshotInput } from "./storage";
 
 function movement(overrides: Partial<Movement>): Movement {
   return {
@@ -32,6 +32,53 @@ function withoutFinancialAccounts(input: AppDataSnapshotInput): AppDataSnapshotI
   const copy = { ...input };
   delete (copy as { financialAccounts?: unknown }).financialAccounts;
   return copy;
+}
+
+function debtSnapshot(overrides: Partial<Debt>): Debt {
+  return {
+    id: "d1",
+    name: "Préstamo BCP",
+    creditorName: "BCP",
+    debtKind: "bank_loan",
+    currencyCode: "PEN",
+    originDate: null,
+    trackingStartDate: "2026-08-01",
+    originalPrincipal: null,
+    openingPrincipalBalance: 10000,
+    plannedInstallmentCount: null,
+    plannedInstallmentAmount: null,
+    installmentAmountMode: "fixed",
+    paymentFrequency: null,
+    customFrequencyDays: null,
+    firstDueDate: null,
+    teaPercent: null,
+    tceaPercent: null,
+    notes: "",
+    status: "active",
+    isArchived: false,
+    createdByUserId: "u1",
+    createdAt: "2026-08-01T00:00:00.000Z",
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function loadSnapshotThroughCache(snapshot: AppDataSnapshotInput): AppData | null {
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    value: {
+      getItem: (key: string) => (key === "caja-familiar-data" ? JSON.stringify(snapshot) : null),
+      setItem: () => undefined,
+      removeItem: () => undefined,
+    },
+    configurable: true,
+  });
+  try {
+    return loadCachedData();
+  } finally {
+    if (originalDescriptor) Object.defineProperty(globalThis, "localStorage", originalDescriptor);
+    else delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
 }
 
 describe("normalizeData con cuentas financieras", () => {
@@ -99,6 +146,106 @@ describe("normalizeData con cuentas financieras", () => {
       { id: "acc-cash-1", name: "Efectivo", reconciliationType: "cash", openingBalance: 120.5, isActive: true, sortOrder: 0, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
       { id: "acc-banco-1", name: "Banco", reconciliationType: "balance", openingBalance: 0, isActive: true, sortOrder: 1, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
     ]);
+  });
+});
+
+describe("normalizeData con deudas (DEBT-1B)", () => {
+  it("snapshot legacy sin campos Debt produce seis arreglos vacíos", () => {
+    const result = normalizeData(snapshot({}));
+    expect(result.debts).toEqual([]);
+    expect(result.debtEvents).toEqual([]);
+    expect(result.debtScheduleVersions).toEqual([]);
+    expect(result.debtInstallments).toEqual([]);
+    expect(result.debtEventInstallmentAllocations).toEqual([]);
+    expect(result.debtCollaterals).toEqual([]);
+  });
+
+  it("conserva y normaliza numeric/null de las deudas del snapshot", () => {
+    const result = normalizeData(
+      snapshot({
+        debts: [
+          {
+            id: "d1",
+            name: "Préstamo BCP",
+            creditorName: "BCP",
+            debtKind: "bank_loan",
+            currencyCode: "PEN",
+            originDate: null,
+            trackingStartDate: "2026-08-01",
+            originalPrincipal: null,
+            openingPrincipalBalance: "10000",
+            plannedInstallmentCount: 12,
+            plannedInstallmentAmount: "950.5",
+            installmentAmountMode: "fixed",
+            paymentFrequency: null,
+            customFrequencyDays: null,
+            firstDueDate: "2026-09-01",
+            teaPercent: "12.5",
+            tceaPercent: null,
+            notes: "",
+            status: "active",
+            isArchived: false,
+            createdByUserId: "u1",
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          } as unknown as Debt,
+        ],
+        debtEvents: [
+          {
+            id: "e1",
+            debtId: "d1",
+            eventDate: "2026-08-10",
+            eventType: "payment",
+            cashAmount: "800",
+            principalDelta: "-800",
+            interestPaid: 0,
+            feesPaid: 0,
+            insurancePaid: 0,
+            otherCostPaid: 0,
+            breakdownComplete: true,
+            movementId: null,
+            reversalOfEventId: null,
+            description: "Cuota 1",
+            registeredByUserId: "u1",
+            createdAt: "2026-08-10T00:00:00.000Z",
+          } as unknown as DebtEvent,
+        ],
+      })
+    );
+    expect(result.debts[0].openingPrincipalBalance).toBe(10000);
+    expect(result.debts[0].originalPrincipal).toBeNull();
+    expect(result.debts[0].plannedInstallmentAmount).toBe(950.5);
+    expect(result.debts[0].teaPercent).toBe(12.5);
+    expect(result.debts[0].paymentFrequency).toBeNull();
+    expect(result.debtEvents[0].cashAmount).toBe(800);
+    expect(result.debtEvents[0].principalDelta).toBe(-800);
+    expect(result.debtEvents[0].movementId).toBeNull();
+  });
+});
+
+describe("isAppDataSnapshot con deudas (DEBT-1B)", () => {
+  it("snapshot legacy sin campos Debt sigue siendo válido", () => {
+    const result = loadSnapshotThroughCache(snapshot({}));
+    expect(result).not.toBeNull();
+    expect(result?.debts).toEqual([]);
+  });
+
+  it("rechaza Debt sin currencyCode", () => {
+    expect(loadSnapshotThroughCache(snapshot({ debts: [debtSnapshot({})] }))).not.toBeNull();
+
+    const incomplete = debtSnapshot({});
+    delete (incomplete as { currencyCode?: unknown }).currencyCode;
+    expect(loadSnapshotThroughCache(snapshot({ debts: [incomplete] }))).toBeNull();
+  });
+
+  it("rechaza Debt con isArchived no boolean", () => {
+    expect(loadSnapshotThroughCache(snapshot({ debts: [debtSnapshot({})] }))).not.toBeNull();
+    expect(loadSnapshotThroughCache(snapshot({ debts: [debtSnapshot({ isArchived: "yes" as unknown as boolean })] }))).toBeNull();
+  });
+
+  it("rechaza Debt con openingPrincipalBalance null o vacío", () => {
+    expect(loadSnapshotThroughCache(snapshot({ debts: [debtSnapshot({ openingPrincipalBalance: null as unknown as number })] }))).toBeNull();
+    expect(loadSnapshotThroughCache(snapshot({ debts: [debtSnapshot({ openingPrincipalBalance: "" as unknown as number })] }))).toBeNull();
   });
 });
 
