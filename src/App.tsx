@@ -31,6 +31,7 @@ import { translateDebtError } from "./utils/debtViewModel";
 import { AppData, CashCount, Category, Debt, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
 import { currentDebtPrincipal } from "./utils/debtCalculations";
+import { buildDebtPlanningItems, summarizeDebtPlanningAlerts } from "./utils/debtPlanning";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
 import {
   CategoryNotFoundError,
@@ -184,8 +185,32 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     const cashAccount = getActiveCashAccount(data.financialAccounts);
     return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null);
   }, [data.financialAccounts, data.movements, data.initialBalance]);
+  const debtPlanningItems = useMemo(
+    () =>
+      buildDebtPlanningItems(
+        data.debts,
+        data.debtEvents,
+        data.debtScheduleVersions,
+        data.debtInstallments,
+        data.debtEventInstallmentAllocations
+      ),
+    [data.debts, data.debtEvents, data.debtScheduleVersions, data.debtInstallments, data.debtEventInstallmentAllocations]
+  );
+
+  const debtPlanningAlertSummary = useMemo(() => summarizeDebtPlanningAlerts(debtPlanningItems), [debtPlanningItems]);
+
   const urgentPaymentSummary = useMemo(() => paymentAlertSummary(data.recurringPayments), [data.recurringPayments]);
   const urgentPaymentLabel = urgentPaymentSummary.total === 1 ? "1 pago requiere atención" : `${urgentPaymentSummary.total} pagos requieren atención`;
+  const combinedAttentionTotal = urgentPaymentSummary.total + debtPlanningAlertSummary.total;
+  const combinedAttentionLabel = `${combinedAttentionTotal} obligaciones que requieren atención`;
+
+  function openDebt(debtId: string) {
+    const targetDebt = data.debts.find((d) => d.id === debtId);
+    if (!targetDebt) return;
+    setSelectedDebtId(targetDebt.id);
+    setView("deudas");
+    setMoreOpen(false);
+  }
   const pendingMovementCount = pendingMovementIds.size;
   const syncStatus: SyncStatus = !isSupabaseConfigured
     ? "local"
@@ -1091,11 +1116,18 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               className={`flex min-h-14 w-full items-center gap-3 rounded-lg px-4 text-left text-lg font-bold transition ${
                 view === item.view ? "bg-blue-600 text-white" : "text-slate-700 hover:bg-slate-100"
               }`}
-              aria-label={item.view === "pagos" ? `Pagos${urgentPaymentSummary.total > 0 ? `, ${urgentPaymentLabel}` : ""}` : undefined}
+              aria-label={
+                item.view === "pagos"
+                  ? `Pagos${urgentPaymentSummary.total > 0 ? `, ${urgentPaymentLabel}` : ""}`
+                  : item.view === "deudas"
+                    ? `Deudas${debtPlanningAlertSummary.total > 0 ? `, ${debtPlanningAlertSummary.total} cuotas requieren atención` : ""}`
+                    : undefined
+              }
             >
               <item.icon className="h-6 w-6 shrink-0" />
               <span className="flex-1">{item.label}</span>
-              {item.view === "pagos" && <UrgentPaymentBadge total={urgentPaymentSummary.total} className={view === item.view ? "bg-white text-blue-700" : "bg-red-100 text-red-800"} />}
+              {item.view === "pagos" && <AttentionBadge total={urgentPaymentSummary.total} className={view === item.view ? "bg-white text-blue-700" : "bg-red-100 text-red-800"} />}
+              {item.view === "deudas" && <AttentionBadge total={debtPlanningAlertSummary.total} className={view === item.view ? "bg-white text-blue-700" : "bg-purple-100 text-purple-800"} />}
             </button>
           ))}
         </nav>
@@ -1135,7 +1167,19 @@ async function saveInitialBalance(value: number): Promise<boolean> {
 
         <div className="p-4 lg:p-8">
           {view === "dashboard" && (
-            <Dashboard movements={data.movements} debtEvents={data.debtEvents} pendingMovementIds={pendingMovementIds} cashCounts={data.cashCounts} recurringPayments={data.recurringPayments} initialBalance={data.initialBalance} accounts={data.financialAccounts} onNavigate={navigate} onOpenPayment={openPayment} />
+            <Dashboard
+              movements={data.movements}
+              debtEvents={data.debtEvents}
+              pendingMovementIds={pendingMovementIds}
+              cashCounts={data.cashCounts}
+              recurringPayments={data.recurringPayments}
+              debtPlanningItems={debtPlanningItems}
+              initialBalance={data.initialBalance}
+              accounts={data.financialAccounts}
+              onNavigate={navigate}
+              onOpenPayment={openPayment}
+              onOpenDebt={openDebt}
+            />
           )}
           {(view === "registrar-ingreso" || view === "registrar-gasto") && (
             <MovementForm
@@ -1214,8 +1258,11 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               accounts={data.financialAccounts}
               categories={data.categories}
               currentMember={currentMember}
+              debtPlanningItems={debtPlanningItems}
+              debtPlanningAlertSummary={debtPlanningAlertSummary}
               onOpenNewDebt={() => setView("registrar-deuda")}
               onSelectDebt={(debt) => setSelectedDebtId(debt.id)}
+              onSelectDebtId={openDebt}
             />
           )}
           {view === "registrar-deuda" && (
@@ -1302,14 +1349,14 @@ async function saveInitialBalance(value: number): Promise<boolean> {
         <button
           type="button"
           onClick={() => setMoreOpen(true)}
-          aria-label={`Más opciones${urgentPaymentSummary.total > 0 ? `, ${urgentPaymentLabel}` : ""}`}
+          aria-label={`Más opciones${combinedAttentionTotal > 0 ? `, ${combinedAttentionLabel}` : ""}`}
           className={`relative flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-1 text-xs font-bold transition sm:text-sm ${
-            moreOpen || ["pagos", "reportes", "categorias", "cuentas", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
+            moreOpen || ["pagos", "deudas", "reportes", "categorias", "cuentas", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
           }`}
         >
           <MoreHorizontal className="h-6 w-6" />
           <span>Más</span>
-          <UrgentPaymentBadge total={urgentPaymentSummary.total} className="absolute right-2 top-1 bg-red-600 text-white" />
+          <AttentionBadge total={combinedAttentionTotal} className="absolute right-2 top-1 bg-red-600 text-white" />
         </button>
       </nav>
 
@@ -1334,13 +1381,19 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 className="flex min-h-14 items-center justify-between gap-3 rounded-2xl bg-orange-50 px-4 text-left text-base font-bold text-orange-900"
               >
                 <span>Pagos recurrentes</span>
-                <UrgentPaymentBadge total={urgentPaymentSummary.total} className="shrink-0 bg-red-600 text-white" />
+                <AttentionBadge total={urgentPaymentSummary.total} className="shrink-0 bg-red-600 text-white" />
               </button>
               <button type="button" onClick={() => navigate("reportes")} className="min-h-14 rounded-2xl bg-indigo-50 px-4 text-left text-base font-bold text-indigo-900">
                 Reportes
               </button>
-              <button type="button" onClick={() => navigate("deudas")} className="min-h-14 rounded-2xl bg-purple-50 px-4 text-left text-base font-bold text-purple-900">
-                Deudas
+              <button
+                type="button"
+                onClick={() => navigate("deudas")}
+                aria-label={`Deudas${debtPlanningAlertSummary.total > 0 ? `, ${debtPlanningAlertSummary.total} cuotas requieren atención` : ""}`}
+                className="flex min-h-14 items-center justify-between gap-3 rounded-2xl bg-purple-50 px-4 text-left text-base font-bold text-purple-900"
+              >
+                <span>Deudas</span>
+                <AttentionBadge total={debtPlanningAlertSummary.total} className="shrink-0 bg-purple-600 text-white" />
               </button>
               <button type="button" onClick={() => navigate("categorias")} className="min-h-14 rounded-2xl bg-emerald-50 px-4 text-left text-base font-bold text-emerald-900">
                 Categorías
@@ -1424,7 +1477,7 @@ function AppLoadingScreen() {
   );
 }
 
-function UrgentPaymentBadge({ total, className = "" }: { total: number; className?: string }) {
+function AttentionBadge({ total, className = "" }: { total: number; className?: string }) {
   if (total === 0) return null;
 
   return <span aria-hidden="true" className={`inline-flex min-w-7 items-center justify-center rounded-full px-2 py-1 text-sm font-black leading-none ${className}`}>{total}</span>;

@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Plus, Landmark, Search, Archive, AlertCircle } from "lucide-react";
 import type { Debt, DebtEvent, DebtScheduleVersion, DebtInstallment, DebtEventInstallmentAllocation, DebtCollateral, FinancialAccount, Category, HouseholdMember } from "../types";
+import type { DebtInstallmentPlanningItem, DebtPlanningAlertSummary } from "../utils/debtPlanning";
 import { currentDebtPrincipal } from "../utils/debtCalculations";
 import { formatDebtKind, formatDebtStatus } from "../utils/debtViewModel";
+import { DebtPlanningPanel } from "./DebtPlanningPanel";
 
 interface DebtsManagerProps {
   debts: Debt[];
@@ -14,13 +16,33 @@ interface DebtsManagerProps {
   accounts: FinancialAccount[];
   categories: Category[];
   currentMember?: HouseholdMember;
+  debtPlanningItems: DebtInstallmentPlanningItem[];
+  debtPlanningAlertSummary: DebtPlanningAlertSummary;
   onOpenNewDebt: () => void;
   onSelectDebt: (debt: Debt) => void;
+  onSelectDebtId?: (debtId: string) => void;
 }
 
-export function DebtsManager({ debts, debtEvents, onOpenNewDebt, onSelectDebt }: DebtsManagerProps) {
+export function DebtsManager({
+  debts,
+  debtEvents,
+  debtPlanningItems,
+  debtPlanningAlertSummary,
+  onOpenNewDebt,
+  onSelectDebt,
+  onSelectDebtId,
+}: DebtsManagerProps) {
   const [tab, setTab] = useState<"unarchived" | "archived">("unarchived");
   const [searchQuery, setSearchQuery] = useState("");
+
+  const handleSelectDebtId = (debtId: string) => {
+    if (onSelectDebtId) {
+      onSelectDebtId(debtId);
+      return;
+    }
+    const found = debts.find((d) => d.id === debtId);
+    if (found) onSelectDebt(found);
+  };
 
   const filteredDebts = debts.filter((debt) => {
     const matchesTab = tab === "unarchived" ? !debt.isArchived : debt.isArchived;
@@ -77,6 +99,12 @@ export function DebtsManager({ debts, debtEvents, onOpenNewDebt, onSelectDebt }:
           </p>
         </div>
       </div>
+
+      <DebtPlanningPanel
+        debtPlanningItems={debtPlanningItems}
+        debtPlanningAlertSummary={debtPlanningAlertSummary}
+        onSelectDebtId={handleSelectDebtId}
+      />
 
       <div className="rounded-3xl bg-white p-6 shadow-xl lg:p-8 space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

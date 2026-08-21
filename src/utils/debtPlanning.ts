@@ -38,6 +38,7 @@ export interface DebtInstallmentPlanningItem {
   debtId: string;
   debtName: string;
   creditorName: string;
+  currencyCode: string;
 
   // Installment identity
   installmentId: string;
@@ -117,6 +118,7 @@ export function buildDebtPlanningItems(
         debtId: debt.id,
         debtName: debt.name,
         creditorName: debt.creditorName,
+        currencyCode: debt.currencyCode,
         installmentId: installment.id,
         installmentNumber: installment.installmentNumber,
         scheduleVersionId: currentSchedule.id,
@@ -200,29 +202,55 @@ function sortPlanningItems(items: DebtInstallmentPlanningItem[]): DebtInstallmen
 // Monthly metrics
 // ---------------------------------------------------------------------------
 
+export interface DebtMonthCurrencySummary {
+  currencyCode: string;
+  scheduledKnownAmount: number;
+  coveredKnownAmount: number;
+  pendingKnownAmount: number;
+  overdueKnownAmount: number;
+  totalInstallments: number;
+  knownAmountInstallments: number;
+  unknownAmountInstallments: number;
+  overdueInstallments: number;
+  coveredInstallments: number;
+}
+
 export interface DebtMonthSummary {
+  /** Currency code if exactly 1 currency is present, or null if multiple currencies present */
+  currencyCode: string | null;
+  /** True if month items contain more than one distinct currencyCode */
+  hasMultipleCurrencies: boolean;
+  /** Breakdown by currency code */
+  byCurrency: Record<string, DebtMonthCurrencySummary>;
+
   /** Total installments whose dueDate falls in the month */
   totalInstallments: number;
   /** Installments with expectedAmount !== null */
   knownAmountInstallments: number;
   /** Installments with expectedAmount === null */
   unknownAmountInstallments: number;
-  /** Sum of expectedAmount for known-amount installments in the month */
-  scheduledKnownAmount: number;
-  /** Sum of min(allocatedAmount, expectedAmount) for covered/partial known-amount installments */
-  coveredKnownAmount: number;
-  /** Sum of remainingAmount for known-amount installments */
-  pendingKnownAmount: number;
-  /** Sum of remainingAmount for overdue known-amount installments */
-  overdueKnownAmount: number;
   /** Count of overdue installments (any amount) in the month */
   overdueInstallments: number;
   /** Count of covered installments in the month */
   coveredInstallments: number;
+
+  /** Sum of expectedAmount for known-amount installments (number if single currency, null if multiple currencies) */
+  scheduledKnownAmount: number | null;
+  /** Sum of min(allocatedAmount, expectedAmount) for covered/partial known-amount installments (number if single currency, null if multiple currencies) */
+  coveredKnownAmount: number | null;
+  /** Sum of remainingAmount for known-amount installments (number if single currency, null if multiple currencies) */
+  pendingKnownAmount: number | null;
+  /** Sum of remainingAmount for overdue known-amount installments (number if single currency, null if multiple currencies) */
+  overdueKnownAmount: number | null;
 }
 
 /**
  * Aggregate monthly planning metrics from a set of planning items.
+ *
+ * Top-level monetary amounts (scheduledKnownAmount, coveredKnownAmount, pendingKnownAmount, overdueKnownAmount)
+ * are populated as numbers ONLY when all items in the month share a single currency (or 0 items).
+ * If items belong to multiple distinct currencies, top-level monetary fields are set to null to prevent
+ * cross-currency summation, and byCurrency must be consumed for per-currency amounts.
  *
  * @param items     Full list (all months). Function filters by monthKey.
  * @param monthKey  "YYYY-MM"
@@ -233,56 +261,133 @@ export function summarizeDebtPlanningMonth(
 ): DebtMonthSummary {
   const monthItems = items.filter((item) => item.dueDate.startsWith(monthKey));
 
+  const currencies = new Set<string>();
+  const byCurrency: Record<string, DebtMonthCurrencySummary> = {};
+
   let totalInstallments = 0;
   let knownAmountInstallments = 0;
   let unknownAmountInstallments = 0;
-  let scheduledKnownAmount = 0;
-  let coveredKnownAmount = 0;
-  let pendingKnownAmount = 0;
-  let overdueKnownAmount = 0;
   let overdueInstallments = 0;
   let coveredInstallments = 0;
 
   for (const item of monthItems) {
     totalInstallments++;
+    const curr = item.currencyCode || "PEN";
+    currencies.add(curr);
+
+    if (!byCurrency[curr]) {
+      byCurrency[curr] = {
+        currencyCode: curr,
+        scheduledKnownAmount: 0,
+        coveredKnownAmount: 0,
+        pendingKnownAmount: 0,
+        overdueKnownAmount: 0,
+        totalInstallments: 0,
+        knownAmountInstallments: 0,
+        unknownAmountInstallments: 0,
+        overdueInstallments: 0,
+        coveredInstallments: 0,
+      };
+    }
+    const currEntry = byCurrency[curr];
+    currEntry.totalInstallments++;
 
     if (!item.amountKnown) {
       unknownAmountInstallments++;
+      currEntry.unknownAmountInstallments++;
     } else {
       knownAmountInstallments++;
-      scheduledKnownAmount += item.expectedAmount!;
-      coveredKnownAmount += Math.min(item.allocatedAmount, item.expectedAmount!);
-      pendingKnownAmount += item.remainingAmount!;
+      currEntry.knownAmountInstallments++;
+      const coveredPart = Math.min(item.allocatedAmount, item.expectedAmount!);
+      currEntry.scheduledKnownAmount += item.expectedAmount!;
+      currEntry.coveredKnownAmount += coveredPart;
+      currEntry.pendingKnownAmount += item.remainingAmount!;
     }
 
     if (item.dueStatus === "overdue") {
       overdueInstallments++;
+      currEntry.overdueInstallments++;
       if (item.amountKnown) {
-        overdueKnownAmount += item.remainingAmount!;
+        currEntry.overdueKnownAmount += item.remainingAmount!;
       }
     }
 
     if (item.dueStatus === "covered") {
       coveredInstallments++;
+      currEntry.coveredInstallments++;
     }
   }
 
+  const currencyList = Array.from(currencies);
+  const hasMultipleCurrencies = currencyList.length > 1;
+
+  if (hasMultipleCurrencies) {
+    return {
+      currencyCode: null,
+      hasMultipleCurrencies: true,
+      byCurrency,
+      totalInstallments,
+      knownAmountInstallments,
+      unknownAmountInstallments,
+      overdueInstallments,
+      coveredInstallments,
+      scheduledKnownAmount: null,
+      coveredKnownAmount: null,
+      pendingKnownAmount: null,
+      overdueKnownAmount: null,
+    };
+  }
+
+  const singleCurrency = currencyList[0] || "PEN";
+  const singleSummary = byCurrency[singleCurrency] || {
+    currencyCode: singleCurrency,
+    scheduledKnownAmount: 0,
+    coveredKnownAmount: 0,
+    pendingKnownAmount: 0,
+    overdueKnownAmount: 0,
+    totalInstallments: 0,
+    knownAmountInstallments: 0,
+    unknownAmountInstallments: 0,
+    overdueInstallments: 0,
+    coveredInstallments: 0,
+  };
+
   return {
+    currencyCode: singleCurrency,
+    hasMultipleCurrencies: false,
+    byCurrency,
     totalInstallments,
     knownAmountInstallments,
     unknownAmountInstallments,
-    scheduledKnownAmount,
-    coveredKnownAmount,
-    pendingKnownAmount,
-    overdueKnownAmount,
     overdueInstallments,
     coveredInstallments,
+    scheduledKnownAmount: singleSummary.scheduledKnownAmount,
+    coveredKnownAmount: singleSummary.coveredKnownAmount,
+    pendingKnownAmount: singleSummary.pendingKnownAmount,
+    overdueKnownAmount: singleSummary.overdueKnownAmount,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Alert summary
+// Alert summary & Attention Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Select urgent non-covered debt planning items for attention views (e.g. Dashboard).
+ * Filters exclusively for: overdue, today, tomorrow, upcoming.
+ * Excludes: covered, later.
+ * Sorts by daysUntilDue ascending.
+ * Limits result to requested count (default 3).
+ */
+export function selectDebtPlanningAttentionItems(
+  items: DebtInstallmentPlanningItem[],
+  limit = 3
+): DebtInstallmentPlanningItem[] {
+  return items
+    .filter((item) => ["overdue", "today", "tomorrow", "upcoming"].includes(item.dueStatus))
+    .sort((a, b) => a.daysUntilDue - b.daysUntilDue)
+    .slice(0, limit);
+}
 
 export interface DebtPlanningAlertSummary {
   overdue: number;
@@ -318,4 +423,83 @@ export function summarizeDebtPlanningAlerts(
   }
 
   return summary;
+}
+
+// ---------------------------------------------------------------------------
+// UX & Navigation Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Return next month key "YYYY-MM" handling Dec -> Jan year rollover.
+ */
+export function getNextMonthKey(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!year || !month) return monthKey;
+  if (month === 12) {
+    return `${year + 1}-01`;
+  }
+  return `${year}-${String(month + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Return previous month key "YYYY-MM" handling Jan -> Dec year rollover.
+ */
+export function getPrevMonthKey(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!year || !month) return monthKey;
+  if (month === 1) {
+    return `${year - 1}-12`;
+  }
+  return `${year}-${String(month - 1).padStart(2, "0")}`;
+}
+
+/**
+ * Format "YYYY-MM" into human label in Spanish, e.g. "Agosto 2026".
+ */
+export function formatMonthKeyLabel(monthKey: string): string {
+  const [year, month] = monthKey.split("-").map(Number);
+  if (!year || !month) return monthKey;
+  const date = new Date(Date.UTC(year, month - 1, 15, 12));
+  const monthName = date.toLocaleDateString("es-PE", { month: "long", timeZone: "UTC" });
+  const capitalized = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+  return `${capitalized} ${year}`;
+}
+
+export interface DebtAgendaGroup {
+  key: "overdue" | "today" | "tomorrow" | "upcoming" | "later" | "covered";
+  label: string;
+  tone: "red" | "orange" | "yellow" | "blue" | "green";
+  items: DebtInstallmentPlanningItem[];
+}
+
+/**
+ * Group monthly debt planning items into UX sections in exact order:
+ * 1. Vencidas (overdue)
+ * 2. Hoy (today)
+ * 3. Mañana (tomorrow)
+ * 4. Próximos 7 días (upcoming)
+ * 5. Más adelante (later)
+ * 6. Cubiertas (covered)
+ */
+export function groupDebtPlanningItemsForAgenda(
+  monthItems: DebtInstallmentPlanningItem[]
+): DebtAgendaGroup[] {
+  const groups: Record<DebtAgendaGroup["key"], DebtAgendaGroup> = {
+    overdue: { key: "overdue", label: "Vencidas", tone: "red", items: [] },
+    today: { key: "today", label: "Vencen hoy", tone: "orange", items: [] },
+    tomorrow: { key: "tomorrow", label: "Vence mañana", tone: "yellow", items: [] },
+    upcoming: { key: "upcoming", label: "Próximos 7 días", tone: "blue", items: [] },
+    later: { key: "later", label: "Más adelante", tone: "blue", items: [] },
+    covered: { key: "covered", label: "Cubiertas", tone: "green", items: [] },
+  };
+
+  for (const item of monthItems) {
+    const key = item.dueStatus;
+    if (groups[key]) {
+      groups[key].items.push(item);
+    }
+  }
+
+  const order: DebtAgendaGroup["key"][] = ["overdue", "today", "tomorrow", "upcoming", "later", "covered"];
+  return order.map((key) => groups[key]).filter((group) => group.items.length > 0);
 }
