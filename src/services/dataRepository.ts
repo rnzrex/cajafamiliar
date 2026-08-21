@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment } from "../types";
+import { AppData, CashCount, Category, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -367,6 +367,253 @@ export async function completeRecurringPayment(payment: RecurringPayment, moveme
   return {
     payment: fromRecurringPaymentRow(data.payment),
     movement: data.movement ? fromMovementRow(data.movement) : null,
+  };
+}
+
+export type DebtOperationErrorCode =
+  | "AUTH_REQUIRED"
+  | "HOUSEHOLD_ACCESS_DENIED"
+  | "DEBT_NOT_FOUND"
+  | "DEBT_ARCHIVED"
+  | "DEBT_NOT_ACTIVE"
+  | "DEBT_ALREADY_PAID_OFF"
+  | "DEBT_PRINCIPAL_EXCEEDED"
+  | "DEBT_PREPAYMENT_WOULD_PAY_OFF"
+  | "INVALID_DEBT_PAYMENT"
+  | "INVALID_DEBT_PREPAYMENT"
+  | "INVALID_DEBT_PAYOFF"
+  | "INVALID_DEBT_REVERSAL"
+  | "INVALID_DEBT_SCHEDULE"
+  | "INVALID_DEBT_ALLOCATIONS"
+  | "DEBT_EVENT_ID_CONFLICT"
+  | "DEBT_EVENT_NOT_FOUND"
+  | "DEBT_EVENT_TYPE_UNSUPPORTED"
+  | "DEBT_EVENT_ALREADY_REVERSED"
+  | "DEBT_REVERSAL_SCHEDULE_REQUIRED"
+  | "DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED"
+  | "DEBT_MOVEMENT_CONFLICT"
+  | "DEBT_MOVEMENT_ALREADY_LINKED"
+  | "DEBT_MOVEMENT_NOT_FOUND"
+  | "DEBT_MOVEMENT_MUST_BE_EXPENSE"
+  | "DEBT_MOVEMENT_AMOUNT_MISMATCH"
+  | "DEBT_MOVEMENT_DATE_MISMATCH"
+  | "DEBT_MOVEMENT_CONTEXT_REQUIRED"
+  | "DEBT_MOVEMENT_ACCOUNT_REQUIRED"
+  | "DEBT_MOVEMENT_ACCOUNT_NOT_FOUND"
+  | "DEBT_MOVEMENT_ACCOUNT_METHOD_MISMATCH"
+  | "ACCOUNT_NOT_AVAILABLE"
+  | "DEBT_SERVICE_MOVEMENT_RPC_ONLY";
+
+export class DebtOperationError extends Error {
+  constructor(readonly code: DebtOperationErrorCode) {
+    super(code);
+    this.name = "DebtOperationError";
+  }
+}
+
+export class DebtOperationUnavailableError extends Error {
+  constructor() {
+    super("Las operaciones Debt requieren una conexión online a Supabase.");
+    this.name = "DebtOperationUnavailableError";
+  }
+}
+
+export interface DebtFundOperationResult {
+  idempotentReplay: boolean;
+  debt: Debt;
+  movement: Movement;
+  event: DebtEvent;
+  allocations: DebtEventInstallmentAllocation[];
+  scheduleVersion: DebtScheduleVersion | null;
+  installments: DebtInstallment[];
+}
+
+export interface DebtReversalResult {
+  idempotentReplay: boolean;
+  debt: Debt;
+  event: DebtEvent;
+  scheduleVersion: DebtScheduleVersion | null;
+  installments: DebtInstallment[];
+}
+
+export function toDebtPaymentRpcArgs(input: DebtPaymentInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_event_id: input.eventId,
+    p_movement_id: input.movementId,
+    p_event_date: input.eventDate,
+    p_cash_amount: input.cashAmount,
+    p_account_id: input.accountId,
+    p_description: input.description,
+    p_category: input.category,
+    p_principal_amount: input.principalAmount,
+    p_interest_paid: input.interestPaid,
+    p_fees_paid: input.feesPaid,
+    p_insurance_paid: input.insurancePaid,
+    p_other_cost_paid: input.otherCostPaid,
+    p_breakdown_complete: input.breakdownComplete,
+    p_allocations: input.allocations.map(toDebtAllocationRow),
+  };
+}
+
+export function toDebtPrepaymentRpcArgs(input: DebtPrepaymentInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_event_id: input.eventId,
+    p_movement_id: input.movementId,
+    p_event_date: input.eventDate,
+    p_cash_amount: input.cashAmount,
+    p_account_id: input.accountId,
+    p_description: input.description,
+    p_category: input.category,
+    p_principal_amount: input.principalAmount,
+    p_interest_paid: input.interestPaid,
+    p_fees_paid: input.feesPaid,
+    p_insurance_paid: input.insurancePaid,
+    p_other_cost_paid: input.otherCostPaid,
+    p_breakdown_complete: input.breakdownComplete,
+    p_schedule_installments: input.scheduleInstallments.map(toDebtScheduleInstallmentRow),
+    p_schedule_notes: input.scheduleNotes ?? null,
+  };
+}
+
+export function toDebtPayoffRpcArgs(input: DebtPayoffInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_event_id: input.eventId,
+    p_movement_id: input.movementId,
+    p_event_date: input.eventDate,
+    p_cash_amount: input.cashAmount,
+    p_account_id: input.accountId,
+    p_description: input.description,
+    p_category: input.category,
+    p_interest_paid: input.interestPaid,
+    p_fees_paid: input.feesPaid,
+    p_insurance_paid: input.insurancePaid,
+    p_other_cost_paid: input.otherCostPaid,
+    p_breakdown_complete: input.breakdownComplete,
+  };
+}
+
+export function toDebtReversalRpcArgs(input: DebtReversalInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_reversal_event_id: input.reversalEventId,
+    p_target_event_id: input.targetEventId,
+    p_event_date: input.eventDate,
+    p_description: input.description,
+    p_schedule_installments: input.scheduleInstallments.map(toDebtScheduleInstallmentRow),
+    p_schedule_notes: input.scheduleNotes ?? null,
+  };
+}
+
+export async function recordDebtPayment(input: DebtPaymentInput): Promise<DebtFundOperationResult> {
+  return callDebtOperation("record_debt_payment_v1", toDebtPaymentRpcArgs(input), fromDebtFundOperationResult);
+}
+
+export async function recordDebtPrepayment(input: DebtPrepaymentInput): Promise<DebtFundOperationResult> {
+  return callDebtOperation("record_debt_prepayment_v1", toDebtPrepaymentRpcArgs(input), fromDebtFundOperationResult);
+}
+
+export async function recordDebtPayoff(input: DebtPayoffInput): Promise<DebtFundOperationResult> {
+  return callDebtOperation("record_debt_payoff_v1", toDebtPayoffRpcArgs(input), fromDebtFundOperationResult);
+}
+
+export async function reverseDebtEvent(input: DebtReversalInput): Promise<DebtReversalResult> {
+  return callDebtOperation("reverse_debt_event_v1", toDebtReversalRpcArgs(input), fromDebtReversalResult);
+}
+
+function toDebtAllocationRow(input: DebtAllocationInput) {
+  return {
+    installment_id: input.installmentId,
+    allocated_amount: input.allocatedAmount,
+  };
+}
+
+function toDebtScheduleInstallmentRow(input: DebtScheduleInstallmentInput) {
+  return {
+    installment_number: input.installmentNumber,
+    due_date: input.dueDate,
+    expected_amount: input.expectedAmount ?? null,
+    expected_principal: input.expectedPrincipal ?? null,
+    expected_interest: input.expectedInterest ?? null,
+    expected_fees: input.expectedFees ?? null,
+    expected_insurance: input.expectedInsurance ?? null,
+  };
+}
+
+async function callDebtOperation<T>(rpcName: string, args: Record<string, unknown>, normalize: (data: Record<string, any>) => T): Promise<T> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+
+  const { data, error } = await supabase.rpc(rpcName, args);
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La RPC Debt no devolvió un resultado válido.");
+  return normalize(data as Record<string, any>);
+}
+
+function mapDebtOperationError(message: string): DebtOperationError | null {
+  const code = debtOperationErrorCodes.find((candidate) => message.includes(candidate));
+  return code ? new DebtOperationError(code) : null;
+}
+
+const debtOperationErrorCodes: DebtOperationErrorCode[] = [
+  "AUTH_REQUIRED",
+  "HOUSEHOLD_ACCESS_DENIED",
+  "DEBT_NOT_FOUND",
+  "DEBT_ARCHIVED",
+  "DEBT_NOT_ACTIVE",
+  "DEBT_ALREADY_PAID_OFF",
+  "DEBT_PRINCIPAL_EXCEEDED",
+  "DEBT_PREPAYMENT_WOULD_PAY_OFF",
+  "INVALID_DEBT_PAYMENT",
+  "INVALID_DEBT_PREPAYMENT",
+  "INVALID_DEBT_PAYOFF",
+  "INVALID_DEBT_REVERSAL",
+  "INVALID_DEBT_SCHEDULE",
+  "INVALID_DEBT_ALLOCATIONS",
+  "DEBT_EVENT_ID_CONFLICT",
+  "DEBT_EVENT_NOT_FOUND",
+  "DEBT_EVENT_TYPE_UNSUPPORTED",
+  "DEBT_EVENT_ALREADY_REVERSED",
+  "DEBT_REVERSAL_SCHEDULE_REQUIRED",
+  "DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED",
+  "DEBT_MOVEMENT_CONFLICT",
+  "DEBT_MOVEMENT_ALREADY_LINKED",
+  "DEBT_MOVEMENT_NOT_FOUND",
+  "DEBT_MOVEMENT_MUST_BE_EXPENSE",
+  "DEBT_MOVEMENT_AMOUNT_MISMATCH",
+  "DEBT_MOVEMENT_DATE_MISMATCH",
+  "DEBT_MOVEMENT_CONTEXT_REQUIRED",
+  "DEBT_MOVEMENT_ACCOUNT_REQUIRED",
+  "DEBT_MOVEMENT_ACCOUNT_NOT_FOUND",
+  "DEBT_MOVEMENT_ACCOUNT_METHOD_MISMATCH",
+  "ACCOUNT_NOT_AVAILABLE",
+  "DEBT_SERVICE_MOVEMENT_RPC_ONLY",
+];
+
+function fromDebtFundOperationResult(row: Record<string, any>): DebtFundOperationResult {
+  return {
+    idempotentReplay: Boolean(row.idempotentReplay),
+    debt: fromDebtRow(row.debt),
+    movement: fromMovementRow(row.movement),
+    event: fromDebtEventRow(row.event),
+    allocations: Array.isArray(row.allocations) ? row.allocations.map(fromDebtEventInstallmentAllocationRow) : [],
+    scheduleVersion: row.scheduleVersion == null ? null : fromDebtScheduleVersionRow(row.scheduleVersion),
+    installments: Array.isArray(row.installments) ? row.installments.map(fromDebtInstallmentRow) : [],
+  };
+}
+
+function fromDebtReversalResult(row: Record<string, any>): DebtReversalResult {
+  return {
+    idempotentReplay: Boolean(row.idempotentReplay),
+    debt: fromDebtRow(row.debt),
+    event: fromDebtEventRow(row.event),
+    scheduleVersion: row.scheduleVersion == null ? null : fromDebtScheduleVersionRow(row.scheduleVersion),
+    installments: Array.isArray(row.installments) ? row.installments.map(fromDebtInstallmentRow) : [],
   };
 }
 

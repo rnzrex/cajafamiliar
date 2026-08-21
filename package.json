@@ -9,6 +9,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "test": "vitest run",
     "typecheck:api": "tsc -p tsconfig.api.json",
+    "test:debt2b2": "node scripts/test-debt2b2.mjs",
     "test:supabase": "node scripts/test-supabase.mjs"
   },
   "keywords": [],

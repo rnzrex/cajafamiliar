@@ -11,7 +11,7 @@ export type DebtStatus = "active" | "paid_off" | "refinanced";
 export type DebtInstallmentAmountMode = "fixed" | "variable" | "unknown";
 export type DebtPaymentFrequency = "monthly" | "biweekly" | "weekly" | "custom";
 export type DebtEventType = "payment" | "principal_prepayment" | "principal_adjustment" | "refinance" | "payoff" | "reversal";
-export type DebtScheduleReason = "initial" | "prepayment" | "rate_change" | "refinance" | "manual_adjustment";
+export type DebtScheduleReason = "initial" | "prepayment" | "rate_change" | "refinance" | "manual_adjustment" | "reversal";
 export type DebtCollateralStatus = "pledged" | "released" | "forfeited";
 
 export interface HouseholdMember {
@@ -144,6 +144,84 @@ export interface DebtCollateral {
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DebtScheduleInstallmentInput {
+  installmentNumber: number;
+  dueDate: string;
+  expectedAmount?: number | null;
+  expectedPrincipal?: number | null;
+  expectedInterest?: number | null;
+  expectedFees?: number | null;
+  expectedInsurance?: number | null;
+}
+
+export interface DebtAllocationInput {
+  installmentId: string;
+  allocatedAmount: number;
+}
+
+export interface DebtPaymentInput {
+  debtId: string;
+  eventId: string;
+  movementId: string;
+  eventDate: string;
+  cashAmount: number;
+  accountId: string;
+  description: string;
+  category: string;
+  principalAmount: number;
+  interestPaid: number;
+  feesPaid: number;
+  insurancePaid: number;
+  otherCostPaid: number;
+  breakdownComplete: boolean;
+  allocations: DebtAllocationInput[];
+}
+
+export interface DebtPrepaymentInput {
+  debtId: string;
+  eventId: string;
+  movementId: string;
+  eventDate: string;
+  cashAmount: number;
+  accountId: string;
+  description: string;
+  category: string;
+  principalAmount: number;
+  interestPaid: number;
+  feesPaid: number;
+  insurancePaid: number;
+  otherCostPaid: number;
+  breakdownComplete: boolean;
+  scheduleInstallments: DebtScheduleInstallmentInput[];
+  scheduleNotes?: string | null;
+}
+
+export interface DebtPayoffInput {
+  debtId: string;
+  eventId: string;
+  movementId: string;
+  eventDate: string;
+  cashAmount: number;
+  accountId: string;
+  description: string;
+  category: string;
+  interestPaid: number;
+  feesPaid: number;
+  insurancePaid: number;
+  otherCostPaid: number;
+  breakdownComplete: boolean;
+}
+
+export interface DebtReversalInput {
+  debtId: string;
+  reversalEventId: string;
+  targetEventId: string;
+  eventDate: string;
+  description: string;
+  scheduleInstallments: DebtScheduleInstallmentInput[];
+  scheduleNotes?: string | null;
 }
 
 export interface CashCount {
