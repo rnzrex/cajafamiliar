@@ -1,0 +1,112 @@
+import type { Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, DebtKind, DebtStatus, DebtPaymentFrequency, Category } from "../types";
+import { currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, allocatedAmountForInstallment } from "./debtCalculations";
+
+export function translateDebtError(error: unknown): string {
+  if (error instanceof Error) {
+    const msg = error.message;
+    const translations: Record<string, string> = {
+      AUTH_REQUIRED: "Se requiere iniciar sesión para realizar esta operación.",
+      HOUSEHOLD_ACCESS_DENIED: "No tienes permisos de acceso en este hogar.",
+      DEBT_NOT_FOUND: "La deuda especificada no existe.",
+      DEBT_ALREADY_EXISTS: "Ya existe una deuda con este identificador.",
+      INVALID_DEBT_INPUT: "Los datos ingresados para la deuda no son válidos.",
+      INVALID_INSTALLMENTS: "El cronograma de cuotas contiene datos inválidos.",
+      INVALID_COLLATERALS: "Las garantías ingresadas no son válidas.",
+      DEBT_ARCHIVED: "La deuda se encuentra archivada y no admite operaciones.",
+      DEBT_NOT_ACTIVE: "La deuda no está activa.",
+      DEBT_ALREADY_PAID_OFF: "La deuda ya ha sido cancelada en su totalidad.",
+      DEBT_PRINCIPAL_EXCEEDED: "El monto supera el saldo principal actual.",
+      DEBT_PREPAYMENT_WOULD_PAY_OFF: "El prepago pagaría la totalidad del principal; utilice la opción de Cancelación.",
+      INVALID_DEBT_PAYMENT: "Los datos del pago no son válidos.",
+      INVALID_DEBT_PREPAYMENT: "Los datos del prepago no son válidos.",
+      INVALID_DEBT_PAYOFF: "Los datos de la cancelación no son válidos.",
+      INVALID_DEBT_REVERSAL: "Los datos de la reversión no son válidos.",
+      INVALID_DEBT_SCHEDULE: "El nuevo cronograma no es válido.",
+      INVALID_DEBT_ALLOCATIONS: "Las asignaciones de cuotas no coinciden con el monto o son inválidas.",
+      DEBT_EVENT_ID_CONFLICT: "Conflicto con el identificador del evento.",
+      DEBT_EVENT_NOT_FOUND: "El evento de deuda especificado no existe.",
+      DEBT_EVENT_TYPE_UNSUPPORTED: "Tipo de evento de deuda no soportado.",
+      DEBT_EVENT_ALREADY_REVERSED: "Este evento ya ha sido revertido previamente.",
+      DEBT_REVERSAL_SCHEDULE_REQUIRED: "La reversión de este evento requiere un nuevo cronograma de cuotas.",
+      DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED: "La reversión no permite un nuevo cronograma.",
+      DEBT_MOVEMENT_CONFLICT: "Conflicto con el movimiento financiero asociado.",
+      DEBT_MOVEMENT_ALREADY_LINKED: "El movimiento financiero ya está vinculado a otra operación o deuda.",
+      DEBT_MOVEMENT_NOT_FOUND: "El movimiento financiero no existe.",
+      DEBT_MOVEMENT_MUST_BE_EXPENSE: "El movimiento asociado debe ser un egreso.",
+      DEBT_MOVEMENT_AMOUNT_MISMATCH: "El monto del movimiento no coincide con el monto de la operación de deuda.",
+      DEBT_MOVEMENT_DATE_MISMATCH: "La fecha del movimiento no coincide con la fecha de la operación.",
+      DEBT_MOVEMENT_CONTEXT_REQUIRED: "El movimiento debe tener contexto de servicio de deuda.",
+      DEBT_MOVEMENT_ACCOUNT_REQUIRED: "Se requiere seleccionar una cuenta financiera.",
+      DEBT_MOVEMENT_ACCOUNT_NOT_FOUND: "La cuenta financiera seleccionada no existe.",
+      DEBT_MOVEMENT_ACCOUNT_METHOD_MISMATCH: "El método de pago no coincide con el tipo de cuenta financiera.",
+      ACCOUNT_NOT_AVAILABLE: "La cuenta financiera seleccionada no está disponible.",
+      DEBT_SERVICE_MOVEMENT_RPC_ONLY: "Los movimientos de servicio de deuda solo pueden registrarse mediante operaciones de deuda.",
+    };
+    for (const [code, text] of Object.entries(translations)) {
+      if (msg.includes(code)) return text;
+    }
+    return msg;
+  }
+  return "Ocurrió un error inesperado en la operación de deuda.";
+}
+
+export function formatDebtKind(kind: DebtKind): string {
+  const map: Record<DebtKind, string> = {
+    bank_loan: "Préstamo bancario",
+    family_loan: "Préstamo familiar",
+    installment_purchase: "Compra en cuotas",
+    mortgage: "Hipoteca",
+    pledge: "Pignoración / Empeño",
+    credit_card: "Tarjeta de crédito",
+    other: "Otro",
+  };
+  return map[kind] ?? kind;
+}
+
+export function formatDebtStatus(status: DebtStatus): string {
+  const map: Record<DebtStatus, string> = {
+    active: "Activa",
+    paid_off: "Cancelada",
+    refinanced: "Refinanciada",
+  };
+  return map[status] ?? status;
+}
+
+export function formatPaymentFrequency(frequency: DebtPaymentFrequency | null): string {
+  if (!frequency) return "No especificada";
+  const map: Record<DebtPaymentFrequency, string> = {
+    monthly: "Mensual",
+    biweekly: "Quincenal",
+    weekly: "Semanal",
+    custom: "Personalizada",
+  };
+  return map[frequency] ?? frequency;
+}
+
+export function formatEventType(eventType: string): string {
+  const map: Record<string, string> = {
+    payment: "Pago de cuota",
+    principal_prepayment: "Prepago de principal",
+    principal_adjustment: "Ajuste de principal",
+    refinance: "Refinanciación",
+    payoff: "Cancelación total",
+    reversal: "Reversión",
+  };
+  return map[eventType] ?? eventType;
+}
+
+export function getInstallmentProgress(
+  installment: DebtInstallment,
+  allocations: DebtEventInstallmentAllocation[],
+  events: DebtEvent[]
+) {
+  const allocated = allocatedAmountForInstallment(installment.id, allocations, events);
+  const expected = installment.expectedAmount ?? 0;
+  const isPaid = expected > 0 ? allocated >= expected : allocated > 0;
+  return {
+    allocated,
+    expected,
+    isPaid,
+    progressPercent: expected > 0 ? Math.min(100, Math.round((allocated / expected) * 100)) : allocated > 0 ? 100 : 0,
+  };
+}
