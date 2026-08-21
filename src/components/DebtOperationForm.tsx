@@ -102,7 +102,8 @@ export function DebtOperationForm({
     numInterest,
     numFees,
     numInsurance,
-    numOtherCost
+    numOtherCost,
+    operationType === "payoff" ? currentPrincipal : undefined
   );
 
   const isAccountMissing = operationType !== "reversal" && !accountId;
@@ -481,7 +482,7 @@ export function DebtOperationForm({
         </div>
 
         {operationType !== "reversal" && (
-          <div className="rounded-2xl bg-blue-50/80 p-4 border border-blue-100 grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+          <div className="rounded-2xl bg-blue-50/80 p-4 border border-blue-100 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 text-center">
             <div>
               <p className="text-xs font-bold uppercase text-blue-600">Salida de dinero</p>
               <p className="text-lg font-black text-blue-900">S/ {summary.cashOutflow.toFixed(2)}</p>
@@ -491,9 +492,19 @@ export function DebtOperationForm({
               <p className="text-lg font-black text-emerald-900">S/ {summary.principalReduction.toFixed(2)}</p>
             </div>
             <div>
-              <p className="text-xs font-bold uppercase text-purple-600">Costo financiero / adicional</p>
-              <p className="text-lg font-black text-purple-900">S/ {summary.knownCosts.toFixed(2)}</p>
+              <p className="text-xs font-bold uppercase text-purple-600">Costo financiero</p>
+              <p className="text-lg font-black text-purple-900">S/ {summary.economicExpense.toFixed(2)}</p>
             </div>
+            <div>
+              <p className="text-xs font-bold uppercase text-indigo-600">Costo clasificado</p>
+              <p className="text-lg font-black text-indigo-900">S/ {summary.knownCosts.toFixed(2)}</p>
+            </div>
+            {summary.unclassifiedDebtCost > 0.01 && (
+              <div>
+                <p className="text-xs font-bold uppercase text-amber-600">Costo sin clasificar</p>
+                <p className="text-lg font-black text-amber-900">S/ {summary.unclassifiedDebtCost.toFixed(2)}</p>
+              </div>
+            )}
           </div>
         )}
 

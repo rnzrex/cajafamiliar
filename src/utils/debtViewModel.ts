@@ -117,14 +117,16 @@ export function debtEconomicSummary(
   interestPaid: number = 0,
   feesPaid: number = 0,
   insurancePaid: number = 0,
-  otherCostPaid: number = 0
+  otherCostPaid: number = 0,
+  currentPrincipal?: number
 ) {
+  const effectivePrincipal = currentPrincipal !== undefined ? currentPrincipal : principalAmount;
+  const economicExpense = cashAmount - effectivePrincipal;
   const knownCosts = interestPaid + feesPaid + insurancePaid + otherCostPaid;
-  const economicExpense = principalAmount + knownCosts;
-  const unclassifiedDebtCost = Math.max(0, cashAmount - economicExpense);
+  const unclassifiedDebtCost = economicExpense - knownCosts;
   return {
     cashOutflow: cashAmount,
-    principalReduction: principalAmount,
+    principalReduction: effectivePrincipal,
     knownCosts,
     economicExpense,
     unclassifiedDebtCost,
@@ -150,10 +152,16 @@ export function validateDebtPayment(input: {
   if (input.principalAmount > input.currentPrincipal + 0.01) {
     return { valid: false, error: translateDebtError(new Error("DEBT_PRINCIPAL_EXCEEDED")) };
   }
+  if (input.principalAmount > input.cashAmount + 0.01) {
+    return { valid: false, error: "El capital aplicado no puede superar la salida de dinero." };
+  }
+  const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
+  const economicExpense = input.cashAmount - input.principalAmount;
+  if (knownCosts > economicExpense + 0.01) {
+    return { valid: false, error: "Los costos conocidos no pueden superar el costo financiero total." };
+  }
   if (input.breakdownComplete) {
-    const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
-    const totalEconomic = input.principalAmount + knownCosts;
-    if (Math.abs(input.cashAmount - totalEconomic) > 0.01) {
+    if (Math.abs(economicExpense - knownCosts) > 0.01) {
       return { valid: false, error: translateDebtError(new Error("INVALID_DEBT_PAYMENT")) };
     }
   }
@@ -179,10 +187,16 @@ export function validateDebtPrepayment(input: {
   if (input.principalAmount >= input.currentPrincipal - 0.01) {
     return { valid: false, error: translateDebtError(new Error("DEBT_PREPAYMENT_WOULD_PAY_OFF")) };
   }
+  if (input.principalAmount > input.cashAmount + 0.01) {
+    return { valid: false, error: "El capital aplicado no puede superar la salida de dinero." };
+  }
+  const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
+  const economicExpense = input.cashAmount - input.principalAmount;
+  if (knownCosts > economicExpense + 0.01) {
+    return { valid: false, error: "Los costos conocidos no pueden superar el costo financiero total." };
+  }
   if (input.breakdownComplete) {
-    const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
-    const totalEconomic = input.principalAmount + knownCosts;
-    if (Math.abs(input.cashAmount - totalEconomic) > 0.01) {
+    if (Math.abs(economicExpense - knownCosts) > 0.01) {
       return { valid: false, error: translateDebtError(new Error("INVALID_DEBT_PREPAYMENT")) };
     }
   }
@@ -201,10 +215,22 @@ export function validateDebtPayoff(input: {
   if (input.cashAmount <= 0) {
     return { valid: false, error: "El monto de efectivo debe ser mayor a cero." };
   }
+  if (input.cashAmount < input.currentPrincipal - 0.01) {
+    return { valid: false, error: translateDebtError(new Error("INVALID_DEBT_PAYOFF")) };
+  }
   const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
+  const economicExpense = input.cashAmount - input.currentPrincipal;
+  if (knownCosts > economicExpense + 0.01) {
+    return { valid: false, error: "Los costos conocidos no pueden superar el costo financiero total." };
+  }
   const minRequired = input.currentPrincipal + knownCosts;
   if (input.cashAmount < minRequired - 0.01) {
     return { valid: false, error: translateDebtError(new Error("INVALID_DEBT_PAYOFF")) };
+  }
+  if (input.breakdownComplete) {
+    if (Math.abs(economicExpense - knownCosts) > 0.01) {
+      return { valid: false, error: translateDebtError(new Error("INVALID_DEBT_PAYOFF")) };
+    }
   }
   return { valid: true };
 }

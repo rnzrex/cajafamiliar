@@ -27,16 +27,23 @@ describe("debtViewModel utilities and pure helpers", () => {
     expect(formatEventType("payment")).toBe("Pago de cuota");
   });
 
-  it("computes economic summary correctly for payment 1000/780 => 220", () => {
-    const summary = debtEconomicSummary(1000, 780, 220, 0, 0, 0);
-    expect(summary.cashOutflow).toBe(1000);
-    expect(summary.principalReduction).toBe(780);
-    expect(summary.knownCosts).toBe(220);
-    expect(summary.economicExpense).toBe(1000);
-    expect(summary.unclassifiedDebtCost).toBe(0);
+  it("computes economic summary correctly for payment 1000/780/220 and 1000/780/190", () => {
+    const summary1 = debtEconomicSummary(1000, 780, 220, 0, 0, 0);
+    expect(summary1.cashOutflow).toBe(1000);
+    expect(summary1.principalReduction).toBe(780);
+    expect(summary1.economicExpense).toBe(220);
+    expect(summary1.knownCosts).toBe(220);
+    expect(summary1.unclassifiedDebtCost).toBe(0);
+
+    const summary2 = debtEconomicSummary(1000, 780, 190, 0, 0, 0);
+    expect(summary2.cashOutflow).toBe(1000);
+    expect(summary2.principalReduction).toBe(780);
+    expect(summary2.economicExpense).toBe(220);
+    expect(summary2.knownCosts).toBe(190);
+    expect(summary2.unclassifiedDebtCost).toBe(30);
   });
 
-  it("validates debt payment correctly (valid, negative principal, exceeding principal, breakdown mismatch)", () => {
+  it("validates debt payment correctly (valid, negative principal, exceeding principal, principal > cash, knownCosts > economicExpense, complete breakdown mismatch, incomplete residual)", () => {
     const validRes = validateDebtPayment({
       cashAmount: 500,
       principalAmount: 400,
@@ -62,14 +69,40 @@ describe("debtViewModel utilities and pure helpers", () => {
     });
     expect(exceedPrincipal.valid).toBe(false);
 
-    const breakdownMismatch = validateDebtPayment({
+    const principalGreaterThanCash = validateDebtPayment({
       cashAmount: 500,
-      principalAmount: 400,
+      principalAmount: 600,
+      currentPrincipal: 1000,
+      breakdownComplete: false,
+    });
+    expect(principalGreaterThanCash.valid).toBe(false);
+
+    const knownCostsExceedEconomic = validateDebtPayment({
+      cashAmount: 1000,
+      principalAmount: 800,
+      currentPrincipal: 1000,
+      breakdownComplete: false,
+      interestPaid: 250,
+    });
+    expect(knownCostsExceedEconomic.valid).toBe(false);
+
+    const breakdownMismatch = validateDebtPayment({
+      cashAmount: 1000,
+      principalAmount: 780,
       currentPrincipal: 1000,
       breakdownComplete: true,
-      interestPaid: 50,
+      interestPaid: 200,
     });
     expect(breakdownMismatch.valid).toBe(false);
+
+    const incompleteResidualValid = validateDebtPayment({
+      cashAmount: 1000,
+      principalAmount: 780,
+      currentPrincipal: 1000,
+      breakdownComplete: false,
+      interestPaid: 190,
+    });
+    expect(incompleteResidualValid.valid).toBe(true);
   });
 
   it("validates debt prepayment correctly (valid, non-positive, prepayment paying off principal)", () => {
