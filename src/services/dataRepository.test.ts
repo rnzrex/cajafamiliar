@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { toCashCountRow, toFinancialAccountRow, toMovementRow } from "./dataRepository";
+import { describe, expect, it, vi } from "vitest";
+import { DebtOperationUnavailableError, recordDebtPayment, toCashCountRow, toDebtPayoffRpcArgs, toDebtPaymentRpcArgs, toDebtPrepaymentRpcArgs, toDebtReversalRpcArgs, toFinancialAccountRow, toMovementRow } from "./dataRepository";
+
+vi.mock("./supabaseClient", () => ({
+  householdId: "00000000-0000-4000-8000-000000000001",
+  isSupabaseConfigured: false,
+  supabase: null,
+}));
 
 describe("serializers de dataRepository", () => {
   describe("toMovementRow", () => {
@@ -96,6 +102,52 @@ describe("serializers de dataRepository", () => {
         updatedAt: "2026-08-01T00:00:00.000Z",
       });
       expect(row.reconciliation_type).toBe("balance");
+    });
+  });
+
+  describe("Debt RPC payloads", () => {
+    const payment = {
+      debtId: "debt-1",
+      eventId: "event-1",
+      movementId: "movement-1",
+      eventDate: "2026-08-20",
+      cashAmount: 100,
+      accountId: "account-1",
+      description: "Pago",
+      category: "Prestamos",
+      principalAmount: 80,
+      interestPaid: 20,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      allocations: [{ installmentId: "installment-1", allocatedAmount: 100 }],
+    };
+
+    it("mapea payment con nombres RPC y allocations snake_case", () => {
+      expect(toDebtPaymentRpcArgs(payment)).toMatchObject({
+        p_debt_id: "debt-1",
+        p_event_id: "event-1",
+        p_principal_amount: 80,
+        p_allocations: [{ installment_id: "installment-1", allocated_amount: 100 }],
+      });
+    });
+
+    it("mapea prepayment, payoff y reversal sin agregar campos del contrato equivocado", () => {
+      const schedule = [{ installmentNumber: 1, dueDate: "2026-09-20", expectedAmount: 100 }];
+      const prepayment = toDebtPrepaymentRpcArgs({ ...payment, scheduleInstallments: schedule, scheduleNotes: null });
+      const payoff = toDebtPayoffRpcArgs(payment);
+      const reversal = toDebtReversalRpcArgs({ debtId: "debt-1", reversalEventId: "reversal-1", targetEventId: "event-1", eventDate: "2026-08-21", description: "Correction", scheduleInstallments: schedule });
+
+      expect(prepayment).toMatchObject({ p_schedule_installments: [{ installment_number: 1, due_date: "2026-09-20", expected_amount: 100 }] });
+      expect(prepayment).not.toHaveProperty("p_allocations");
+      expect(payoff).toMatchObject({ p_event_id: "event-1", p_cash_amount: 100 });
+      expect(payoff).not.toHaveProperty("p_principal_amount");
+      expect(reversal).toMatchObject({ p_reversal_event_id: "reversal-1", p_target_event_id: "event-1" });
+    });
+
+    it("no cae a local cuando Supabase no está configurado", async () => {
+      await expect(recordDebtPayment(payment)).rejects.toBeInstanceOf(DebtOperationUnavailableError);
     });
   });
 });
