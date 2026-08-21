@@ -1,6 +1,7 @@
 import type { CashCount, DebtEvent, Movement, RecurringPayment } from "../types.js";
 import { formatLocalDate, localDateString, localMonthString, parseLocalDate } from "./date.js";
 import { getMovementEconomics } from "./movementEconomics.js";
+import { dueDateStatus as genericDueDateStatus } from "./dueDates.js";
 
 export type PaymentStatusKind = "overdue" | "today" | "tomorrow" | "upcoming" | "later" | "paid" | "completed" | "inactive";
 
@@ -143,17 +144,22 @@ export function paymentScheduleLabel(payment: RecurringPayment) {
   return payment.recurrence_type === "fixed" ? `${installmentLabel(payment)} · ${monthlySchedule}` : monthlySchedule;
 }
 
-function dueDateStatus(dueDate: string | null, today: Date): PaymentStatus {
-  if (!dueDate || !parseLocalDate(dueDate)) return { kind: "later", label: "Fecha por confirmar", tone: "blue", days: 999 };
-  const due = parseLocalDate(dueDate);
-  if (!due) return { kind: "later", label: "Fecha por confirmar", tone: "blue", days: 999 };
-  const diff = Math.round((due.getTime() - today.getTime()) / 86400000);
 
-  if (diff < 0) return { kind: "overdue", label: `Vencido hace ${Math.abs(diff)} ${Math.abs(diff) === 1 ? "día" : "días"}`, tone: "red", days: diff, dueDate };
-  if (diff === 0) return { kind: "today", label: "Vence hoy", tone: "orange", days: diff, dueDate };
-  if (diff === 1) return { kind: "tomorrow", label: "Vence mañana", tone: "yellow", days: diff, dueDate };
-  if (diff <= 7) return { kind: "upcoming", label: `Vence en ${diff} días`, tone: "blue", days: diff, dueDate };
-  return { kind: "later", label: `Vence en ${diff} días`, tone: "blue", days: diff, dueDate };
+/**
+ * Adapter: converts the generic dueDateStatus (todayKey-based) to the
+ * legacy internal signature (Date-based) used by paymentStatus().
+ * PaymentStatus is a superset of DueDateStatus (adds "green"/"slate" tones),
+ * so we widen the return type here.
+ */
+function dueDateStatus(dueDate: string | null, today: Date): PaymentStatus {
+  // Convert the Date back to a todayKey so the generic helper can use it.
+  // We already have the Date; format it to YYYY-MM-DD without re-reading wall clock.
+  const y = today.getUTCFullYear();
+  const m = String(today.getUTCMonth() + 1).padStart(2, "0");
+  const d = String(today.getUTCDate()).padStart(2, "0");
+  const todayKey = `${y}-${m}-${d}`;
+  const result = genericDueDateStatus(dueDate, todayKey);
+  return result as PaymentStatus;
 }
 
 function monthlyDueDate(dueDay: number | null, todayKey: string) {
