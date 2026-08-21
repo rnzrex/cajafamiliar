@@ -150,17 +150,32 @@ export function DebtOperationForm({
         return;
       }
       const formattedAlloc = allocations
-        .filter((a) => Number(a.allocatedAmount || 0) > 0)
+        .filter((a) => {
+          const n = Number(a.allocatedAmount);
+          return Number.isFinite(n) && n > 0 && a.installmentId;
+        })
         .map((a) => ({
           installmentId: a.installmentId,
           allocatedAmount: Number(a.allocatedAmount),
         }));
-      const allocVal = validateDebtAllocations(formattedAlloc, currentScheduleInstallments, numCash, persistedAllocations, debtEvents);
+      const uniqueAllocMap = new Map<string, number>();
+      for (const fa of formattedAlloc) {
+        uniqueAllocMap.set(fa.installmentId, (uniqueAllocMap.get(fa.installmentId) || 0) + fa.allocatedAmount);
+      }
+      const dedupedAlloc = Array.from(uniqueAllocMap.entries()).map(([installmentId, allocatedAmount]) => ({
+        installmentId,
+        allocatedAmount,
+      }));
+      const allocVal = validateDebtAllocations(dedupedAlloc, currentScheduleInstallments, numCash, persistedAllocations, debtEvents);
       if (!allocVal.valid) {
         setToast({ message: allocVal.error || "Asignaciones de cuotas inválidas", type: "error" });
         return;
       }
     } else if (operationType === "prepayment") {
+      if (hasNewPrepaymentSchedule && scheduleInstallments.length === 0) {
+        setToast({ message: "Debe ingresar al menos una cuota en el nuevo cronograma.", type: "error" });
+        return;
+      }
       const val = validateDebtPrepayment({
         cashAmount: numCash,
         principalAmount: numPrincipal,
@@ -187,6 +202,11 @@ export function DebtOperationForm({
       });
       if (!val.valid) {
         setToast({ message: val.error || "Datos de liquidación inválidos", type: "error" });
+        return;
+      }
+    } else if (operationType === "reversal") {
+      if (targetGeneratedSchedule && scheduleInstallments.length === 0) {
+        setToast({ message: "Debe ingresar al menos una cuota en el cronograma restaurado.", type: "error" });
         return;
       }
     }
@@ -469,12 +489,12 @@ export function DebtOperationForm({
                 <input
                   type="checkbox"
                   id="breakdownComplete"
-                  checked={breakdownComplete}
-                  onChange={(e) => setBreakdownComplete(e.target.checked)}
+                  checked={!breakdownComplete}
+                  onChange={(e) => setBreakdownComplete(!e.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                 />
                 <label htmlFor="breakdownComplete" className="text-sm font-semibold text-slate-700">
-                  Desglose completo y detallado verificado
+                  No sé cómo se compone una parte del costo
                 </label>
               </div>
             </>
@@ -514,29 +534,38 @@ export function DebtOperationForm({
             <p className="text-xs text-slate-500 mb-3">Versión #{currentSchedule?.versionNumber}</p>
             <div className="space-y-3">
               {currentScheduleInstallments.map((inst) => {
-                const allocated = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
-                const remaining = (inst.expectedAmount ?? 0) - allocated;
+                const allocatedBefore = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
+                const remaining = inst.expectedAmount == null || !Number.isFinite(inst.expectedAmount) ? null : Math.max(0, inst.expectedAmount - allocatedBefore);
+                const isPaid = remaining !== null && remaining <= 0;
+                const currentDraftAllocation = allocations.find((a) => a.installmentId === inst.id)?.allocatedAmount ?? "";
                 return (
                   <div key={inst.id} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl">
                     <div>
                       <p className="text-sm font-bold text-slate-800">Cuota #{inst.installmentNumber} (Vence: {inst.dueDate})</p>
-                      <p className="text-xs text-slate-500">Esperado: S/ {inst.expectedAmount ?? 0} | Restante: S/ {remaining.toFixed(2)}</p>
+                      <p className="text-xs text-slate-500">
+                        Aplicado: S/ {allocatedBefore.toFixed(2)} {remaining !== null ? `| Esperado: S/ ${inst.expectedAmount!.toFixed(2)} | Restante: S/ ${remaining.toFixed(2)}` : "| Monto esperado no especificado"}
+                      </p>
                     </div>
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="Monto asignado"
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        const existing = allocations.find((a) => a.installmentId === inst.id);
-                        if (existing) {
-                          setAllocations(allocations.map((a) => (a.installmentId === inst.id ? { ...a, allocatedAmount: val } : a)));
-                        } else if (val) {
-                          setAllocations([...allocations, { installmentId: inst.id, allocatedAmount: val }]);
-                        }
-                      }}
-                      className="w-36 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
-                    />
+                    {isPaid ? (
+                      <span className="rounded-lg bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-800">Pagada</span>
+                    ) : (
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="Monto asignado"
+                        value={currentDraftAllocation}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const existing = allocations.find((a) => a.installmentId === inst.id);
+                          if (existing) {
+                            setAllocations(allocations.map((a) => (a.installmentId === inst.id ? { ...a, allocatedAmount: val } : a)));
+                          } else if (val) {
+                            setAllocations([...allocations, { installmentId: inst.id, allocatedAmount: val }]);
+                          }
+                        }}
+                        className="w-36 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                      />
+                    )}
                   </div>
                 );
               })}

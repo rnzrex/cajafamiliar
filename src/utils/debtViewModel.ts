@@ -143,6 +143,25 @@ export function validateDebtPayment(input: {
   insurancePaid?: number;
   otherCostPaid?: number;
 }): { valid: boolean; error?: string } {
+  const interest = input.interestPaid ?? 0;
+  const fees = input.feesPaid ?? 0;
+  const insurance = input.insurancePaid ?? 0;
+  const otherCost = input.otherCostPaid ?? 0;
+
+  if (
+    !Number.isFinite(input.cashAmount) ||
+    !Number.isFinite(input.principalAmount) ||
+    !Number.isFinite(input.currentPrincipal) ||
+    !Number.isFinite(interest) ||
+    !Number.isFinite(fees) ||
+    !Number.isFinite(insurance) ||
+    !Number.isFinite(otherCost)
+  ) {
+    return { valid: false, error: "Los montos ingresados deben ser números válidos." };
+  }
+  if (interest < 0 || fees < 0 || insurance < 0 || otherCost < 0) {
+    return { valid: false, error: "Los costos no pueden ser negativos." };
+  }
   if (input.cashAmount <= 0) {
     return { valid: false, error: "El monto de efectivo debe ser mayor a cero." };
   }
@@ -155,7 +174,7 @@ export function validateDebtPayment(input: {
   if (input.principalAmount > input.cashAmount + 0.01) {
     return { valid: false, error: "El capital aplicado no puede superar la salida de dinero." };
   }
-  const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
+  const knownCosts = interest + fees + insurance + otherCost;
   const economicExpense = input.cashAmount - input.principalAmount;
   if (knownCosts > economicExpense + 0.01) {
     return { valid: false, error: "Los costos conocidos no pueden superar el costo financiero total." };
@@ -178,6 +197,25 @@ export function validateDebtPrepayment(input: {
   insurancePaid?: number;
   otherCostPaid?: number;
 }): { valid: boolean; error?: string } {
+  const interest = input.interestPaid ?? 0;
+  const fees = input.feesPaid ?? 0;
+  const insurance = input.insurancePaid ?? 0;
+  const otherCost = input.otherCostPaid ?? 0;
+
+  if (
+    !Number.isFinite(input.cashAmount) ||
+    !Number.isFinite(input.principalAmount) ||
+    !Number.isFinite(input.currentPrincipal) ||
+    !Number.isFinite(interest) ||
+    !Number.isFinite(fees) ||
+    !Number.isFinite(insurance) ||
+    !Number.isFinite(otherCost)
+  ) {
+    return { valid: false, error: "Los montos ingresados deben ser números válidos." };
+  }
+  if (interest < 0 || fees < 0 || insurance < 0 || otherCost < 0) {
+    return { valid: false, error: "Los costos no pueden ser negativos." };
+  }
   if (input.cashAmount <= 0) {
     return { valid: false, error: "El monto de efectivo debe ser mayor a cero." };
   }
@@ -190,7 +228,7 @@ export function validateDebtPrepayment(input: {
   if (input.principalAmount > input.cashAmount + 0.01) {
     return { valid: false, error: "El capital aplicado no puede superar la salida de dinero." };
   }
-  const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
+  const knownCosts = interest + fees + insurance + otherCost;
   const economicExpense = input.cashAmount - input.principalAmount;
   if (knownCosts > economicExpense + 0.01) {
     return { valid: false, error: "Los costos conocidos no pueden superar el costo financiero total." };
@@ -212,13 +250,31 @@ export function validateDebtPayoff(input: {
   insurancePaid?: number;
   otherCostPaid?: number;
 }): { valid: boolean; error?: string } {
+  const interest = input.interestPaid ?? 0;
+  const fees = input.feesPaid ?? 0;
+  const insurance = input.insurancePaid ?? 0;
+  const otherCost = input.otherCostPaid ?? 0;
+
+  if (
+    !Number.isFinite(input.cashAmount) ||
+    !Number.isFinite(input.currentPrincipal) ||
+    !Number.isFinite(interest) ||
+    !Number.isFinite(fees) ||
+    !Number.isFinite(insurance) ||
+    !Number.isFinite(otherCost)
+  ) {
+    return { valid: false, error: "Los montos ingresados deben ser números válidos." };
+  }
+  if (interest < 0 || fees < 0 || insurance < 0 || otherCost < 0) {
+    return { valid: false, error: "Los costos no pueden ser negativos." };
+  }
   if (input.cashAmount <= 0) {
     return { valid: false, error: "El monto de efectivo debe ser mayor a cero." };
   }
   if (input.cashAmount < input.currentPrincipal - 0.01) {
     return { valid: false, error: translateDebtError(new Error("INVALID_DEBT_PAYOFF")) };
   }
-  const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
+  const knownCosts = interest + fees + insurance + otherCost;
   const economicExpense = input.cashAmount - input.currentPrincipal;
   if (knownCosts > economicExpense + 0.01) {
     return { valid: false, error: "Los costos conocidos no pueden superar el costo financiero total." };
@@ -242,19 +298,42 @@ export function validateDebtAllocations(
   persistedAllocations: DebtEventInstallmentAllocation[] = [],
   debtEvents: DebtEvent[] = []
 ): { valid: boolean; error?: string } {
-  const totalAllocated = allocations.reduce((sum, a) => sum + (a.allocatedAmount || 0), 0);
+  if (!Number.isFinite(cashAmount) || cashAmount <= 0) {
+    return { valid: false, error: "El monto de efectivo debe ser un número válido mayor a cero." };
+  }
+  const seenIds = new Set<string>();
+  const totalAllocated = allocations.reduce((sum, a) => {
+    if (!Number.isFinite(a.allocatedAmount) || a.allocatedAmount <= 0) {
+      return sum;
+    }
+    return sum + a.allocatedAmount;
+  }, 0);
+
   if (totalAllocated > cashAmount + 0.01) {
     return { valid: false, error: "El total asignado a cuotas supera la salida de efectivo." };
   }
+
   for (const alloc of allocations) {
+    if (!Number.isFinite(alloc.allocatedAmount) || alloc.allocatedAmount <= 0) {
+      return { valid: false, error: "El monto asignado a la cuota debe ser mayor a cero y finito." };
+    }
+    if (seenIds.has(alloc.installmentId)) {
+      return { valid: false, error: "No se permiten cuotas duplicadas en la asignación." };
+    }
+    seenIds.add(alloc.installmentId);
+
     const inst = installments.find((i) => i.id === alloc.installmentId);
     if (!inst) {
       return { valid: false, error: "Una de las cuotas asignadas no existe en el cronograma." };
     }
+
     const alreadyAllocated = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
-    const remaining = (inst.expectedAmount ?? 0) - alreadyAllocated;
-    if (alloc.allocatedAmount > remaining + 0.01) {
-      return { valid: false, error: `El monto asignado a la cuota #${inst.installmentNumber} supera el saldo restante (S/ ${remaining.toFixed(2)}).` };
+    const expectedAmount = inst.expectedAmount;
+    if (expectedAmount != null && Number.isFinite(expectedAmount)) {
+      const remaining = Math.max(0, expectedAmount - alreadyAllocated);
+      if (alloc.allocatedAmount > remaining + 0.01) {
+        return { valid: false, error: `El monto asignado a la cuota #${inst.installmentNumber} supera el saldo restante (S/ ${remaining.toFixed(2)}).` };
+      }
     }
   }
   return { valid: true };
