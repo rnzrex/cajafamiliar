@@ -6,13 +6,16 @@ import {
   ChevronRight,
   Coins,
   CreditCard,
+  Landmark,
   PiggyBank,
   Scale,
 } from "lucide-react";
 import { CashCount, DebtEvent, FinancialAccount, Movement, RecurringPayment } from "../types";
+import type { DebtInstallmentPlanningItem } from "../utils/debtPlanning";
 import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAmountLabel, paymentScheduleLabel, paymentStatus, topExpenseCategory } from "../utils/calculations";
 import { accountNameForMovement, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
 import { movementLabel } from "../utils/movementEconomics";
+import { formatLocalDate } from "../utils/date";
 
 interface DashboardProps {
   movements: Movement[];
@@ -20,13 +23,27 @@ interface DashboardProps {
   pendingMovementIds: ReadonlySet<string>;
   cashCounts: CashCount[];
   recurringPayments: RecurringPayment[];
+  debtPlanningItems?: DebtInstallmentPlanningItem[];
   initialBalance: number;
   accounts: FinancialAccount[];
   onNavigate: (view: string) => void;
   onOpenPayment: (id: string) => void;
+  onOpenDebt?: (debtId: string) => void;
 }
 
-export function Dashboard({ movements, debtEvents, pendingMovementIds, cashCounts, recurringPayments, initialBalance, accounts, onNavigate, onOpenPayment }: DashboardProps) {
+export function Dashboard({
+  movements,
+  debtEvents,
+  pendingMovementIds,
+  cashCounts,
+  recurringPayments,
+  debtPlanningItems = [],
+  initialBalance,
+  accounts,
+  onNavigate,
+  onOpenPayment,
+  onOpenDebt,
+}: DashboardProps) {
   const cashAccount = getActiveCashAccount(accounts);
   const expected = expectedCash(movements, cashAccount ? cashAccount.openingBalance : initialBalance, cashAccount?.id ?? null);
   const lastCount = lastCashCount(cashCounts);
@@ -42,6 +59,11 @@ export function Dashboard({ movements, debtEvents, pendingMovementIds, cashCount
     .filter(({ payment, status }) => payment.is_active && ["overdue", "today", "tomorrow", "upcoming"].includes(status.kind))
     .sort((a, b) => a.status.days - b.status.days);
   const relevantPayments = attentionPayments.slice(0, 3);
+
+  const attentionDebtItems = debtPlanningItems
+    .filter((item) => ["overdue", "today", "tomorrow", "upcoming"].includes(item.dueStatus))
+    .sort((a, b) => a.daysUntilDue - b.daysUntilDue);
+  const relevantDebtItems = attentionDebtItems.slice(0, 3);
 
   const secondaryStats = [
     { label: "Ingresos del mes", value: formatMoney(totals.income), icon: ArrowUpCircle, tone: "text-emerald-700 bg-emerald-50" },
@@ -116,26 +138,54 @@ export function Dashboard({ movements, debtEvents, pendingMovementIds, cashCount
         )}
       </section>
 
-      {relevantPayments.length > 0 && (
-        <section className="rounded-3xl border border-orange-100 bg-orange-50 p-5 sm:p-6">
-          <div className="mb-4 flex items-center gap-3">
-            <CalendarClock className="h-7 w-7 text-orange-700" />
+      {(relevantPayments.length > 0 || relevantDebtItems.length > 0) && (
+        <section className="rounded-3xl border border-orange-100 bg-orange-50 p-5 sm:p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <CalendarClock className="h-7 w-7 text-orange-700 shrink-0" />
             <div>
               <p className="text-sm font-bold uppercase tracking-wide text-orange-700">Atención</p>
-              <h2 className="text-2xl font-bold text-orange-950">Pagos que requieren atención</h2>
+              <h2 className="text-2xl font-bold text-orange-950">Obligaciones que requieren atención</h2>
             </div>
           </div>
+
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {relevantPayments.map(({ payment, status }) => (
-              <article key={payment.id} className="rounded-2xl border border-orange-200 bg-white p-4">
+              <article key={payment.id} className="rounded-2xl border border-orange-200 bg-white p-4 shadow-sm">
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                   <div>
-                    <span className="inline-flex rounded-full bg-orange-100 px-3 py-1 text-sm font-bold text-orange-900">{status.label}</span>
-                    <h3 className="mt-3 text-xl font-bold text-slate-900">{payment.name}</h3>
-                    <p className="mt-1 text-sm font-semibold text-slate-600">{paymentAmountLabel(payment)} · {paymentScheduleLabel(payment)}</p>
+                    <span className="inline-flex rounded-full bg-orange-100 px-3 py-1 text-xs font-bold text-orange-900">{status.label}</span>
+                    <h3 className="mt-2 text-lg font-bold text-slate-900">{payment.name}</h3>
+                    <p className="mt-1 text-xs font-semibold text-slate-600">{paymentAmountLabel(payment)} · {paymentScheduleLabel(payment)}</p>
                   </div>
-                  <button type="button" onClick={() => onOpenPayment(payment.id)} className="min-h-12 rounded-xl bg-orange-600 px-4 py-2 text-base font-bold text-white hover:bg-orange-700">
+                  <button type="button" onClick={() => onOpenPayment(payment.id)} className="min-h-11 rounded-xl bg-orange-600 px-4 py-2 text-sm font-bold text-white hover:bg-orange-700 transition shrink-0">
                     Ver pago
+                  </button>
+                </div>
+              </article>
+            ))}
+
+            {relevantDebtItems.map((item) => (
+              <article key={item.installmentId} className="rounded-2xl border border-purple-200 bg-white p-4 shadow-sm">
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                  <div>
+                    <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-900">
+                      <Landmark className="h-3 w-3" /> {item.dueLabel}
+                    </span>
+                    <h3 className="mt-2 text-lg font-bold text-slate-900">{item.debtName} (Cuota #{item.installmentNumber})</h3>
+                    <p className="mt-1 text-xs font-semibold text-slate-600">
+                      {item.amountKnown ? (
+                        <>Pendiente: <span className="font-bold text-slate-900">{item.currencyCode} {item.remainingAmount?.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span> · Vence: {formatLocalDate(item.dueDate)}</>
+                      ) : (
+                        <>Monto por confirmar · Vence: {formatLocalDate(item.dueDate)}</>
+                      )}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => (onOpenDebt ? onOpenDebt(item.debtId) : onNavigate("deudas"))}
+                    className="min-h-11 rounded-xl bg-purple-700 px-4 py-2 text-sm font-bold text-white hover:bg-purple-800 transition shrink-0"
+                  >
+                    Ver deuda
                   </button>
                 </div>
               </article>
