@@ -1,19 +1,23 @@
 import { useState } from "react";
-import { ArrowLeft } from "lucide-react";
-import type { Debt, FinancialAccount, Category, DebtInstallment } from "../types";
+import { ArrowLeft, AlertCircle } from "lucide-react";
+import type { Debt, FinancialAccount, Category, DebtInstallment, DebtScheduleVersion, DebtEvent } from "../types";
 import { recordDebtPayment, recordDebtPrepayment, recordDebtPayoff, reverseDebtEvent } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError } from "../utils/debtViewModel";
+import { currentDebtScheduleVersion, allocatedAmountForInstallment } from "../utils/debtCalculations";
 
 interface DebtOperationFormProps {
   debt: Debt;
   operationType: "payment" | "prepayment" | "payoff" | "reversal";
   targetEventId?: string;
   installments: DebtInstallment[];
+  scheduleVersions: DebtScheduleVersion[];
+  debtEvents: DebtEvent[];
   accounts: FinancialAccount[];
   categories: Category[];
   currentPrincipal: number;
+  canWriteDebt?: boolean;
   onSaved: () => void;
   onCancel: () => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
@@ -24,9 +28,12 @@ export function DebtOperationForm({
   operationType,
   targetEventId,
   installments,
+  scheduleVersions,
+  debtEvents,
   accounts,
   categories,
   currentPrincipal,
+  canWriteDebt = true,
   onSaved,
   onCancel,
   setToast,
@@ -37,17 +44,23 @@ export function DebtOperationForm({
 
   const [eventDate, setEventDate] = useState(localDateString(new Date()));
   const [cashAmount, setCashAmount] = useState(operationType === "payoff" ? currentPrincipal.toString() : "");
-  const [accountId, setAccountId] = useState(accounts[0]?.id ?? "");
+
+  const activeAccounts = accounts.filter((acc) => acc.isActive !== false);
+  const [accountId, setAccountId] = useState(activeAccounts[0]?.id ?? "");
+
   const [description, setDescription] = useState(
     operationType === "payment"
       ? `Pago de cuota — ${debt.name}`
       : operationType === "prepayment"
         ? `Prepago de principal — ${debt.name}`
         : operationType === "payoff"
-          ? `Cancelación total — ${debt.name}`
-          : `Reversión de operación — ${debt.name}`
+          ? `Liquidación total — ${debt.name}`
+          : `Reversión de registro — ${debt.name}`
   );
-  const [category, setCategory] = useState(categories.find((c) => c.name.toLowerCase().includes("préstamo"))?.name ?? categories[0]?.name ?? "Préstamos");
+
+  const activeCategories = categories.filter((c) => c.is_active && (c.type === "egreso" || c.type === "ambos"));
+  const defaultCategory = activeCategories.find((c) => c.name.toLowerCase() === "préstamos")?.name ?? activeCategories[0]?.name ?? "Préstamos";
+  const [category, setCategory] = useState(defaultCategory);
 
   const [principalAmount, setPrincipalAmount] = useState(operationType === "payoff" ? currentPrincipal.toString() : "");
   const [interestPaid, setInterestPaid] = useState("0");
@@ -56,10 +69,14 @@ export function DebtOperationForm({
   const [otherCostPaid, setOtherCostPaid] = useState("0");
   const [breakdownComplete, setBreakdownComplete] = useState(true);
 
-  // Allocations against installments
+  const currentSchedule = currentDebtScheduleVersion(debt.id, scheduleVersions);
+  const currentScheduleInstallments = installments.filter((i) => currentSchedule && i.scheduleVersionId === currentSchedule.id);
   const [allocations, setAllocations] = useState<Array<{ installmentId: string; allocatedAmount: string }>>([]);
 
-  // Schedule installments for prepayment or reversal
+  const [hasNewPrepaymentSchedule, setHasNewPrepaymentSchedule] = useState(false);
+
+  const targetGeneratedSchedule = Boolean(targetEventId && scheduleVersions.some((v) => v.triggerEventId === targetEventId));
+
   const [scheduleInstallments, setScheduleInstallments] = useState<Array<{
     installmentNumber: number;
     dueDate: string;
@@ -71,15 +88,34 @@ export function DebtOperationForm({
 
   const [submitting, setSubmitting] = useState(false);
 
+  const numCash = Number(cashAmount || 0);
+  const numPrincipal = Number(principalAmount || 0);
+  const numInterest = Number(interestPaid || 0);
+  const numFees = Number(feesPaid || 0);
+  const numInsurance = Number(insurancePaid || 0);
+  const numOtherCost = Number(otherCostPaid || 0);
+  const additionalCost = numInterest + numFees + numInsurance + numOtherCost;
+
+  const isAccountMissing = operationType !== "reversal" && !accountId;
+  const hasNoActiveAccounts = operationType !== "reversal" && activeAccounts.length === 0;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      setToast({ message: "Las operaciones de deuda requieren conexión a internet.", type: "error" });
+    if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
+      setToast({ message: "Las operaciones de deuda requieren conexión a internet y estado en línea.", type: "error" });
+      return;
+    }
+    if (hasNoActiveAccounts) {
+      setToast({ message: "No hay cuentas financieras activas disponibles para registrar la operación.", type: "error" });
+      return;
+    }
+    if (isAccountMissing) {
+      setToast({ message: "Seleccione una cuenta financiera válida.", type: "error" });
       return;
     }
 
-    if (!accountId) {
-      setToast({ message: "Seleccione una cuenta financiera para registrar el movimiento.", type: "error" });
+    if (operationType === "prepayment" && numPrincipal >= currentPrincipal) {
+      setToast({ message: "El prepago cubre o supera el principal actual; utilice la opción de Liquidar deuda.", type: "error" });
       return;
     }
 
@@ -91,15 +127,15 @@ export function DebtOperationForm({
           eventId,
           movementId,
           eventDate,
-          cashAmount: Number(cashAmount || 0),
+          cashAmount: numCash,
           accountId,
           description: description.trim(),
           category,
-          principalAmount: Number(principalAmount || 0),
-          interestPaid: Number(interestPaid || 0),
-          feesPaid: Number(feesPaid || 0),
-          insurancePaid: Number(insurancePaid || 0),
-          otherCostPaid: Number(otherCostPaid || 0),
+          principalAmount: numPrincipal,
+          interestPaid: numInterest,
+          feesPaid: numFees,
+          insurancePaid: numInsurance,
+          otherCostPaid: numOtherCost,
           breakdownComplete,
           allocations: allocations.map((a) => ({
             installmentId: a.installmentId,
@@ -112,23 +148,25 @@ export function DebtOperationForm({
           eventId,
           movementId,
           eventDate,
-          cashAmount: Number(cashAmount || 0),
+          cashAmount: numCash,
           accountId,
           description: description.trim(),
           category,
-          principalAmount: Number(principalAmount || 0),
-          interestPaid: Number(interestPaid || 0),
-          feesPaid: Number(feesPaid || 0),
-          insurancePaid: Number(insurancePaid || 0),
-          otherCostPaid: Number(otherCostPaid || 0),
+          principalAmount: numPrincipal,
+          interestPaid: numInterest,
+          feesPaid: numFees,
+          insurancePaid: numInsurance,
+          otherCostPaid: numOtherCost,
           breakdownComplete,
-          scheduleInstallments: scheduleInstallments.map((s, idx) => ({
-            installmentNumber: idx + 1,
-            dueDate: s.dueDate,
-            expectedAmount: s.expectedAmount ? Number(s.expectedAmount) : null,
-            expectedPrincipal: s.expectedPrincipal ? Number(s.expectedPrincipal) : null,
-            expectedInterest: s.expectedInterest ? Number(s.expectedInterest) : null,
-          })),
+          scheduleInstallments: hasNewPrepaymentSchedule
+            ? scheduleInstallments.map((s, idx) => ({
+                installmentNumber: idx + 1,
+                dueDate: s.dueDate,
+                expectedAmount: s.expectedAmount ? Number(s.expectedAmount) : null,
+                expectedPrincipal: s.expectedPrincipal ? Number(s.expectedPrincipal) : null,
+                expectedInterest: s.expectedInterest ? Number(s.expectedInterest) : null,
+              }))
+            : [],
           scheduleNotes: scheduleNotes || null,
         });
       } else if (operationType === "payoff") {
@@ -137,19 +175,20 @@ export function DebtOperationForm({
           eventId,
           movementId,
           eventDate,
-          cashAmount: Number(cashAmount || currentPrincipal),
+          cashAmount: numCash || currentPrincipal,
           accountId,
           description: description.trim(),
           category,
-          interestPaid: Number(interestPaid || 0),
-          feesPaid: Number(feesPaid || 0),
-          insurancePaid: Number(insurancePaid || 0),
-          otherCostPaid: Number(otherCostPaid || 0),
+          interestPaid: numInterest,
+          feesPaid: numFees,
+          insurancePaid: numInsurance,
+          otherCostPaid: numOtherCost,
           breakdownComplete,
         });
       } else if (operationType === "reversal") {
         if (!targetEventId) {
-          setToast({ message: "ID de evento objetivo no especificado para reversión.", type: "error" });
+          setToast({ message: "ID de registro objetivo no especificado para reversión.", type: "error" });
+          setSubmitting(false);
           return;
         }
         await reverseDebtEvent({
@@ -158,13 +197,15 @@ export function DebtOperationForm({
           targetEventId,
           eventDate,
           description: description.trim(),
-          scheduleInstallments: scheduleInstallments.map((s, idx) => ({
-            installmentNumber: idx + 1,
-            dueDate: s.dueDate,
-            expectedAmount: s.expectedAmount ? Number(s.expectedAmount) : null,
-            expectedPrincipal: s.expectedPrincipal ? Number(s.expectedPrincipal) : null,
-            expectedInterest: s.expectedInterest ? Number(s.expectedInterest) : null,
-          })),
+          scheduleInstallments: targetGeneratedSchedule
+            ? scheduleInstallments.map((s, idx) => ({
+                installmentNumber: idx + 1,
+                dueDate: s.dueDate,
+                expectedAmount: s.expectedAmount ? Number(s.expectedAmount) : null,
+                expectedPrincipal: s.expectedPrincipal ? Number(s.expectedPrincipal) : null,
+                expectedInterest: s.expectedInterest ? Number(s.expectedInterest) : null,
+              }))
+            : [],
           scheduleNotes: scheduleNotes || null,
         });
       }
@@ -181,8 +222,8 @@ export function DebtOperationForm({
   const titleMap = {
     payment: "Registrar pago de cuota",
     prepayment: "Registrar prepago de principal",
-    payoff: "Cancelar deuda (Payoff)",
-    reversal: "Revertir evento de deuda",
+    payoff: "Liquidar deuda",
+    reversal: "Revertir registro",
   };
 
   return (
@@ -199,6 +240,20 @@ export function DebtOperationForm({
         </div>
       </div>
 
+      {hasNoActiveAccounts && (
+        <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 flex items-center gap-3 text-red-800">
+          <AlertCircle className="h-6 w-6 shrink-0" />
+          <p className="text-sm font-bold">No hay cuentas financieras activas disponibles. Debe activar o crear una cuenta para registrar operaciones financieras.</p>
+        </div>
+      )}
+
+      {operationType === "reversal" && (
+        <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-center gap-3 text-amber-900">
+          <AlertCircle className="h-6 w-6 shrink-0 text-amber-700" />
+          <p className="text-sm font-bold">Advertencia: Revertir este registro anulará sus efectos en el saldo principal, asignaciones de cuotas e impacto en el flujo de caja.</p>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
@@ -211,26 +266,30 @@ export function DebtOperationForm({
               className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
             />
           </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700">Cuenta financiera *</label>
-            <select
-              required
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-            >
-              {accounts.map((acc) => (
-                <option key={acc.id} value={acc.id}>
-                  {acc.name} ({acc.reconciliationType})
-                </option>
-              ))}
-            </select>
-          </div>
+
+          {operationType !== "reversal" && (
+            <div>
+              <label className="block text-sm font-semibold text-slate-700">Cuenta financiera *</label>
+              <select
+                required
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+              >
+                {activeAccounts.length === 0 && <option value="">Sin cuentas activas</option>}
+                {activeAccounts.map((acc) => (
+                  <option key={acc.id} value={acc.id}>
+                    {acc.name} ({acc.reconciliationType})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {operationType !== "reversal" && (
             <>
               <div>
-                <label className="block text-sm font-semibold text-slate-700">Monto total pagado (Efectivo/Caja) *</label>
+                <label className="block text-sm font-semibold text-slate-700">Salida de dinero (Caja/Banco) *</label>
                 <input
                   type="number"
                   step="0.01"
@@ -248,7 +307,7 @@ export function DebtOperationForm({
                   onChange={(e) => setCategory(e.target.value)}
                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
                 >
-                  {categories.map((cat) => (
+                  {activeCategories.map((cat) => (
                     <option key={cat.id} value={cat.name}>
                       {cat.name}
                     </option>
@@ -271,7 +330,7 @@ export function DebtOperationForm({
 
           {operationType !== "payoff" && operationType !== "reversal" && (
             <div>
-              <label className="block text-sm font-semibold text-slate-700">Monto a capital *</label>
+              <label className="block text-sm font-semibold text-slate-700">Capital aplicado *</label>
               <input
                 type="number"
                 step="0.01"
@@ -316,44 +375,185 @@ export function DebtOperationForm({
                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700">Costo adicional / financiero</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={otherCostPaid}
+                  onChange={(e) => setOtherCostPaid(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                />
+              </div>
+              <div className="flex items-center gap-2 sm:col-span-2 pt-2">
+                <input
+                  type="checkbox"
+                  id="breakdownComplete"
+                  checked={breakdownComplete}
+                  onChange={(e) => setBreakdownComplete(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="breakdownComplete" className="text-sm font-semibold text-slate-700">
+                  Desglose completo y detallado verificado
+                </label>
+              </div>
             </>
           )}
         </div>
 
-        {operationType === "payment" && installments.length > 0 && (
-          <div className="rounded-2xl border border-slate-200 p-4">
-            <h3 className="text-lg font-bold text-slate-800 mb-3">Asignación a cuotas del cronograma</h3>
-            <div className="space-y-3">
-              {installments.map((inst) => (
-                <div key={inst.id} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl">
-                  <div>
-                    <p className="text-sm font-bold text-slate-800">Cuota #{inst.installmentNumber} (Vence: {inst.dueDate})</p>
-                    <p className="text-xs text-slate-500">Esperado: {inst.expectedAmount ?? 0}</p>
-                  </div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="Monto asignado"
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const existing = allocations.find((a) => a.installmentId === inst.id);
-                      if (existing) {
-                        setAllocations(allocations.map((a) => (a.installmentId === inst.id ? { ...a, allocatedAmount: val } : a)));
-                      } else if (val) {
-                        setAllocations([...allocations, { installmentId: inst.id, allocatedAmount: val }]);
-                      }
-                    }}
-                    className="w-36 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
-                  />
-                </div>
-              ))}
+        {operationType !== "reversal" && (
+          <div className="rounded-2xl bg-blue-50/80 p-4 border border-blue-100 grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+            <div>
+              <p className="text-xs font-bold uppercase text-blue-600">Salida de dinero</p>
+              <p className="text-lg font-black text-blue-900">S/ {numCash.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase text-emerald-600">Reducción de deuda</p>
+              <p className="text-lg font-black text-emerald-900">S/ {numPrincipal.toFixed(2)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase text-purple-600">Costo financiero / adicional</p>
+              <p className="text-lg font-black text-purple-900">S/ {additionalCost.toFixed(2)}</p>
             </div>
           </div>
         )}
 
-        {(operationType === "prepayment" || operationType === "reversal") && (
+        {operationType === "payment" && currentScheduleInstallments.length > 0 && (
           <div className="rounded-2xl border border-slate-200 p-4">
-            <h3 className="text-lg font-bold text-slate-800 mb-3">Nuevo cronograma (Requerido o recomendado para esta operación)</h3>
+            <h3 className="text-lg font-bold text-slate-800 mb-2">Asignación a cuotas del cronograma vigente</h3>
+            <p className="text-xs text-slate-500 mb-3">Versión #{currentSchedule?.versionNumber}</p>
+            <div className="space-y-3">
+              {currentScheduleInstallments.map((inst) => {
+                const allocated = allocatedAmountForInstallment(inst.id, allocations.map(a => ({ eventId: "", debtId: debt.id, installmentId: a.installmentId, allocatedAmount: Number(a.allocatedAmount || 0), id: "", createdByUserId: "", createdAt: "" })), debtEvents);
+                const remaining = (inst.expectedAmount ?? 0) - allocated;
+                return (
+                  <div key={inst.id} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl">
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">Cuota #{inst.installmentNumber} (Vence: {inst.dueDate})</p>
+                      <p className="text-xs text-slate-500">Esperado: S/ {inst.expectedAmount ?? 0} | Restante: S/ {remaining.toFixed(2)}</p>
+                    </div>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Monto asignado"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const existing = allocations.find((a) => a.installmentId === inst.id);
+                        if (existing) {
+                          setAllocations(allocations.map((a) => (a.installmentId === inst.id ? { ...a, allocatedAmount: val } : a)));
+                        } else if (val) {
+                          setAllocations([...allocations, { installmentId: inst.id, allocatedAmount: val }]);
+                        }
+                      }}
+                      className="w-36 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {operationType === "prepayment" && (
+          <div className="rounded-2xl border border-slate-200 p-4 space-y-4">
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="hasNewPrepaymentSchedule"
+                checked={hasNewPrepaymentSchedule}
+                onChange={(e) => setHasNewPrepaymentSchedule(e.target.checked)}
+                className="h-5 w-5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              <label htmlFor="hasNewPrepaymentSchedule" className="text-base font-bold text-slate-800">
+                El acreedor me entregó un nuevo cronograma
+              </label>
+            </div>
+            {hasNewPrepaymentSchedule && (
+              <div className="space-y-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setScheduleInstallments([
+                      ...scheduleInstallments,
+                      { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "" },
+                    ])
+                  }
+                  className="rounded-xl bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 hover:bg-blue-100"
+                >
+                  Agregar cuota al nuevo cronograma
+                </button>
+                {scheduleInstallments.map((s, idx) => (
+                  <div key={idx} className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-slate-50 p-3 rounded-xl items-center">
+                    <div>
+                      <label className="block text-xs text-slate-500">Vencimiento</label>
+                      <input
+                        type="date"
+                        value={s.dueDate}
+                        onChange={(e) => {
+                          const copy = [...scheduleInstallments];
+                          copy[idx].dueDate = e.target.value;
+                          setScheduleInstallments(copy);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500">Monto esperado</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={s.expectedAmount}
+                        onChange={(e) => {
+                          const copy = [...scheduleInstallments];
+                          copy[idx].expectedAmount = e.target.value;
+                          setScheduleInstallments(copy);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500">Capital</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={s.expectedPrincipal}
+                        onChange={(e) => {
+                          const copy = [...scheduleInstallments];
+                          copy[idx].expectedPrincipal = e.target.value;
+                          setScheduleInstallments(copy);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))}
+                        className="rounded-lg p-2 text-red-600 hover:bg-red-50 text-sm font-bold"
+                      >
+                        Eliminar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Notas del cronograma</label>
+                  <input
+                    type="text"
+                    value={scheduleNotes}
+                    onChange={(e) => setScheduleNotes(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {operationType === "reversal" && targetGeneratedSchedule && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-4 space-y-3">
+            <h3 className="text-lg font-bold text-amber-900">Restauración de cronograma anterior (Requerida)</h3>
+            <p className="text-xs text-slate-600">El evento que está revirtiendo generó un cronograma. Debe ingresar el cronograma resultante restaurado.</p>
             <button
               type="button"
               onClick={() =>
@@ -362,12 +562,12 @@ export function DebtOperationForm({
                   { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "" },
                 ])
               }
-              className="mb-3 rounded-xl bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 hover:bg-blue-100"
+              className="rounded-xl bg-amber-100 px-3 py-1.5 text-sm font-bold text-amber-900 hover:bg-amber-200"
             >
-              Agregar cuota al nuevo cronograma
+              Agregar cuota restaurada
             </button>
             {scheduleInstallments.map((s, idx) => (
-              <div key={idx} className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-slate-50 p-3 rounded-xl mb-2 items-center">
+              <div key={idx} className="grid grid-cols-1 sm:grid-cols-4 gap-2 bg-white p-3 rounded-xl items-center shadow-sm">
                 <div>
                   <label className="block text-xs text-slate-500">Vencimiento</label>
                   <input
@@ -396,7 +596,7 @@ export function DebtOperationForm({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-500">Principal</label>
+                  <label className="block text-xs text-slate-500">Capital</label>
                   <input
                     type="number"
                     step="0.01"
@@ -413,22 +613,13 @@ export function DebtOperationForm({
                   <button
                     type="button"
                     onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))}
-                    className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+                    className="rounded-lg p-2 text-red-600 hover:bg-red-50 text-sm font-bold"
                   >
                     Eliminar
                   </button>
                 </div>
               </div>
             ))}
-            <div className="mt-3">
-              <label className="block text-sm font-semibold text-slate-700">Notas del cronograma</label>
-              <input
-                type="text"
-                value={scheduleNotes}
-                onChange={(e) => setScheduleNotes(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2 text-sm"
-              />
-            </div>
           </div>
         )}
 
@@ -442,7 +633,7 @@ export function DebtOperationForm({
           </button>
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || hasNoActiveAccounts}
             className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50"
           >
             {submitting ? "Registrando..." : "Confirmar operación"}

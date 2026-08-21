@@ -27,13 +27,14 @@ export function DebtForm({ currentMember, onSaved, onCancel, setToast }: DebtFor
   const [openingPrincipalBalance, setOpeningPrincipalBalance] = useState("");
   const [plannedInstallmentCount, setPlannedInstallmentCount] = useState("");
   const [plannedInstallmentAmount, setPlannedInstallmentAmount] = useState("");
-  const [installmentAmountMode, setInstallmentAmountMode] = useState<DebtInstallmentAmountMode>("fixed");
-  const [paymentFrequency, setPaymentFrequency] = useState<DebtPaymentFrequency>("monthly");
+  const [installmentAmountMode, setInstallmentAmountMode] = useState<DebtInstallmentAmountMode>("unknown");
+  const [paymentFrequency, setPaymentFrequency] = useState<DebtPaymentFrequency | null>(null);
   const [customFrequencyDays, setCustomFrequencyDays] = useState("");
   const [firstDueDate, setFirstDueDate] = useState("");
   const [teaPercent, setTeaPercent] = useState("");
   const [tceaPercent, setTceaPercent] = useState("");
   const [notes, setNotes] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [installments, setInstallments] = useState<Array<{
     installmentNumber: number;
@@ -161,7 +162,7 @@ export function DebtForm({ currentMember, onSaved, onCancel, setToast }: DebtFor
           <div>
             <label className="block text-sm font-semibold text-slate-700">Nombre de la deuda *</label>
             <input
-              type="init"
+              type="text"
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -217,17 +218,6 @@ export function DebtForm({ currentMember, onSaved, onCancel, setToast }: DebtFor
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-700">Principal original</label>
-            <input
-              type="number"
-              step="0.01"
-              value={originalPrincipal}
-              onChange={(e) => setOriginalPrincipal(e.target.value)}
-              placeholder="0.00"
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-            />
-          </div>
-          <div>
             <label className="block text-sm font-semibold text-slate-700">Fecha de inicio de seguimiento *</label>
             <input
               type="date"
@@ -237,60 +227,88 @@ export function DebtForm({ currentMember, onSaved, onCancel, setToast }: DebtFor
               className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
             />
           </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700">Fecha de origen</label>
-            <input
-              type="date"
-              value={originDate}
-              onChange={(e) => setOriginDate(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700">Frecuencia de pago</label>
-            <select
-              value={paymentFrequency}
-              onChange={(e) => setPaymentFrequency(e.target.value as DebtPaymentFrequency)}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-            >
-              <option value="monthly">Mensual</option>
-              <option value="biweekly">Quincenal</option>
-              <option value="weekly">Semanal</option>
-              <option value="custom">Personalizada</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700">Primera fecha de vencimiento</label>
-            <input
-              type="date"
-              value={firstDueDate}
-              onChange={(e) => setFirstDueDate(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700">TEA % (Tasa Efectiva Anual)</label>
-            <input
-              type="number"
-              step="0.01"
-              value={teaPercent}
-              onChange={(e) => setTeaPercent(e.target.value)}
-              placeholder="0.00"
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700">TCEA %</label>
-            <input
-              type="number"
-              step="0.01"
-              value={tceaPercent}
-              onChange={(e) => setTceaPercent(e.target.value)}
-              placeholder="0.00"
-              className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-            />
-          </div>
         </div>
+
+        {/* Progressive disclosure for advanced details (Requirement 13) */}
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="text-sm font-bold text-blue-600 hover:text-blue-800"
+          >
+            {showAdvanced ? "Ocultar detalles avanzados y cronograma opcional ▲" : "Mostrar detalles avanzados y cronograma opcional ▼"}
+          </button>
+        </div>
+
+        {showAdvanced && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-2 border-t border-slate-100">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700">Principal original</label>
+              <input
+                type="number"
+                step="0.01"
+                value={originalPrincipal}
+                onChange={(e) => setOriginalPrincipal(e.target.value)}
+                placeholder="0.00"
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700">Fecha de origen</label>
+              <input
+                type="date"
+                value={originDate}
+                onChange={(e) => setOriginDate(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700">Frecuencia de pago</label>
+              <select
+                value={paymentFrequency ?? ""}
+                onChange={(e) => setPaymentFrequency((e.target.value || null) as DebtPaymentFrequency | null)}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+              >
+                <option value="">No especificada</option>
+                <option value="monthly">Mensual</option>
+                <option value="biweekly">Quincenal</option>
+                <option value="weekly">Semanal</option>
+                <option value="custom">Personalizada</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700">Primera fecha de vencimiento</label>
+              <input
+                type="date"
+                value={firstDueDate}
+                onChange={(e) => setFirstDueDate(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700">TEA % (Tasa Efectiva Anual)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={teaPercent}
+                onChange={(e) => setTeaPercent(e.target.value)}
+                placeholder="0.00"
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-slate-700">TCEA %</label>
+              <input
+                type="number"
+                step="0.01"
+                value={tceaPercent}
+                onChange={(e) => setTceaPercent(e.target.value)}
+                placeholder="0.00"
+                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+              />
+            </div>
+          </div>
+        )}
 
         <div>
           <label className="block text-sm font-semibold text-slate-700">Notas / Observaciones</label>

@@ -14,20 +14,20 @@ export function translateDebtError(error: unknown): string {
       INVALID_COLLATERALS: "Las garantías ingresadas no son válidas.",
       DEBT_ARCHIVED: "La deuda se encuentra archivada y no admite operaciones.",
       DEBT_NOT_ACTIVE: "La deuda no está activa.",
-      DEBT_ALREADY_PAID_OFF: "La deuda ya ha sido cancelada en su totalidad.",
+      DEBT_ALREADY_PAID_OFF: "La deuda ya ha sido pagada en su totalidad.",
       DEBT_PRINCIPAL_EXCEEDED: "El monto supera el saldo principal actual.",
-      DEBT_PREPAYMENT_WOULD_PAY_OFF: "El prepago pagaría la totalidad del principal; utilice la opción de Cancelación.",
+      DEBT_PREPAYMENT_WOULD_PAY_OFF: "El prepago pagaría la totalidad del principal; utilice la opción de Liquidar deuda.",
       INVALID_DEBT_PAYMENT: "Los datos del pago no son válidos.",
       INVALID_DEBT_PREPAYMENT: "Los datos del prepago no son válidos.",
-      INVALID_DEBT_PAYOFF: "Los datos de la cancelación no son válidos.",
+      INVALID_DEBT_PAYOFF: "Los datos de la liquidación no son válidos.",
       INVALID_DEBT_REVERSAL: "Los datos de la reversión no son válidos.",
       INVALID_DEBT_SCHEDULE: "El nuevo cronograma no es válido.",
       INVALID_DEBT_ALLOCATIONS: "Las asignaciones de cuotas no coinciden con el monto o son inválidas.",
-      DEBT_EVENT_ID_CONFLICT: "Conflicto con el identificador del evento.",
-      DEBT_EVENT_NOT_FOUND: "El evento de deuda especificado no existe.",
-      DEBT_EVENT_TYPE_UNSUPPORTED: "Tipo de evento de deuda no soportado.",
-      DEBT_EVENT_ALREADY_REVERSED: "Este evento ya ha sido revertido previamente.",
-      DEBT_REVERSAL_SCHEDULE_REQUIRED: "La reversión de este evento requiere un nuevo cronograma de cuotas.",
+      DEBT_EVENT_ID_CONFLICT: "Conflicto con el identificador del registro.",
+      DEBT_EVENT_NOT_FOUND: "El registro de deuda especificado no existe.",
+      DEBT_EVENT_TYPE_UNSUPPORTED: "Tipo de registro de deuda no soportado.",
+      DEBT_EVENT_ALREADY_REVERSED: "Este registro ya ha sido revertido previamente.",
+      DEBT_REVERSAL_SCHEDULE_REQUIRED: "La reversión de este registro requiere un nuevo cronograma de cuotas.",
       DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED: "La reversión no permite un nuevo cronograma.",
       DEBT_MOVEMENT_CONFLICT: "Conflicto con el movimiento financiero asociado.",
       DEBT_MOVEMENT_ALREADY_LINKED: "El movimiento financiero ya está vinculado a otra operación o deuda.",
@@ -66,7 +66,7 @@ export function formatDebtKind(kind: DebtKind): string {
 export function formatDebtStatus(status: DebtStatus): string {
   const map: Record<DebtStatus, string> = {
     active: "Activa",
-    paid_off: "Cancelada",
+    paid_off: "Pagada",
     refinanced: "Refinanciada",
   };
   return map[status] ?? status;
@@ -89,7 +89,7 @@ export function formatEventType(eventType: string): string {
     principal_prepayment: "Prepago de principal",
     principal_adjustment: "Ajuste de principal",
     refinance: "Refinanciación",
-    payoff: "Cancelación total",
+    payoff: "Liquidación total",
     reversal: "Reversión",
   };
   return map[eventType] ?? eventType;

@@ -149,7 +149,8 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [pendingRecurringPaymentId, setPendingRecurringPaymentId] = useState<string | null>(null);
   const [pendingRecurringMovementId, setPendingRecurringMovementId] = useState<string | null>(null);
   const [focusedPaymentId, setFocusedPaymentId] = useState<string | null>(null);
-  const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
+  const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null);
+  const selectedDebt = useMemo(() => data.debts.find((d) => d.id === selectedDebtId) ?? null, [data.debts, selectedDebtId]);
   const [debtOperationState, setDebtOperationState] = useState<{
     type: "payment" | "prepayment" | "payoff" | "reversal";
     targetEventId?: string;
@@ -1211,7 +1212,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               categories={data.categories}
               currentMember={currentMember}
               onOpenNewDebt={() => setView("registrar-deuda")}
-              onSelectDebt={(debt) => setSelectedDebt(debt)}
+              onSelectDebt={(debt) => setSelectedDebtId(debt.id)}
             />
           )}
           {view === "registrar-deuda" && (
@@ -1232,14 +1233,17 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               debt={selectedDebt}
               operationType={debtOperationState.type}
               targetEventId={debtOperationState.targetEventId}
-              installments={data.debtInstallments.filter((i) => i.debtId === selectedDebt.id)}
+              installments={data.debtInstallments}
+              scheduleVersions={data.debtScheduleVersions}
+              debtEvents={data.debtEvents}
               accounts={data.financialAccounts}
               categories={data.categories}
               currentPrincipal={currentDebtPrincipal(selectedDebt, data.debtEvents)}
+              canWriteDebt={isBrowserOnline}
               onSaved={() => {
                 void refreshAppData();
                 setDebtOperationState(null);
-                setSelectedDebt(null);
+                setSelectedDebtId(null);
                 setView("deudas");
               }}
               onCancel={() => {
@@ -1261,7 +1265,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               accounts={data.financialAccounts}
               categories={data.categories}
               currentMember={currentMember}
-              onClose={() => setSelectedDebt(null)}
+              onClose={() => setSelectedDebtId(null)}
               onOpenOperation={(opType, targetEvId) => {
                 setDebtOperationState({ type: opType, targetEventId: targetEvId });
                 setView("operacion-deuda");

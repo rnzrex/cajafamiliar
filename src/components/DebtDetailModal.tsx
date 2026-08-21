@@ -143,7 +143,7 @@ export function DebtDetailModal({
           </div>
 
           <div className="flex items-center gap-2">
-            {debt.status === "active" && !debt.isArchived && (
+            {(debt.status === "active" || debt.status === "paid_off") && !debt.isArchived && (
               <>
                 <button
                   type="button"
@@ -159,13 +159,15 @@ export function DebtDetailModal({
                 >
                   <ArrowUpRight className="h-4 w-4" /> Prepago
                 </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenOperation("payoff")}
-                  className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-700"
-                >
-                  <CheckCircle2 className="h-4 w-4" /> Cancelar (Payoff)
-                </button>
+                {debt.status === "active" && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenOperation("payoff")}
+                    className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-700"
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> Liquidar deuda
+                  </button>
+                )}
               </>
             )}
             <button
@@ -332,9 +334,9 @@ export function DebtDetailModal({
 
           {activeTab === "history" && (
             <div className="space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Historial de eventos de la deuda</h3>
+              <h3 className="text-lg font-bold text-slate-900">Historial de la deuda</h3>
               {allEventsForDebt.length === 0 ? (
-                <p className="text-sm text-slate-500 italic">No se han registrado eventos financieros.</p>
+                <p className="text-sm text-slate-500 italic">No se han registrado operaciones financieras.</p>
               ) : (
                 <div className="space-y-3">
                   {allEventsForDebt.map((ev) => {
@@ -349,9 +351,9 @@ export function DebtDetailModal({
                             {isReversed && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800">Revertido</span>}
                           </div>
                           <p className="mt-1 text-sm font-medium text-slate-900">{ev.description || "Sin descripción"}</p>
-                          <p className="text-xs text-slate-500">Monto: {ev.cashAmount} | Delta principal: {ev.principalDelta}</p>
+                          <p className="text-xs text-slate-500">Monto: {ev.cashAmount} | Capital aplicado: {ev.principalDelta}</p>
                         </div>
-                        {!isReversal && !isReversed && debt.status === "active" && !debt.isArchived && (
+                        {!isReversal && !isReversed && debt.status !== "refinanced" && (
                           <button
                             type="button"
                             onClick={() => onOpenOperation("reversal", ev.id)}

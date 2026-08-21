@@ -19,11 +19,11 @@ interface DebtsManagerProps {
 }
 
 export function DebtsManager({ debts, debtEvents, onOpenNewDebt, onSelectDebt }: DebtsManagerProps) {
-  const [tab, setTab] = useState<"active" | "archived">("active");
+  const [tab, setTab] = useState<"unarchived" | "archived">("unarchived");
   const [searchQuery, setSearchQuery] = useState("");
 
   const filteredDebts = debts.filter((debt) => {
-    const matchesTab = tab === "active" ? !debt.isArchived && debt.status === "active" : debt.isArchived || debt.status === "paid_off";
+    const matchesTab = tab === "unarchived" ? !debt.isArchived : debt.isArchived;
     const matchesQuery =
       debt.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       debt.creditorName.toLowerCase().includes(searchQuery.toLowerCase());
@@ -71,7 +71,7 @@ export function DebtsManager({ debts, debtEvents, onOpenNewDebt, onSelectDebt }:
           </p>
         </div>
         <div className="rounded-3xl bg-white p-6 shadow-md">
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Deudas canceladas / archivadas</p>
+          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Deudas pagadas / archivadas</p>
           <p className="mt-2 text-3xl font-extrabold text-emerald-600">
             {debts.filter((d) => d.isArchived || d.status === "paid_off").length}
           </p>
@@ -83,17 +83,17 @@ export function DebtsManager({ debts, debtEvents, onOpenNewDebt, onSelectDebt }:
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => setTab("active")}
-              className={`rounded-xl px-5 py-2.5 font-bold transition ${tab === "active" ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+              onClick={() => setTab("unarchived")}
+              className={`rounded-xl px-5 py-2.5 font-bold transition ${tab === "unarchived" ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
             >
-              Activas
+              No archivadas
             </button>
             <button
               type="button"
               onClick={() => setTab("archived")}
               className={`rounded-xl px-5 py-2.5 font-bold transition ${tab === "archived" ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
             >
-              Canceladas / Archivadas
+              Archivadas
             </button>
           </div>
 
