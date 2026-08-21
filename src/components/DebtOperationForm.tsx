@@ -72,6 +72,7 @@ export function DebtOperationForm({
   const currentSchedule = currentDebtScheduleVersion(debt.id, scheduleVersions);
   const currentScheduleInstallments = installments.filter((i) => currentSchedule && i.scheduleVersionId === currentSchedule.id);
   const [allocations, setAllocations] = useState<Array<{ installmentId: string; allocatedAmount: string }>>([]);
+  const persistedAllocations = allocations;
 
   const [hasNewPrepaymentSchedule, setHasNewPrepaymentSchedule] = useState(false);
 
@@ -175,7 +176,7 @@ export function DebtOperationForm({
           eventId,
           movementId,
           eventDate,
-          cashAmount: numCash || currentPrincipal,
+          cashAmount: numCash,
           accountId,
           description: description.trim(),
           category,
@@ -211,7 +212,7 @@ export function DebtOperationForm({
       }
 
       setToast({ message: "Operación de deuda registrada exitosamente.", type: "success" });
-      onSaved();
+      await onSaved();
     } catch (err) {
       setToast({ message: translateDebtError(err), type: "error" });
     } finally {
