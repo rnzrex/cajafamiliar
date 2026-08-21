@@ -27,6 +27,7 @@ import { DebtForm } from "./components/DebtForm";
 import { DebtOperationForm } from "./components/DebtOperationForm";
 import { DebtDetailModal } from "./components/DebtDetailModal";
 import { Toast } from "./components/Toast";
+import { translateDebtError } from "./utils/debtViewModel";
 import { AppData, CashCount, Category, Debt, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
 import { currentDebtPrincipal } from "./utils/debtCalculations";
@@ -174,9 +175,11 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         setData(res.data);
       } catch (err) {
         console.error("Error refreshing app data:", err);
+        throw err;
       }
     }
   };
+  const canWriteDebt = isSupabaseConfigured && isBrowserOnline && Boolean(currentMember);
   const expected = useMemo(() => {
     const cashAccount = getActiveCashAccount(data.financialAccounts);
     return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null);
@@ -1220,9 +1223,14 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               currentMember={currentMember}
               accounts={data.financialAccounts}
               categories={data.categories}
-              onSaved={() => {
-                void refreshAppData();
-                setView("deudas");
+              canWriteDebt={canWriteDebt}
+              onSaved={async () => {
+                try {
+                  await refreshAppData();
+                  setView("deudas");
+                } catch (err) {
+                  setToast({ id: Date.now(), message: translateDebtError(err) });
+                }
               }}
               onCancel={() => setView("deudas")}
               setToast={(t) => setToast({ id: Date.now(), message: t.message })}
@@ -1239,12 +1247,16 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               accounts={data.financialAccounts}
               categories={data.categories}
               currentPrincipal={currentDebtPrincipal(selectedDebt, data.debtEvents)}
-              canWriteDebt={isBrowserOnline}
-              onSaved={() => {
-                void refreshAppData();
-                setDebtOperationState(null);
-                setSelectedDebtId(null);
-                setView("deudas");
+              canWriteDebt={canWriteDebt}
+              onSaved={async () => {
+                try {
+                  await refreshAppData();
+                  setDebtOperationState(null);
+                  setSelectedDebtId(null);
+                  setView("deudas");
+                } catch (err) {
+                  setToast({ id: Date.now(), message: translateDebtError(err) });
+                }
               }}
               onCancel={() => {
                 setDebtOperationState(null);
@@ -1265,12 +1277,19 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               accounts={data.financialAccounts}
               categories={data.categories}
               currentMember={currentMember}
+              canWriteDebt={canWriteDebt}
               onClose={() => setSelectedDebtId(null)}
               onOpenOperation={(opType, targetEvId) => {
                 setDebtOperationState({ type: opType, targetEventId: targetEvId });
                 setView("operacion-deuda");
               }}
-              onRefresh={() => void refreshAppData()}
+              onRefresh={async () => {
+                try {
+                  await refreshAppData();
+                } catch (err) {
+                  setToast({ id: Date.now(), message: translateDebtError(err) });
+                }
+              }}
               setToast={(t) => setToast({ id: Date.now(), message: t.message })}
             />
           )}

@@ -15,9 +15,10 @@ interface DebtDetailModalProps {
   accounts: FinancialAccount[];
   categories: Category[];
   currentMember?: HouseholdMember;
+  canWriteDebt?: boolean;
   onClose: () => void;
   onOpenOperation: (operationType: "payment" | "prepayment" | "payoff" | "reversal", targetEventId?: string) => void;
-  onRefresh: () => void;
+  onRefresh: () => Promise<void> | void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
 }
 
@@ -28,6 +29,7 @@ export function DebtDetailModal({
   installments,
   allocations,
   collaterals,
+  canWriteDebt = true,
   onClose,
   onOpenOperation,
   onRefresh,
@@ -48,15 +50,15 @@ export function DebtDetailModal({
   const allEventsForDebt = debtEvents.filter((e) => e.debtId === debt.id);
 
   const handleToggleArchive = async () => {
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      setToast({ message: "Las operaciones de deuda requieren conexión a internet.", type: "error" });
+    if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
+      setToast({ message: "Las operaciones de deuda requieren conexión a internet y estado habilitado.", type: "error" });
       return;
     }
     setSubmitting(true);
     try {
       await setDebtArchived({ debtId: debt.id, isArchived: !debt.isArchived });
       setToast({ message: debt.isArchived ? "Deuda reactivada." : "Deuda archivada.", type: "success" });
-      onRefresh();
+      await onRefresh();
     } catch (err) {
       setToast({ message: translateDebtError(err), type: "error" });
     } finally {
@@ -66,8 +68,8 @@ export function DebtDetailModal({
 
   const handleSaveMetadata = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      setToast({ message: "Las operaciones de deuda requieren conexión a internet.", type: "error" });
+    if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
+      setToast({ message: "Las operaciones de deuda requieren conexión a internet y estado habilitado.", type: "error" });
       return;
     }
     setSubmitting(true);
@@ -80,7 +82,7 @@ export function DebtDetailModal({
       });
       setToast({ message: "Metadata actualizada exitosamente.", type: "success" });
       setIsEditingMetadata(false);
-      onRefresh();
+      await onRefresh();
     } catch (err) {
       setToast({ message: translateDebtError(err), type: "error" });
     } finally {
@@ -143,7 +145,7 @@ export function DebtDetailModal({
           </div>
 
           <div className="flex items-center gap-2">
-            {(debt.status === "active" || debt.status === "paid_off") && !debt.isArchived && (
+            {debt.status === "active" && !debt.isArchived && canWriteDebt && (
               <>
                 <button
                   type="button"
@@ -159,22 +161,20 @@ export function DebtDetailModal({
                 >
                   <ArrowUpRight className="h-4 w-4" /> Prepago
                 </button>
-                {debt.status === "active" && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenOperation("payoff")}
-                    className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-700"
-                  >
-                    <CheckCircle2 className="h-4 w-4" /> Liquidar deuda
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => onOpenOperation("payoff")}
+                  className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-emerald-700"
+                >
+                  <CheckCircle2 className="h-4 w-4" /> Liquidar deuda
+                </button>
               </>
             )}
             <button
               type="button"
-              disabled={submitting}
+              disabled={submitting || !canWriteDebt}
               onClick={handleToggleArchive}
-              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+              className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
               {debt.isArchived ? "Reactivar" : "Archivar"}
             </button>
@@ -342,6 +342,8 @@ export function DebtDetailModal({
                   {allEventsForDebt.map((ev) => {
                     const isReversal = ev.eventType === "reversal";
                     const isReversed = activeEvents.find((ae) => ae.id === ev.id) === undefined && !isReversal;
+                    const isSupportedReversal = ["payment", "principal_prepayment", "payoff"].includes(ev.eventType);
+                    const canReverse = !isReversal && !isReversed && !debt.isArchived && debt.status !== "refinanced" && isSupportedReversal && canWriteDebt;
                     return (
                       <div key={ev.id} className="flex flex-col gap-2 rounded-2xl border border-slate-200 p-4 bg-slate-50 sm:flex-row sm:items-center sm:justify-between">
                         <div>
@@ -351,9 +353,9 @@ export function DebtDetailModal({
                             {isReversed && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800">Revertido</span>}
                           </div>
                           <p className="mt-1 text-sm font-medium text-slate-900">{ev.description || "Sin descripción"}</p>
-                          <p className="text-xs text-slate-500">Monto: {ev.cashAmount} | Capital aplicado: {ev.principalDelta}</p>
+                          <p className="text-xs text-slate-500">Monto: {debt.currencyCode} {ev.cashAmount} | Capital aplicado: {debt.currencyCode} {Math.max(0, -ev.principalDelta).toFixed(2)}</p>
                         </div>
-                        {!isReversal && !isReversed && debt.status !== "refinanced" && (
+                        {canReverse && (
                           <button
                             type="button"
                             onClick={() => onOpenOperation("reversal", ev.id)}

@@ -10,12 +10,13 @@ interface DebtFormProps {
   currentMember?: HouseholdMember;
   accounts: FinancialAccount[];
   categories: Category[];
+  canWriteDebt?: boolean;
   onSaved: () => void;
   onCancel: () => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
 }
 
-export function DebtForm({ currentMember, onSaved, onCancel, setToast }: DebtFormProps) {
+export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel, setToast }: DebtFormProps) {
   const [debtId] = useState(() => makeUuid());
   const [name, setName] = useState("");
   const [creditorName, setCreditorName] = useState("");
@@ -86,8 +87,8 @@ export function DebtForm({ currentMember, onSaved, onCancel, setToast }: DebtFor
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      setToast({ message: "Las operaciones de deuda requieren conexión a internet.", type: "error" });
+    if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
+      setToast({ message: "Las operaciones de deuda requieren conexión a internet y estado habilitado.", type: "error" });
       return;
     }
 
