@@ -4,7 +4,7 @@ import type { Debt, FinancialAccount, Category, DebtInstallment, DebtScheduleVer
 import { recordDebtPayment, recordDebtPrepayment, recordDebtPayoff, reverseDebtEvent } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
-import { translateDebtError } from "../utils/debtViewModel";
+import { translateDebtError, validateDebtPayment, validateDebtPrepayment, validateDebtPayoff, validateDebtAllocations, debtEconomicSummary } from "../utils/debtViewModel";
 import { currentDebtScheduleVersion, allocatedAmountForInstallment } from "../utils/debtCalculations";
 
 interface DebtOperationFormProps {
@@ -96,7 +96,14 @@ export function DebtOperationForm({
   const numFees = Number(feesPaid || 0);
   const numInsurance = Number(insurancePaid || 0);
   const numOtherCost = Number(otherCostPaid || 0);
-  const additionalCost = numInterest + numFees + numInsurance + numOtherCost;
+  const summary = debtEconomicSummary(
+    numCash,
+    operationType === "payoff" ? currentPrincipal : numPrincipal,
+    numInterest,
+    numFees,
+    numInsurance,
+    numOtherCost
+  );
 
   const isAccountMissing = operationType !== "reversal" && !accountId;
   const hasNoActiveAccounts = operationType !== "reversal" && activeAccounts.length === 0;
@@ -124,6 +131,63 @@ export function DebtOperationForm({
     if (operationType === "prepayment" && numPrincipal >= currentPrincipal) {
       setToast({ message: "El prepago cubre o supera el principal actual; utilice la opción de Liquidar deuda.", type: "error" });
       return;
+    }
+
+    if (operationType === "payment") {
+      const val = validateDebtPayment({
+        cashAmount: numCash,
+        principalAmount: numPrincipal,
+        currentPrincipal,
+        breakdownComplete,
+        interestPaid: numInterest,
+        feesPaid: numFees,
+        insurancePaid: numInsurance,
+        otherCostPaid: numOtherCost,
+      });
+      if (!val.valid) {
+        setToast({ message: val.error || "Datos de pago inválidos", type: "error" });
+        return;
+      }
+      const formattedAlloc = allocations
+        .filter((a) => Number(a.allocatedAmount || 0) > 0)
+        .map((a) => ({
+          installmentId: a.installmentId,
+          allocatedAmount: Number(a.allocatedAmount),
+        }));
+      const allocVal = validateDebtAllocations(formattedAlloc, currentScheduleInstallments, numCash, persistedAllocations, debtEvents);
+      if (!allocVal.valid) {
+        setToast({ message: allocVal.error || "Asignaciones de cuotas inválidas", type: "error" });
+        return;
+      }
+    } else if (operationType === "prepayment") {
+      const val = validateDebtPrepayment({
+        cashAmount: numCash,
+        principalAmount: numPrincipal,
+        currentPrincipal,
+        breakdownComplete,
+        interestPaid: numInterest,
+        feesPaid: numFees,
+        insurancePaid: numInsurance,
+        otherCostPaid: numOtherCost,
+      });
+      if (!val.valid) {
+        setToast({ message: val.error || "Datos de prepago inválidos", type: "error" });
+        return;
+      }
+    } else if (operationType === "payoff") {
+      const val = validateDebtPayoff({
+        cashAmount: numCash,
+        currentPrincipal,
+        breakdownComplete,
+        interestPaid: numInterest,
+        feesPaid: numFees,
+        insurancePaid: numInsurance,
+        otherCostPaid: numOtherCost,
+      });
+      if (!val.valid) {
+        setToast({ message: val.error || "Datos de liquidación inválidos", type: "error" });
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -265,7 +329,7 @@ export function DebtOperationForm({
       {operationType === "reversal" && (
         <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-center gap-3 text-amber-900">
           <AlertCircle className="h-6 w-6 shrink-0 text-amber-700" />
-          <p className="text-sm font-bold">Advertencia: Revertir este registro anulará sus efectos en el saldo principal, asignaciones de cuotas e impacto en el flujo de caja.</p>
+          <p className="text-sm font-bold">Esto corrige cómo se aplicó este pago a la deuda. La salida de dinero original permanece registrada en la cuenta.</p>
         </div>
       )}
 
@@ -420,15 +484,15 @@ export function DebtOperationForm({
           <div className="rounded-2xl bg-blue-50/80 p-4 border border-blue-100 grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
             <div>
               <p className="text-xs font-bold uppercase text-blue-600">Salida de dinero</p>
-              <p className="text-lg font-black text-blue-900">S/ {numCash.toFixed(2)}</p>
+              <p className="text-lg font-black text-blue-900">S/ {summary.cashOutflow.toFixed(2)}</p>
             </div>
             <div>
               <p className="text-xs font-bold uppercase text-emerald-600">Reducción de deuda</p>
-              <p className="text-lg font-black text-emerald-900">S/ {numPrincipal.toFixed(2)}</p>
+              <p className="text-lg font-black text-emerald-900">S/ {summary.principalReduction.toFixed(2)}</p>
             </div>
             <div>
               <p className="text-xs font-bold uppercase text-purple-600">Costo financiero / adicional</p>
-              <p className="text-lg font-black text-purple-900">S/ {additionalCost.toFixed(2)}</p>
+              <p className="text-lg font-black text-purple-900">S/ {summary.knownCosts.toFixed(2)}</p>
             </div>
           </div>
         )}

@@ -110,3 +110,126 @@ export function getInstallmentProgress(
     progressPercent: expected > 0 ? Math.min(100, Math.round((allocated / expected) * 100)) : allocated > 0 ? 100 : 0,
   };
 }
+
+export function debtEconomicSummary(
+  cashAmount: number,
+  principalAmount: number,
+  interestPaid: number = 0,
+  feesPaid: number = 0,
+  insurancePaid: number = 0,
+  otherCostPaid: number = 0
+) {
+  const knownCosts = interestPaid + feesPaid + insurancePaid + otherCostPaid;
+  const economicExpense = principalAmount + knownCosts;
+  const unclassifiedDebtCost = Math.max(0, cashAmount - economicExpense);
+  return {
+    cashOutflow: cashAmount,
+    principalReduction: principalAmount,
+    knownCosts,
+    economicExpense,
+    unclassifiedDebtCost,
+  };
+}
+
+export function validateDebtPayment(input: {
+  cashAmount: number;
+  principalAmount: number;
+  currentPrincipal: number;
+  breakdownComplete: boolean;
+  interestPaid?: number;
+  feesPaid?: number;
+  insurancePaid?: number;
+  otherCostPaid?: number;
+}): { valid: boolean; error?: string } {
+  if (input.cashAmount <= 0) {
+    return { valid: false, error: "El monto de efectivo debe ser mayor a cero." };
+  }
+  if (input.principalAmount < 0) {
+    return { valid: false, error: "El capital aplicado no puede ser negativo." };
+  }
+  if (input.principalAmount > input.currentPrincipal + 0.01) {
+    return { valid: false, error: translateDebtError(new Error("DEBT_PRINCIPAL_EXCEEDED")) };
+  }
+  if (input.breakdownComplete) {
+    const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
+    const totalEconomic = input.principalAmount + knownCosts;
+    if (Math.abs(input.cashAmount - totalEconomic) > 0.01) {
+      return { valid: false, error: translateDebtError(new Error("INVALID_DEBT_PAYMENT")) };
+    }
+  }
+  return { valid: true };
+}
+
+export function validateDebtPrepayment(input: {
+  cashAmount: number;
+  principalAmount: number;
+  currentPrincipal: number;
+  breakdownComplete: boolean;
+  interestPaid?: number;
+  feesPaid?: number;
+  insurancePaid?: number;
+  otherCostPaid?: number;
+}): { valid: boolean; error?: string } {
+  if (input.cashAmount <= 0) {
+    return { valid: false, error: "El monto de efectivo debe ser mayor a cero." };
+  }
+  if (input.principalAmount <= 0) {
+    return { valid: false, error: "El prepago de principal debe ser mayor a cero." };
+  }
+  if (input.principalAmount >= input.currentPrincipal - 0.01) {
+    return { valid: false, error: translateDebtError(new Error("DEBT_PREPAYMENT_WOULD_PAY_OFF")) };
+  }
+  if (input.breakdownComplete) {
+    const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
+    const totalEconomic = input.principalAmount + knownCosts;
+    if (Math.abs(input.cashAmount - totalEconomic) > 0.01) {
+      return { valid: false, error: translateDebtError(new Error("INVALID_DEBT_PREPAYMENT")) };
+    }
+  }
+  return { valid: true };
+}
+
+export function validateDebtPayoff(input: {
+  cashAmount: number;
+  currentPrincipal: number;
+  breakdownComplete: boolean;
+  interestPaid?: number;
+  feesPaid?: number;
+  insurancePaid?: number;
+  otherCostPaid?: number;
+}): { valid: boolean; error?: string } {
+  if (input.cashAmount <= 0) {
+    return { valid: false, error: "El monto de efectivo debe ser mayor a cero." };
+  }
+  const knownCosts = (input.interestPaid || 0) + (input.feesPaid || 0) + (input.insurancePaid || 0) + (input.otherCostPaid || 0);
+  const minRequired = input.currentPrincipal + knownCosts;
+  if (input.cashAmount < minRequired - 0.01) {
+    return { valid: false, error: translateDebtError(new Error("INVALID_DEBT_PAYOFF")) };
+  }
+  return { valid: true };
+}
+
+export function validateDebtAllocations(
+  allocations: Array<{ installmentId: string; allocatedAmount: number }>,
+  installments: DebtInstallment[],
+  cashAmount: number,
+  persistedAllocations: DebtEventInstallmentAllocation[] = [],
+  debtEvents: DebtEvent[] = []
+): { valid: boolean; error?: string } {
+  const totalAllocated = allocations.reduce((sum, a) => sum + (a.allocatedAmount || 0), 0);
+  if (totalAllocated > cashAmount + 0.01) {
+    return { valid: false, error: "El total asignado a cuotas supera la salida de efectivo." };
+  }
+  for (const alloc of allocations) {
+    const inst = installments.find((i) => i.id === alloc.installmentId);
+    if (!inst) {
+      return { valid: false, error: "Una de las cuotas asignadas no existe en el cronograma." };
+    }
+    const alreadyAllocated = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
+    const remaining = (inst.expectedAmount ?? 0) - alreadyAllocated;
+    if (alloc.allocatedAmount > remaining + 0.01) {
+      return { valid: false, error: `El monto asignado a la cuota #${inst.installmentNumber} supera el saldo restante (S/ ${remaining.toFixed(2)}).` };
+    }
+  }
+  return { valid: true };
+}
