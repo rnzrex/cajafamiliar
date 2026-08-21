@@ -4,6 +4,7 @@ import {
   ClipboardList,
   Coins,
   Home,
+  Landmark,
   LogOut,
   MoreHorizontal,
   PiggyBank,
@@ -21,9 +22,15 @@ import { InitialBalance } from "./components/InitialBalance";
 import { MovementForm } from "./components/MovementForm";
 import { MovementsList } from "./components/MovementsList";
 import { RecurringPayments } from "./components/RecurringPayments";
+import { DebtsManager } from "./components/DebtsManager";
+import { DebtForm } from "./components/DebtForm";
+import { DebtOperationForm } from "./components/DebtOperationForm";
+import { DebtDetailModal } from "./components/DebtDetailModal";
 import { Toast } from "./components/Toast";
-import { AppData, CashCount, Category, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
+import { translateDebtError } from "./utils/debtViewModel";
+import { AppData, CashCount, Category, Debt, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
+import { currentDebtPrincipal } from "./utils/debtCalculations";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
 import {
   CategoryNotFoundError,
@@ -66,7 +73,7 @@ import { isSupabaseConfigured } from "./services/supabaseClient";
 import { makeId, makeUuid, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
 
-type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "reportes" | "categorias" | "cuentas" | "saldo-inicial";
+type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "deudas" | "registrar-deuda" | "operacion-deuda" | "reportes" | "categorias" | "cuentas" | "saldo-inicial";
 type SyncStatus = "loading" | "connected" | "local" | "offline" | "problem" | "syncing";
 type PendingSyncState = "idle" | "flushing" | "problem";
 type RemoteContactStatus = "unknown" | "success" | "failure";
@@ -89,6 +96,7 @@ const navItems: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: "movimientos", label: "Movimientos", icon: ClipboardList },
   { view: "conteo", label: "Caja", icon: Coins },
   { view: "pagos", label: "Pagos", icon: CalendarClock },
+  { view: "deudas", label: "Deudas", icon: Landmark },
   { view: "reportes", label: "Reportes", icon: BarChart3 },
   { view: "categorias", label: "Categorías", icon: Tags },
   { view: "cuentas", label: "Cuentas", icon: Wallet },
@@ -108,6 +116,9 @@ const titles: Record<View, string> = {
   movimientos: "Movimientos",
   conteo: "Conteo de caja",
   pagos: "Pagos recurrentes",
+  deudas: "Deudas",
+  "registrar-deuda": "Registrar deuda",
+  "operacion-deuda": "Operación de deuda",
   reportes: "Reportes",
   categorias: "Categorías",
   cuentas: "Cuentas",
@@ -139,6 +150,12 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [pendingRecurringPaymentId, setPendingRecurringPaymentId] = useState<string | null>(null);
   const [pendingRecurringMovementId, setPendingRecurringMovementId] = useState<string | null>(null);
   const [focusedPaymentId, setFocusedPaymentId] = useState<string | null>(null);
+  const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null);
+  const selectedDebt = useMemo(() => data.debts.find((d) => d.id === selectedDebtId) ?? null, [data.debts, selectedDebtId]);
+  const [debtOperationState, setDebtOperationState] = useState<{
+    type: "payment" | "prepayment" | "payoff" | "reversal";
+    targetEventId?: string;
+  } | null>(null);
   const [dataReady, setDataReady] = useState(!isSupabaseConfigured);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
   const [isBrowserOnline, setIsBrowserOnline] = useState(() => typeof navigator === "undefined" || navigator.onLine);
@@ -150,6 +167,19 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [syncAttempt, setSyncAttempt] = useState(0);
   const flushInFlightRef = useRef(false);
   const appMountedRef = useRef(true);
+
+  const refreshAppData = async () => {
+    if (currentMember) {
+      try {
+        const res = await loadAppData(currentMember);
+        setData(res.data);
+      } catch (err) {
+        console.error("Error refreshing app data:", err);
+        throw err;
+      }
+    }
+  };
+  const canWriteDebt = isSupabaseConfigured && isBrowserOnline && Boolean(currentMember);
   const expected = useMemo(() => {
     const cashAccount = getActiveCashAccount(data.financialAccounts);
     return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null);
@@ -1173,6 +1203,85 @@ async function saveInitialBalance(value: number): Promise<boolean> {
           {view === "categorias" && <CategoriesManager categories={data.categories} onSave={saveCategory} onDelete={deleteCategory} onToggle={toggleCategory} />}
           {view === "cuentas" && <AccountsManager accounts={data.financialAccounts} movements={data.movements} onSave={saveAccount} onToggle={toggleAccount} onEditInitialBalance={() => navigate("saldo-inicial")} />}
           {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={saveInitialBalance} />}
+          {view === "deudas" && (
+            <DebtsManager
+              debts={data.debts}
+              debtEvents={data.debtEvents}
+              scheduleVersions={data.debtScheduleVersions}
+              installments={data.debtInstallments}
+              allocations={data.debtEventInstallmentAllocations}
+              collaterals={data.debtCollaterals}
+              accounts={data.financialAccounts}
+              categories={data.categories}
+              currentMember={currentMember}
+              onOpenNewDebt={() => setView("registrar-deuda")}
+              onSelectDebt={(debt) => setSelectedDebtId(debt.id)}
+            />
+          )}
+          {view === "registrar-deuda" && (
+            <DebtForm
+              currentMember={currentMember}
+              accounts={data.financialAccounts}
+              categories={data.categories}
+              canWriteDebt={canWriteDebt}
+              onSaved={async () => {
+                await refreshAppData();
+                setView("deudas");
+              }}
+              onCancel={() => setView("deudas")}
+              setToast={(t) => setToast({ id: Date.now(), message: t.message })}
+            />
+          )}
+          {view === "operacion-deuda" && selectedDebt && debtOperationState && (
+            <DebtOperationForm
+              debt={selectedDebt}
+              operationType={debtOperationState.type}
+              targetEventId={debtOperationState.targetEventId}
+              installments={data.debtInstallments}
+              scheduleVersions={data.debtScheduleVersions}
+              debtEvents={data.debtEvents}
+              persistedAllocations={data.debtEventInstallmentAllocations}
+              accounts={data.financialAccounts}
+              categories={data.categories}
+              currentPrincipal={currentDebtPrincipal(selectedDebt, data.debtEvents)}
+              canWriteDebt={canWriteDebt}
+              onSaved={async () => {
+                await refreshAppData();
+                setDebtOperationState(null);
+                setSelectedDebtId(null);
+                setView("deudas");
+              }}
+              onCancel={() => {
+                setDebtOperationState(null);
+                setView("deudas");
+              }}
+              setToast={(t) => setToast({ id: Date.now(), message: t.message })}
+            />
+          )}
+
+          {selectedDebt && view !== "operacion-deuda" && (
+            <DebtDetailModal
+              debt={selectedDebt}
+              debtEvents={data.debtEvents}
+              scheduleVersions={data.debtScheduleVersions}
+              installments={data.debtInstallments}
+              allocations={data.debtEventInstallmentAllocations}
+              collaterals={data.debtCollaterals}
+              accounts={data.financialAccounts}
+              categories={data.categories}
+              currentMember={currentMember}
+              canWriteDebt={canWriteDebt}
+              onClose={() => setSelectedDebtId(null)}
+              onOpenOperation={(opType, targetEvId) => {
+                setDebtOperationState({ type: opType, targetEventId: targetEvId });
+                setView("operacion-deuda");
+              }}
+              onRefresh={async () => {
+                await refreshAppData();
+              }}
+              setToast={(t) => setToast({ id: Date.now(), message: t.message })}
+            />
+          )}
         </div>
       </main>
 
@@ -1229,6 +1338,9 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               </button>
               <button type="button" onClick={() => navigate("reportes")} className="min-h-14 rounded-2xl bg-indigo-50 px-4 text-left text-base font-bold text-indigo-900">
                 Reportes
+              </button>
+              <button type="button" onClick={() => navigate("deudas")} className="min-h-14 rounded-2xl bg-purple-50 px-4 text-left text-base font-bold text-purple-900">
+                Deudas
               </button>
               <button type="button" onClick={() => navigate("categorias")} className="min-h-14 rounded-2xl bg-emerald-50 px-4 text-left text-base font-bold text-emerald-900">
                 Categorías

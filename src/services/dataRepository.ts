@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment } from "../types";
+import { AppData, CashCount, Category, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -374,6 +374,10 @@ export type DebtOperationErrorCode =
   | "AUTH_REQUIRED"
   | "HOUSEHOLD_ACCESS_DENIED"
   | "DEBT_NOT_FOUND"
+  | "DEBT_ALREADY_EXISTS"
+  | "INVALID_DEBT_INPUT"
+  | "INVALID_INSTALLMENTS"
+  | "INVALID_COLLATERALS"
   | "DEBT_ARCHIVED"
   | "DEBT_NOT_ACTIVE"
   | "DEBT_ALREADY_PAID_OFF"
@@ -434,6 +438,126 @@ export interface DebtReversalResult {
   event: DebtEvent;
   scheduleVersion: DebtScheduleVersion | null;
   installments: DebtInstallment[];
+}
+
+export interface DebtCollateralInput {
+  description: string;
+  pledgedValue?: number | null;
+  estimatedValue?: number | null;
+  redemptionDeadline?: string | null;
+}
+
+export interface DebtCreateInput {
+  debtId: string;
+  name: string;
+  creditorName: string;
+  debtKind: DebtKind;
+  currencyCode: string;
+  originDate?: string | null;
+  trackingStartDate: string;
+  originalPrincipal?: number | null;
+  openingPrincipalBalance: number;
+  plannedInstallmentCount?: number | null;
+  plannedInstallmentAmount?: number | null;
+  installmentAmountMode: DebtInstallmentAmountMode;
+  paymentFrequency?: DebtPaymentFrequency | null;
+  customFrequencyDays?: number | null;
+  firstDueDate?: string | null;
+  teaPercent?: number | null;
+  tceaPercent?: number | null;
+  notes?: string | null;
+  installments: DebtScheduleInstallmentInput[];
+  collaterals: DebtCollateralInput[];
+}
+
+export interface DebtUpdateMetadataInput {
+  debtId: string;
+  name: string;
+  creditorName: string;
+  notes: string;
+}
+
+export interface DebtSetArchivedInput {
+  debtId: string;
+  isArchived: boolean;
+}
+
+export interface DebtCreateResult {
+  debt: Debt;
+  scheduleVersion: DebtScheduleVersion | null;
+  installments: DebtInstallment[];
+  collaterals: DebtCollateral[];
+}
+
+export function toCreateDebtRpcArgs(input: DebtCreateInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_name: input.name,
+    p_creditor_name: input.creditorName,
+    p_debt_kind: input.debtKind,
+    p_currency_code: input.currencyCode,
+    p_origin_date: input.originDate ?? null,
+    p_tracking_start_date: input.trackingStartDate,
+    p_original_principal: input.originalPrincipal ?? null,
+    p_opening_principal_balance: input.openingPrincipalBalance,
+    p_planned_installment_count: input.plannedInstallmentCount ?? null,
+    p_planned_installment_amount: input.plannedInstallmentAmount ?? null,
+    p_installment_amount_mode: input.installmentAmountMode,
+    p_payment_frequency: input.paymentFrequency ?? null,
+    p_custom_frequency_days: input.customFrequencyDays ?? null,
+    p_first_due_date: input.firstDueDate ?? null,
+    p_tea_percent: input.teaPercent ?? null,
+    p_tcea_percent: input.tceaPercent ?? null,
+    p_notes: input.notes ?? "",
+    p_installments: (input.installments ?? []).map(toDebtScheduleInstallmentRow),
+    p_collaterals: (input.collaterals ?? []).map((c) => ({
+      description: c.description,
+      pledged_value: c.pledgedValue ?? null,
+      estimated_value: c.estimatedValue ?? null,
+      redemption_deadline: c.redemptionDeadline ?? null,
+    })),
+  };
+}
+
+export async function createDebt(input: DebtCreateInput): Promise<DebtCreateResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("create_debt_v1", toCreateDebtRpcArgs(input));
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La RPC create_debt_v1 no devolvió un resultado válido.");
+  const row = data as Record<string, any>;
+  return {
+    debt: fromDebtRow(row.debt),
+    scheduleVersion: row.scheduleVersion && row.scheduleVersion !== "null" ? fromDebtScheduleVersionRow(row.scheduleVersion) : null,
+    installments: Array.isArray(row.installments) ? row.installments.map(fromDebtInstallmentRow) : [],
+    collaterals: Array.isArray(row.collaterals) ? row.collaterals.map(fromDebtCollateralRow) : [],
+  };
+}
+
+export async function updateDebtMetadata(input: DebtUpdateMetadataInput): Promise<Debt> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("update_debt_metadata_v1", {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_name: input.name,
+    p_creditor_name: input.creditorName,
+    p_notes: input.notes,
+  });
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La RPC update_debt_metadata_v1 no devolvió un resultado válido.");
+  return fromDebtRow(data);
+}
+
+export async function setDebtArchived(input: DebtSetArchivedInput): Promise<Debt> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("set_debt_archived_v1", {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_is_archived: input.isArchived,
+  });
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La RPC set_debt_archived_v1 no devolvió un resultado válido.");
+  return fromDebtRow(data);
 }
 
 export function toDebtPaymentRpcArgs(input: DebtPaymentInput) {
@@ -564,6 +688,10 @@ const debtOperationErrorCodes: DebtOperationErrorCode[] = [
   "AUTH_REQUIRED",
   "HOUSEHOLD_ACCESS_DENIED",
   "DEBT_NOT_FOUND",
+  "DEBT_ALREADY_EXISTS",
+  "INVALID_DEBT_INPUT",
+  "INVALID_INSTALLMENTS",
+  "INVALID_COLLATERALS",
   "DEBT_ARCHIVED",
   "DEBT_NOT_ACTIVE",
   "DEBT_ALREADY_PAID_OFF",
