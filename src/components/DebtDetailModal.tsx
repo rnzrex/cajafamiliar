@@ -55,12 +55,18 @@ export function DebtDetailModal({
       return;
     }
     setSubmitting(true);
+    let success = false;
     try {
       await setDebtArchived({ debtId: debt.id, isArchived: !debt.isArchived });
+      success = true;
       setToast({ message: debt.isArchived ? "Deuda reactivada." : "Deuda archivada.", type: "success" });
       await onRefresh();
     } catch (err) {
-      setToast({ message: translateDebtError(err), type: "error" });
+      if (!success) {
+        setToast({ message: translateDebtError(err), type: "error" });
+      } else {
+        setToast({ message: "Operación aplicada, pero falló la actualización de datos locales.", type: "error" });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -73,6 +79,7 @@ export function DebtDetailModal({
       return;
     }
     setSubmitting(true);
+    let success = false;
     try {
       await updateDebtMetadata({
         debtId: debt.id,
@@ -80,11 +87,16 @@ export function DebtDetailModal({
         creditorName: editCreditor.trim(),
         notes: editNotes.trim(),
       });
+      success = true;
       setToast({ message: "Metadata actualizada exitosamente.", type: "success" });
       setIsEditingMetadata(false);
       await onRefresh();
     } catch (err) {
-      setToast({ message: translateDebtError(err), type: "error" });
+      if (!success) {
+        setToast({ message: translateDebtError(err), type: "error" });
+      } else {
+        setToast({ message: "Metadata actualizada, pero falló la actualización de datos locales.", type: "error" });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -343,7 +355,7 @@ export function DebtDetailModal({
                     const isReversal = ev.eventType === "reversal";
                     const isReversed = activeEvents.find((ae) => ae.id === ev.id) === undefined && !isReversal;
                     const isSupportedReversal = ["payment", "principal_prepayment", "payoff"].includes(ev.eventType);
-                    const canReverse = !isReversal && !isReversed && !debt.isArchived && debt.status !== "refinanced" && isSupportedReversal && canWriteDebt;
+                    const canReverse = !isReversal && !isReversed && debt.status !== "refinanced" && isSupportedReversal && canWriteDebt;
                     return (
                       <div key={ev.id} className="flex flex-col gap-2 rounded-2xl border border-slate-200 p-4 bg-slate-50 sm:flex-row sm:items-center sm:justify-between">
                         <div>

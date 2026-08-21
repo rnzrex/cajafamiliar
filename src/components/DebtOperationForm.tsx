@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ArrowLeft, AlertCircle } from "lucide-react";
-import type { Debt, FinancialAccount, Category, DebtInstallment, DebtScheduleVersion, DebtEvent } from "../types";
+import type { Debt, FinancialAccount, Category, DebtInstallment, DebtScheduleVersion, DebtEvent, DebtEventInstallmentAllocation } from "../types";
 import { recordDebtPayment, recordDebtPrepayment, recordDebtPayoff, reverseDebtEvent } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
@@ -18,7 +18,8 @@ interface DebtOperationFormProps {
   categories: Category[];
   currentPrincipal: number;
   canWriteDebt?: boolean;
-  onSaved: () => void;
+  persistedAllocations: DebtEventInstallmentAllocation[];
+  onSaved: () => Promise<void>;
   onCancel: () => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
 }
@@ -34,6 +35,7 @@ export function DebtOperationForm({
   categories,
   currentPrincipal,
   canWriteDebt = true,
+  persistedAllocations,
   onSaved,
   onCancel,
   setToast,
@@ -59,7 +61,7 @@ export function DebtOperationForm({
   );
 
   const activeCategories = categories.filter((c) => c.is_active && (c.type === "egreso" || c.type === "ambos"));
-  const defaultCategory = activeCategories.find((c) => c.name.toLowerCase() === "préstamos")?.name ?? activeCategories[0]?.name ?? "Préstamos";
+  const defaultCategory = activeCategories.find((c) => c.name.toLowerCase() === "préstamos")?.name ?? activeCategories[0]?.name ?? "";
   const [category, setCategory] = useState(defaultCategory);
 
   const [principalAmount, setPrincipalAmount] = useState(operationType === "payoff" ? currentPrincipal.toString() : "");
@@ -72,11 +74,10 @@ export function DebtOperationForm({
   const currentSchedule = currentDebtScheduleVersion(debt.id, scheduleVersions);
   const currentScheduleInstallments = installments.filter((i) => currentSchedule && i.scheduleVersionId === currentSchedule.id);
   const [allocations, setAllocations] = useState<Array<{ installmentId: string; allocatedAmount: string }>>([]);
-  const persistedAllocations = allocations;
 
   const [hasNewPrepaymentSchedule, setHasNewPrepaymentSchedule] = useState(false);
 
-  const targetGeneratedSchedule = Boolean(targetEventId && scheduleVersions.some((v) => v.triggerEventId === targetEventId));
+  const targetGeneratedSchedule = Boolean(targetEventId && scheduleVersions.some((v) => v.debtId === debt.id && v.triggerEventId === targetEventId));
 
   const [scheduleInstallments, setScheduleInstallments] = useState<Array<{
     installmentNumber: number;
@@ -115,12 +116,18 @@ export function DebtOperationForm({
       return;
     }
 
+    if (operationType !== "reversal" && !category) {
+      setToast({ message: "Seleccione una categoría válida para registrar la operación.", type: "error" });
+      return;
+    }
+
     if (operationType === "prepayment" && numPrincipal >= currentPrincipal) {
       setToast({ message: "El prepago cubre o supera el principal actual; utilice la opción de Liquidar deuda.", type: "error" });
       return;
     }
 
     setSubmitting(true);
+    let rpcExecuted = false;
     try {
       if (operationType === "payment") {
         await recordDebtPayment({
@@ -138,10 +145,12 @@ export function DebtOperationForm({
           insurancePaid: numInsurance,
           otherCostPaid: numOtherCost,
           breakdownComplete,
-          allocations: allocations.map((a) => ({
-            installmentId: a.installmentId,
-            allocatedAmount: Number(a.allocatedAmount || 0),
-          })),
+          allocations: allocations
+            .filter((a) => Number(a.allocatedAmount || 0) > 0)
+            .map((a) => ({
+              installmentId: a.installmentId,
+              allocatedAmount: Number(a.allocatedAmount),
+            })),
         });
       } else if (operationType === "prepayment") {
         await recordDebtPrepayment({
@@ -211,10 +220,15 @@ export function DebtOperationForm({
         });
       }
 
+      rpcExecuted = true;
       setToast({ message: "Operación de deuda registrada exitosamente.", type: "success" });
       await onSaved();
     } catch (err) {
-      setToast({ message: translateDebtError(err), type: "error" });
+      if (!rpcExecuted) {
+        setToast({ message: translateDebtError(err), type: "error" });
+      } else {
+        setToast({ message: "Operación registrada exitosamente, pero falló la actualización de datos locales.", type: "error" });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -425,7 +439,7 @@ export function DebtOperationForm({
             <p className="text-xs text-slate-500 mb-3">Versión #{currentSchedule?.versionNumber}</p>
             <div className="space-y-3">
               {currentScheduleInstallments.map((inst) => {
-                const allocated = allocatedAmountForInstallment(inst.id, allocations.map(a => ({ eventId: "", debtId: debt.id, installmentId: a.installmentId, allocatedAmount: Number(a.allocatedAmount || 0), id: "", createdByUserId: "", createdAt: "" })), debtEvents);
+                const allocated = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
                 const remaining = (inst.expectedAmount ?? 0) - allocated;
                 return (
                   <div key={inst.id} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl">

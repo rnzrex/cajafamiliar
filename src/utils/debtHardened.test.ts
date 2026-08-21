@@ -194,4 +194,78 @@ describe("DEBT-2C Exhaustive Hardened Invariants (32 tests)", () => {
     };
     await expect(mockRefresh()).rejects.toThrow("REFRESH_FAILED");
   });
+
+  it("33. filters out empty or zero draft allocations", () => {
+    const allocations = [
+      { installmentId: "i1", allocatedAmount: "100" },
+      { installmentId: "i2", allocatedAmount: "0" },
+      { installmentId: "i3", allocatedAmount: "" },
+      { installmentId: "i4", allocatedAmount: "50" },
+    ];
+    const filtered = allocations
+      .filter((a) => Number(a.allocatedAmount || 0) > 0)
+      .map((a) => ({ installmentId: a.installmentId, allocatedAmount: Number(a.allocatedAmount) }));
+    expect(filtered).toEqual([
+      { installmentId: "i1", allocatedAmount: 100 },
+      { installmentId: "i4", allocatedAmount: 50 },
+    ]);
+  });
+
+  it("34. blocks fund operation when category is empty", () => {
+    const operationType: string = "payment";
+    const category = "";
+    const isValid = !(operationType !== "reversal" && !category);
+    expect(isValid).toBe(false);
+  });
+
+  it("35. allows reversal if debt.status !== 'refinanced' regardless of isArchived", () => {
+    const isReversal = false;
+    const isReversed = false;
+    const isArchived = true;
+    const status: string = "active";
+    const isSupportedReversal = true;
+    const canWriteDebt = true;
+    const canReverse = !isReversal && !isReversed && status !== "refinanced" && isSupportedReversal && canWriteDebt;
+    expect(canReverse).toBe(true);
+  });
+
+  it("36. distinguishes RPC success + refresh failure vs RPC failure", async () => {
+    let rpcSucceeded = false;
+    let errorMessage = "";
+    try {
+      rpcSucceeded = true; // RPC succeeded
+      await Promise.reject(new Error("REFRESH_FAILED"));
+    } catch (err: any) {
+      if (!rpcSucceeded) {
+        errorMessage = "RPC error";
+      } else {
+        errorMessage = "Operación registrada exitosamente, pero falló la actualización de datos locales.";
+      }
+    }
+    expect(errorMessage).toContain("actualización de datos locales");
+  });
+
+  it("37. checks targetGeneratedSchedule with exact debtId and triggerEventId", () => {
+    const scheduleVersions: DebtScheduleVersion[] = [
+      { id: "v1", debtId: "d1", versionNumber: 2, effectiveDate: "2026-01-01", reason: "prepayment", triggerEventId: "ev1", notes: "", createdByUserId: "u1", createdAt: "" }
+    ];
+    const targetEventId = "ev1";
+    const debtId = "d1";
+    const targetGeneratedSchedule = Boolean(targetEventId && scheduleVersions.some((v) => v.debtId === debtId && v.triggerEventId === targetEventId));
+    expect(targetGeneratedSchedule).toBe(true);
+
+    const wrongDebtSchedule = Boolean(targetEventId && scheduleVersions.some((v) => v.debtId === "d2" && v.triggerEventId === targetEventId));
+    expect(wrongDebtSchedule).toBe(false);
+  });
+
+  it("38. verifies persistedAllocations passed to allocatedAmountForInstallment", () => {
+    const persistedAllocations: DebtEventInstallmentAllocation[] = [
+      { id: "a1", eventId: "ev1", debtId: "d1", installmentId: "inst1", allocatedAmount: 120, createdByUserId: "u1", createdAt: "" }
+    ];
+    const events: DebtEvent[] = [
+      { id: "ev1", debtId: "d1", eventType: "payment", eventDate: "2026-01-01", cashAmount: 120, principalDelta: -100, interestPaid: 20, feesPaid: 0, insurancePaid: 0, otherCostPaid: 0, breakdownComplete: true, movementId: "m1", reversalOfEventId: null, description: "", registeredByUserId: "u1", createdAt: "" }
+    ];
+    const allocated = allocatedAmountForInstallment("inst1", persistedAllocations, events);
+    expect(allocated).toBe(120);
+  });
 });

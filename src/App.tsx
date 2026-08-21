@@ -1225,12 +1225,8 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               categories={data.categories}
               canWriteDebt={canWriteDebt}
               onSaved={async () => {
-                try {
-                  await refreshAppData();
-                  setView("deudas");
-                } catch (err) {
-                  setToast({ id: Date.now(), message: translateDebtError(err) });
-                }
+                await refreshAppData();
+                setView("deudas");
               }}
               onCancel={() => setView("deudas")}
               setToast={(t) => setToast({ id: Date.now(), message: t.message })}
@@ -1244,19 +1240,16 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               installments={data.debtInstallments}
               scheduleVersions={data.debtScheduleVersions}
               debtEvents={data.debtEvents}
+              persistedAllocations={data.debtEventInstallmentAllocations}
               accounts={data.financialAccounts}
               categories={data.categories}
               currentPrincipal={currentDebtPrincipal(selectedDebt, data.debtEvents)}
               canWriteDebt={canWriteDebt}
               onSaved={async () => {
-                try {
-                  await refreshAppData();
-                  setDebtOperationState(null);
-                  setSelectedDebtId(null);
-                  setView("deudas");
-                } catch (err) {
-                  setToast({ id: Date.now(), message: translateDebtError(err) });
-                }
+                await refreshAppData();
+                setDebtOperationState(null);
+                setSelectedDebtId(null);
+                setView("deudas");
               }}
               onCancel={() => {
                 setDebtOperationState(null);
@@ -1284,11 +1277,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 setView("operacion-deuda");
               }}
               onRefresh={async () => {
-                try {
-                  await refreshAppData();
-                } catch (err) {
-                  setToast({ id: Date.now(), message: translateDebtError(err) });
-                }
+                await refreshAppData();
               }}
               setToast={(t) => setToast({ id: Date.now(), message: t.message })}
             />
