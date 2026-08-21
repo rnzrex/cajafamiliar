@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { CashCount, DebtEvent, FinancialAccount, Movement, RecurringPayment } from "../types";
 import type { DebtInstallmentPlanningItem } from "../utils/debtPlanning";
+import { selectDebtPlanningAttentionItems } from "../utils/debtPlanning";
 import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAmountLabel, paymentScheduleLabel, paymentStatus, topExpenseCategory } from "../utils/calculations";
 import { accountNameForMovement, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
 import { movementLabel } from "../utils/movementEconomics";
@@ -60,10 +61,7 @@ export function Dashboard({
     .sort((a, b) => a.status.days - b.status.days);
   const relevantPayments = attentionPayments.slice(0, 3);
 
-  const attentionDebtItems = debtPlanningItems
-    .filter((item) => ["overdue", "today", "tomorrow", "upcoming"].includes(item.dueStatus))
-    .sort((a, b) => a.daysUntilDue - b.daysUntilDue);
-  const relevantDebtItems = attentionDebtItems.slice(0, 3);
+  const relevantDebtItems = selectDebtPlanningAttentionItems(debtPlanningItems, 3);
 
   const secondaryStats = [
     { label: "Ingresos del mes", value: formatMoney(totals.income), icon: ArrowUpCircle, tone: "text-emerald-700 bg-emerald-50" },

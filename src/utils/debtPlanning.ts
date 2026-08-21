@@ -208,11 +208,16 @@ export interface DebtMonthCurrencySummary {
   coveredKnownAmount: number;
   pendingKnownAmount: number;
   overdueKnownAmount: number;
+  totalInstallments: number;
+  knownAmountInstallments: number;
+  unknownAmountInstallments: number;
+  overdueInstallments: number;
+  coveredInstallments: number;
 }
 
 export interface DebtMonthSummary {
-  /** Primary currency code or "PEN" */
-  currencyCode: string;
+  /** Currency code if exactly 1 currency is present, or null if multiple currencies present */
+  currencyCode: string | null;
   /** True if month items contain more than one distinct currencyCode */
   hasMultipleCurrencies: boolean;
   /** Breakdown by currency code */
@@ -224,22 +229,28 @@ export interface DebtMonthSummary {
   knownAmountInstallments: number;
   /** Installments with expectedAmount === null */
   unknownAmountInstallments: number;
-  /** Sum of expectedAmount for known-amount installments in the month */
-  scheduledKnownAmount: number;
-  /** Sum of min(allocatedAmount, expectedAmount) for covered/partial known-amount installments */
-  coveredKnownAmount: number;
-  /** Sum of remainingAmount for known-amount installments */
-  pendingKnownAmount: number;
-  /** Sum of remainingAmount for overdue known-amount installments */
-  overdueKnownAmount: number;
   /** Count of overdue installments (any amount) in the month */
   overdueInstallments: number;
   /** Count of covered installments in the month */
   coveredInstallments: number;
+
+  /** Sum of expectedAmount for known-amount installments (number if single currency, null if multiple currencies) */
+  scheduledKnownAmount: number | null;
+  /** Sum of min(allocatedAmount, expectedAmount) for covered/partial known-amount installments (number if single currency, null if multiple currencies) */
+  coveredKnownAmount: number | null;
+  /** Sum of remainingAmount for known-amount installments (number if single currency, null if multiple currencies) */
+  pendingKnownAmount: number | null;
+  /** Sum of remainingAmount for overdue known-amount installments (number if single currency, null if multiple currencies) */
+  overdueKnownAmount: number | null;
 }
 
 /**
  * Aggregate monthly planning metrics from a set of planning items.
+ *
+ * Top-level monetary amounts (scheduledKnownAmount, coveredKnownAmount, pendingKnownAmount, overdueKnownAmount)
+ * are populated as numbers ONLY when all items in the month share a single currency (or 0 items).
+ * If items belong to multiple distinct currencies, top-level monetary fields are set to null to prevent
+ * cross-currency summation, and byCurrency must be consumed for per-currency amounts.
  *
  * @param items     Full list (all months). Function filters by monthKey.
  * @param monthKey  "YYYY-MM"
@@ -256,10 +267,6 @@ export function summarizeDebtPlanningMonth(
   let totalInstallments = 0;
   let knownAmountInstallments = 0;
   let unknownAmountInstallments = 0;
-  let scheduledKnownAmount = 0;
-  let coveredKnownAmount = 0;
-  let pendingKnownAmount = 0;
-  let overdueKnownAmount = 0;
   let overdueInstallments = 0;
   let coveredInstallments = 0;
 
@@ -275,19 +282,23 @@ export function summarizeDebtPlanningMonth(
         coveredKnownAmount: 0,
         pendingKnownAmount: 0,
         overdueKnownAmount: 0,
+        totalInstallments: 0,
+        knownAmountInstallments: 0,
+        unknownAmountInstallments: 0,
+        overdueInstallments: 0,
+        coveredInstallments: 0,
       };
     }
     const currEntry = byCurrency[curr];
+    currEntry.totalInstallments++;
 
     if (!item.amountKnown) {
       unknownAmountInstallments++;
+      currEntry.unknownAmountInstallments++;
     } else {
       knownAmountInstallments++;
+      currEntry.knownAmountInstallments++;
       const coveredPart = Math.min(item.allocatedAmount, item.expectedAmount!);
-      scheduledKnownAmount += item.expectedAmount!;
-      coveredKnownAmount += coveredPart;
-      pendingKnownAmount += item.remainingAmount!;
-
       currEntry.scheduledKnownAmount += item.expectedAmount!;
       currEntry.coveredKnownAmount += coveredPart;
       currEntry.pendingKnownAmount += item.remainingAmount!;
@@ -295,40 +306,88 @@ export function summarizeDebtPlanningMonth(
 
     if (item.dueStatus === "overdue") {
       overdueInstallments++;
+      currEntry.overdueInstallments++;
       if (item.amountKnown) {
-        overdueKnownAmount += item.remainingAmount!;
         currEntry.overdueKnownAmount += item.remainingAmount!;
       }
     }
 
     if (item.dueStatus === "covered") {
       coveredInstallments++;
+      currEntry.coveredInstallments++;
     }
   }
 
   const currencyList = Array.from(currencies);
-  const primaryCurrency = currencyList.length === 1 ? currencyList[0] : (currencyList[0] || "PEN");
   const hasMultipleCurrencies = currencyList.length > 1;
 
+  if (hasMultipleCurrencies) {
+    return {
+      currencyCode: null,
+      hasMultipleCurrencies: true,
+      byCurrency,
+      totalInstallments,
+      knownAmountInstallments,
+      unknownAmountInstallments,
+      overdueInstallments,
+      coveredInstallments,
+      scheduledKnownAmount: null,
+      coveredKnownAmount: null,
+      pendingKnownAmount: null,
+      overdueKnownAmount: null,
+    };
+  }
+
+  const singleCurrency = currencyList[0] || "PEN";
+  const singleSummary = byCurrency[singleCurrency] || {
+    currencyCode: singleCurrency,
+    scheduledKnownAmount: 0,
+    coveredKnownAmount: 0,
+    pendingKnownAmount: 0,
+    overdueKnownAmount: 0,
+    totalInstallments: 0,
+    knownAmountInstallments: 0,
+    unknownAmountInstallments: 0,
+    overdueInstallments: 0,
+    coveredInstallments: 0,
+  };
+
   return {
-    currencyCode: primaryCurrency,
-    hasMultipleCurrencies,
+    currencyCode: singleCurrency,
+    hasMultipleCurrencies: false,
     byCurrency,
     totalInstallments,
     knownAmountInstallments,
     unknownAmountInstallments,
-    scheduledKnownAmount,
-    coveredKnownAmount,
-    pendingKnownAmount,
-    overdueKnownAmount,
     overdueInstallments,
     coveredInstallments,
+    scheduledKnownAmount: singleSummary.scheduledKnownAmount,
+    coveredKnownAmount: singleSummary.coveredKnownAmount,
+    pendingKnownAmount: singleSummary.pendingKnownAmount,
+    overdueKnownAmount: singleSummary.overdueKnownAmount,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Alert summary
+// Alert summary & Attention Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Select urgent non-covered debt planning items for attention views (e.g. Dashboard).
+ * Filters exclusively for: overdue, today, tomorrow, upcoming.
+ * Excludes: covered, later.
+ * Sorts by daysUntilDue ascending.
+ * Limits result to requested count (default 3).
+ */
+export function selectDebtPlanningAttentionItems(
+  items: DebtInstallmentPlanningItem[],
+  limit = 3
+): DebtInstallmentPlanningItem[] {
+  return items
+    .filter((item) => ["overdue", "today", "tomorrow", "upcoming"].includes(item.dueStatus))
+    .sort((a, b) => a.daysUntilDue - b.daysUntilDue)
+    .slice(0, limit);
+}
 
 export interface DebtPlanningAlertSummary {
   overdue: number;

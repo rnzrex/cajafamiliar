@@ -1,13 +1,11 @@
 import { useState } from "react";
 import {
-  AlertCircle,
   Calendar,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
   HelpCircle,
-  Info,
 } from "lucide-react";
 import type {
   DebtInstallmentPlanningItem,
@@ -139,47 +137,80 @@ export function DebtPlanningPanel({
 
         {monthSummary.hasMultipleCurrencies ? (
           <div className="space-y-3">
-            <p className="text-xs text-slate-500 italic">Obligaciones en múltiples monedas:</p>
+            <p className="text-xs text-slate-500 italic font-semibold">
+              Obligaciones en múltiples monedas (desglosadas por moneda):
+            </p>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {Object.values(monthSummary.byCurrency).map((c) => (
-                <div key={c.currencyCode} className="rounded-2xl bg-white p-4 shadow-sm border border-slate-200">
-                  <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue-800 mb-2 inline-block">
-                    {c.currencyCode}
-                  </span>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
+                <div key={c.currencyCode} className="rounded-2xl bg-white p-4 shadow-sm border border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-extrabold text-blue-800">
+                      Moneda: {c.currencyCode}
+                    </span>
+                    <span className="text-xs text-slate-500 font-medium">
+                      {c.totalInstallments} {c.totalInstallments === 1 ? "cuota" : "cuotas"}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-xs pt-1">
                     <div>
-                      <p className="text-slate-400 font-medium">Pendiente conocido</p>
-                      <p className="font-extrabold text-slate-900">{c.currencyCode} {c.pendingKnownAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className="text-slate-400 font-medium">Pendiente</p>
+                      <p className="font-extrabold text-slate-900">
+                        {c.currencyCode} {c.pendingKnownAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
                     </div>
                     <div>
                       <p className="text-slate-400 font-medium">Cubierto</p>
-                      <p className="font-extrabold text-emerald-700">{c.currencyCode} {c.coveredKnownAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className="font-extrabold text-emerald-700">
+                        {c.currencyCode} {c.coveredKnownAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-slate-400 font-medium">Vencido</p>
+                      <p className={`font-extrabold ${c.overdueKnownAmount > 0 ? "text-red-700" : "text-slate-700"}`}>
+                        {c.currencyCode} {c.overdueKnownAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
                     </div>
                   </div>
+
+                  {c.unknownAmountInstallments > 0 && (
+                    <p className="text-xs text-amber-700 font-bold pt-1">
+                      + {c.unknownAmountInstallments} {c.unknownAmountInstallments === 1 ? "cuota sin monto definido" : "cuotas sin monto definido"}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
+
+            {monthSummary.unknownAmountInstallments > 0 && (
+              <div className="rounded-2xl bg-amber-50 p-3 text-xs font-bold text-amber-800 flex items-center gap-2">
+                <HelpCircle className="h-4 w-4 shrink-0" />
+                <span>
+                  Total global: {monthSummary.unknownAmountInstallments} {monthSummary.unknownAmountInstallments === 1 ? "cuota con monto por confirmar" : "cuotas con monto por confirmar"}.
+                </span>
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
             <div className="rounded-2xl bg-white p-4 shadow-sm border border-slate-200/80">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Pendiente conocido</p>
               <p className="mt-1 text-2xl font-black text-slate-900">
-                {monthSummary.currencyCode} {monthSummary.pendingKnownAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {monthSummary.currencyCode ?? "PEN"} {(monthSummary.pendingKnownAmount ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
 
             <div className="rounded-2xl bg-white p-4 shadow-sm border border-slate-200/80">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Ya cubierto</p>
               <p className="mt-1 text-2xl font-black text-emerald-700">
-                {monthSummary.currencyCode} {monthSummary.coveredKnownAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {monthSummary.currencyCode ?? "PEN"} {(monthSummary.coveredKnownAmount ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
 
             <div className="rounded-2xl bg-white p-4 shadow-sm border border-slate-200/80">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Vencido en el mes</p>
-              <p className={`mt-1 text-2xl font-black ${monthSummary.overdueKnownAmount > 0 ? "text-red-700" : "text-slate-800"}`}>
-                {monthSummary.currencyCode} {monthSummary.overdueKnownAmount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              <p className={`mt-1 text-2xl font-black ${(monthSummary.overdueKnownAmount ?? 0) > 0 ? "text-red-700" : "text-slate-800"}`}>
+                {monthSummary.currencyCode ?? "PEN"} {(monthSummary.overdueKnownAmount ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
             </div>
 
@@ -224,10 +255,11 @@ export function DebtPlanningPanel({
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {group.items.map((item) => (
-                  <article
+                  <button
                     key={item.installmentId}
+                    type="button"
                     onClick={() => onSelectDebtId(item.debtId)}
-                    className="group relative flex min-h-[52px] flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-blue-500 hover:shadow-md transition cursor-pointer"
+                    className="w-full text-left group relative flex min-h-[52px] flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm hover:border-blue-500 hover:shadow-md transition cursor-pointer"
                   >
                     <div>
                       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -245,7 +277,7 @@ export function DebtPlanningPanel({
                       </p>
                     </div>
 
-                    <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                    <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs w-full">
                       <div>
                         {item.amountKnown ? (
                           <div className="space-y-0.5">
@@ -277,7 +309,7 @@ export function DebtPlanningPanel({
                         Ver &rarr;
                       </span>
                     </div>
-                  </article>
+                  </button>
                 ))}
               </div>
             </div>
