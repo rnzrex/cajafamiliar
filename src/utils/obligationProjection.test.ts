@@ -163,12 +163,12 @@ describe("DEBT-3D Obligation Projection Read-Model", () => {
       expect(result.items.map((i) => i.monthKey)).toEqual(["2026-08", "2026-09"]);
     });
 
-    it("4. fixed finished does not appear", () => {
+    it("4. fixed finished does not appear (with is_active: true)", () => {
       const pFinished = recurringPayment({
         recurrence_type: "fixed",
         total_installments: 3,
         paid_installments: 3,
-        is_active: false,
+        is_active: true,
       });
       const result = buildObligationProjection({ recurringPayments: [pFinished], debts: [], debtPlanningItems: [], todayKey });
 
@@ -187,16 +187,70 @@ describe("DEBT-3D Obligation Projection Read-Model", () => {
       expect(result.items[0].monthKey).toBe("2026-09");
     });
 
-    it("6. one_time pagado is excluded", () => {
+    it("6. one_time pagado is excluded (with is_active: true)", () => {
       const pOneTimePaid = recurringPayment({
         recurrence_type: "one_time",
         dueDate: "2026-08-10",
         status: "pagado",
-        is_active: false,
+        is_active: true,
       });
       const result = buildObligationProjection({ recurringPayments: [pOneTimePaid], debts: [], debtPlanningItems: [], todayKey });
 
       expect(result.items).toHaveLength(0);
+    });
+
+    it("fixed pagado este mes starts from next month with advancing installment numbers", () => {
+      const p = recurringPayment({
+        recurrence_type: "fixed",
+        is_active: true,
+        total_installments: 5,
+        paid_installments: 2,
+        last_paid_month: 8,
+        last_paid_year: 2026,
+        status: "pagado",
+      });
+      const result = buildObligationProjection({ recurringPayments: [p], debts: [], debtPlanningItems: [], todayKey });
+
+      expect(result.items).toHaveLength(2);
+      expect(result.items[0].monthKey).toBe("2026-09");
+      expect(result.items[0].detail).toBe("Cuota 3 de 5");
+      expect(result.items[1].monthKey).toBe("2026-10");
+      expect(result.items[1].detail).toBe("Cuota 4 de 5");
+    });
+
+    it("fixed pendiente este mes starts from current month with advancing installment numbers", () => {
+      const p = recurringPayment({
+        recurrence_type: "fixed",
+        is_active: true,
+        total_installments: 5,
+        paid_installments: 2,
+        last_paid_month: null,
+        status: "pendiente",
+      });
+      const result = buildObligationProjection({ recurringPayments: [p], debts: [], debtPlanningItems: [], todayKey });
+
+      expect(result.items).toHaveLength(3);
+      expect(result.items[0].monthKey).toBe("2026-08");
+      expect(result.items[0].detail).toBe("Cuota 3 de 5");
+      expect(result.items[1].monthKey).toBe("2026-09");
+      expect(result.items[1].detail).toBe("Cuota 4 de 5");
+      expect(result.items[2].monthKey).toBe("2026-10");
+      expect(result.items[2].detail).toBe("Cuota 5 de 5");
+    });
+
+    it("one_time vencido previo goes to overduePriorItems", () => {
+      const pOverduePrior = recurringPayment({
+        recurrence_type: "one_time",
+        is_active: true,
+        status: "pendiente",
+        dueDate: "2026-07-15",
+      });
+      const result = buildObligationProjection({ recurringPayments: [pOverduePrior], debts: [], debtPlanningItems: [], todayKey });
+
+      expect(result.items).toHaveLength(0);
+      expect(result.overduePriorItems).toHaveLength(1);
+      expect(result.overduePriorItems[0].isOverduePrior).toBe(true);
+      expect(result.overduePriorItems[0].dueStatus).toBe("overdue");
     });
 
     it("7. inactive is excluded", () => {

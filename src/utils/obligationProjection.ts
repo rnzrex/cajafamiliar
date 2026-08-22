@@ -177,9 +177,13 @@ export function buildObligationProjection({
         const candidateMonths = paidThisMonth ? [month1, month2] : [currentMonth, month1, month2];
         const selectedMonths = candidateMonths.slice(0, remainingInst);
 
-        for (const mKey of selectedMonths) {
+        const initialPaid = payment.paid_installments ?? 0;
+        const totalInst = payment.total_installments ?? 0;
+
+        selectedMonths.forEach((mKey, idx) => {
           const dueDate = monthlyDueDate(payment.dueDay, `${mKey}-01`);
           const status = dueDate ? dueDateStatus(dueDate, todayKey).kind : "upcoming";
+          const projectedInstallmentNumber = initialPaid + idx + 1;
 
           items.push({
             id: `rec:${payment.id}:${mKey}`,
@@ -189,7 +193,7 @@ export function buildObligationProjection({
             debtId: null,
             installmentId: null,
             label: payment.name,
-            detail: `Cuotas fijas (${(payment.paid_installments ?? 0) + 1}/${payment.total_installments ?? 0})`,
+            detail: totalInst > 0 ? `Cuota ${projectedInstallmentNumber} de ${totalInst}` : `Cuota ${projectedInstallmentNumber}`,
             dueDate,
             monthKey: mKey,
             currencyCode: "PEN",
@@ -198,7 +202,7 @@ export function buildObligationProjection({
             dueStatus: status,
             isOverduePrior: false,
           });
-        }
+        });
       }
     }
   }

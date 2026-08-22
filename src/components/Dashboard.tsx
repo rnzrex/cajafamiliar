@@ -14,7 +14,6 @@ import { CashCount, DebtEvent, FinancialAccount, Movement, RecurringPayment } fr
 import type { DebtInstallmentPlanningItem } from "../utils/debtPlanning";
 import { selectDebtPlanningAttentionItems } from "../utils/debtPlanning";
 import type { ObligationProjectionResult } from "../utils/obligationProjection";
-import { buildObligationProjection } from "../utils/obligationProjection";
 import { ObligationsProjectionPanel } from "./ObligationsProjectionPanel";
 import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAmountLabel, paymentScheduleLabel, paymentStatus, topExpenseCategory } from "../utils/calculations";
 import { accountNameForMovement, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
@@ -28,7 +27,7 @@ interface DashboardProps {
   cashCounts: CashCount[];
   recurringPayments: RecurringPayment[];
   debtPlanningItems?: DebtInstallmentPlanningItem[];
-  obligationProjection?: ObligationProjectionResult;
+  obligationProjection: ObligationProjectionResult;
   initialBalance: number;
   accounts: FinancialAccount[];
   onNavigate: (view: string) => void;
@@ -237,14 +236,7 @@ export function Dashboard({
       </section>
 
       <ObligationsProjectionPanel
-        obligationProjection={
-          obligationProjection ??
-          buildObligationProjection({
-            recurringPayments,
-            debts: [],
-            debtPlanningItems,
-          })
-        }
+        obligationProjection={obligationProjection}
         onOpenPayment={onOpenPayment}
         onOpenDebt={onOpenDebt}
       />
