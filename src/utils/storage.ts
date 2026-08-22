@@ -1,7 +1,8 @@
-import { AppData, CashCount, Category, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
 import { localDateString } from "./date";
 import { isSupabaseConfigured } from "../services/supabaseClient";
 import { normalizeDebtCollaterals, normalizeDebtEventInstallmentAllocations, normalizeDebtEvents, normalizeDebtInstallments, normalizeDebtScheduleVersions, normalizeDebts } from "./debtNormalizers";
+import { normalizeCreditCardEntries, normalizeCreditCardProfiles } from "./creditCardNormalizers";
 
 const STORAGE_KEY = "caja-familiar-data";
 const PREFERRED_PERSON_KEY = "caja-familiar-preferred-person";
@@ -23,6 +24,8 @@ export interface AppDataSnapshotInput {
   debtInstallments?: DebtInstallment[];
   debtEventInstallmentAllocations?: DebtEventInstallmentAllocation[];
   debtCollaterals?: DebtCollateral[];
+  creditCardProfiles?: CreditCardProfile[];
+  creditCardEntries?: CreditCardEntry[];
 }
 
 export interface OfflineAccessRecord {
@@ -186,6 +189,8 @@ export const defaultData: AppData = {
   debtInstallments: [],
   debtEventInstallmentAllocations: [],
   debtCollaterals: [],
+  creditCardProfiles: [],
+  creditCardEntries: [],
 };
 
 export function loadCachedData(): AppData | null {
@@ -373,6 +378,8 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
     debtInstallments: normalizeDebtInstallments(data.debtInstallments ?? []),
     debtEventInstallmentAllocations: normalizeDebtEventInstallmentAllocations(data.debtEventInstallmentAllocations ?? []),
     debtCollaterals: normalizeDebtCollaterals(data.debtCollaterals ?? []),
+    creditCardProfiles: normalizeCreditCardProfiles(data.creditCardProfiles ?? []),
+    creditCardEntries: normalizeCreditCardEntries(data.creditCardEntries ?? []),
     movements: data.movements.map((movement) => ({
       ...movement,
       category: movementCategoryMap[movement.category] ?? movement.category,
@@ -516,6 +523,29 @@ function isAppDataSnapshot(value: unknown): value is AppDataSnapshotInput {
             typeof collateral.createdByUserId === "string" &&
             typeof collateral.createdAt === "string" &&
             typeof collateral.updatedAt === "string"
+        ))) &&
+    (value.creditCardProfiles === undefined ||
+      (Array.isArray(value.creditCardProfiles) &&
+        value.creditCardProfiles.every(
+          (profile) =>
+            isRecord(profile) &&
+            typeof profile.debtId === "string" &&
+            typeof profile.createdByUserId === "string" &&
+            typeof profile.createdAt === "string" &&
+            typeof profile.updatedAt === "string"
+        ))) &&
+    (value.creditCardEntries === undefined ||
+      (Array.isArray(value.creditCardEntries) &&
+        value.creditCardEntries.every(
+          (entry) =>
+            isRecord(entry) &&
+            typeof entry.id === "string" &&
+            typeof entry.debtId === "string" &&
+            typeof entry.entryDate === "string" &&
+            typeof entry.entryType === "string" &&
+            isPresentNumeric(entry.liabilityDelta) &&
+            typeof entry.registeredByUserId === "string" &&
+            typeof entry.createdAt === "string"
         )))
   );
 }

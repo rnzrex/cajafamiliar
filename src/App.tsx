@@ -143,6 +143,8 @@ const EMPTY_APP_DATA: AppData = {
   debtInstallments: [],
   debtEventInstallmentAllocations: [],
   debtCollaterals: [],
+  creditCardProfiles: [],
+  creditCardEntries: [],
 };
 
 const OFFLINE_WRITE_MESSAGE = "Estás sin conexión. Puedes consultar tu información, pero para registrar o modificar datos necesitas conectarte a internet.";

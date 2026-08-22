@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -68,6 +68,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       debtInstallmentsResult,
       debtAllocationsResult,
       debtCollateralsResult,
+      creditCardProfilesResult,
+      creditCardEntriesResult,
     ] = await Promise.all([
       supabase.from("settings").select("*").eq("household_id", householdId).maybeSingle(),
       supabase.from("movements").select("*").eq("household_id", householdId).order("date", { ascending: false }),
@@ -81,6 +83,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       supabase.from("debt_installments").select("*").eq("household_id", householdId).order("due_date", { ascending: true }).order("installment_number", { ascending: true }),
       supabase.from("debt_event_installment_allocations").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
       supabase.from("debt_collaterals").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
+      supabase.from("credit_card_profiles").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
+      supabase.from("credit_card_entries").select("*").eq("household_id", householdId).order("entry_date", { ascending: true }).order("created_at", { ascending: true }),
     ]);
 
     const queryError = [
@@ -96,6 +100,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       debtInstallmentsResult,
       debtAllocationsResult,
       debtCollateralsResult,
+      creditCardProfilesResult,
+      creditCardEntriesResult,
     ].find((result) => result.error)?.error;
     if (queryError) throw queryError;
 
@@ -122,6 +128,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       debtInstallments: (debtInstallmentsResult.data ?? []).map(fromDebtInstallmentRow),
       debtEventInstallmentAllocations: (debtAllocationsResult.data ?? []).map(fromDebtEventInstallmentAllocationRow),
       debtCollaterals: (debtCollateralsResult.data ?? []).map(fromDebtCollateralRow),
+      creditCardProfiles: (creditCardProfilesResult.data ?? []).map(fromCreditCardProfileRow),
+      creditCardEntries: (creditCardEntriesResult.data ?? []).map(fromCreditCardEntryRow),
     });
 
     saveData(remoteData);
@@ -1079,6 +1087,34 @@ function fromDebtCollateralRow(row: Record<string, any>): DebtCollateral {
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+export function fromCreditCardProfileRow(row: Record<string, any>): CreditCardProfile {
+  return {
+    debtId: String(row.debt_id),
+    creditLimit: row.credit_limit != null ? Number(row.credit_limit) : null,
+    closingDay: row.closing_day != null ? Number(row.closing_day) : null,
+    dueDay: row.due_day != null ? Number(row.due_day) : null,
+    last4: row.last4 ?? null,
+    createdByUserId: String(row.created_by_user_id),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+export function fromCreditCardEntryRow(row: Record<string, any>): CreditCardEntry {
+  return {
+    id: String(row.id),
+    debtId: String(row.debt_id),
+    entryDate: String(row.entry_date),
+    entryType: row.entry_type,
+    liabilityDelta: Number(row.liability_delta),
+    movementId: row.movement_id ?? null,
+    reversalOfEntryId: row.reversal_of_entry_id ?? null,
+    description: String(row.description ?? ""),
+    registeredByUserId: String(row.registered_by_user_id),
+    createdAt: String(row.created_at),
   };
 }
 

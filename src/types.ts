@@ -146,6 +146,32 @@ export interface DebtCollateral {
   updatedAt: string;
 }
 
+export interface CreditCardProfile {
+  debtId: string;
+  creditLimit: number | null;
+  closingDay: number | null;
+  dueDay: number | null;
+  last4: string | null;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreditCardEntryType = "purchase" | "payment" | "finance_charge" | "credit" | "reversal";
+
+export interface CreditCardEntry {
+  id: string;
+  debtId: string;
+  entryDate: string;
+  entryType: CreditCardEntryType;
+  liabilityDelta: number;
+  movementId: string | null;
+  reversalOfEntryId: string | null;
+  description: string;
+  registeredByUserId: string;
+  createdAt: string;
+}
+
 export interface DebtScheduleInstallmentInput {
   installmentNumber: number;
   dueDate: string;
@@ -276,6 +302,8 @@ export interface AppData {
   debtInstallments: DebtInstallment[];
   debtEventInstallmentAllocations: DebtEventInstallmentAllocation[];
   debtCollaterals: DebtCollateral[];
+  creditCardProfiles: CreditCardProfile[];
+  creditCardEntries: CreditCardEntry[];
 }
 
 export const baseCategories: Category[] = [
