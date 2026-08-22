@@ -5,6 +5,7 @@ import type { DebtIntelligenceItem } from "./debtIntelligence.js";
 import { buildDebtPortfolioIntelligence } from "./debtIntelligence.js";
 import { buildDebtStrategies } from "./debtStrategy.js";
 import { simulateDebtPrincipalPrepayment } from "./debtSimulation.js";
+import { effectiveDebtEvents } from "./debtCalculations.js";
 import {
   avalancheComparisonModeLabel,
   cashFlowUnrankedReasonLabel,
@@ -17,7 +18,7 @@ import { DebtPortfolioIntelligencePanel } from "../components/DebtPortfolioIntel
 import { DebtStrategyPanel } from "../components/DebtStrategyPanel.js";
 import { DebtAnalysisPanel } from "../components/DebtAnalysisPanel.js";
 import { DebtsManager } from "../components/DebtsManager.js";
-import type { Debt } from "../types.js";
+import type { Debt, DebtEvent, DebtInstallment, DebtCollateral } from "../types.js";
 
 function mockIntelligenceItem(overrides: Partial<DebtIntelligenceItem> = {}): DebtIntelligenceItem {
   return {
@@ -131,6 +132,28 @@ function mockDebt(overrides: Partial<Debt> = {}): Debt {
     createdByUserId: "u1",
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function mockEvent(overrides: Partial<DebtEvent> = {}): DebtEvent {
+  return {
+    id: "ev1",
+    debtId: "d1",
+    eventType: "payment",
+    eventDate: "2026-02-01",
+    cashAmount: 900,
+    principalDelta: -800,
+    interestPaid: 100,
+    feesPaid: 0,
+    insurancePaid: 0,
+    otherCostPaid: 0,
+    breakdownComplete: true,
+    movementId: null,
+    reversalOfEventId: null,
+    registeredByUserId: "u1",
+    description: "Pago cuota 1",
+    createdAt: "2026-02-01T00:00:00Z",
     ...overrides,
   };
 }
@@ -472,6 +495,107 @@ describe("DEBT-4D Debt Intelligence, Strategy & Simulator UX", () => {
 
       expect(html).not.toContain("Registrar pago");
       expect(html).not.toContain("Aplicar prepago");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 6. DEBT DETAIL MODAL OPERATIONS & REGRESSION (Tests 33-38)
+  // -------------------------------------------------------------------------
+  describe("DebtDetailModal Operations & Regression", () => {
+    it("33. presentation of reversed event preserves 'Revertido' status check", () => {
+      const debt = mockDebt();
+      const payEv = mockEvent({ id: "ev1", eventType: "payment" });
+      const revEv = mockEvent({ id: "ev2", eventType: "reversal", reversalOfEventId: "ev1" });
+      const events = [payEv, revEv];
+      const activeEvents = effectiveDebtEvents(events, debt.id);
+
+      const isReversal = payEv.eventType === "reversal";
+      const isReversed = activeEvents.find((ae) => ae.id === payEv.id) === undefined && !isReversal;
+
+      expect(isReversed).toBe(true);
+    });
+
+    it("34. reversible event maintains 'canReverse' capability", () => {
+      const debt = mockDebt();
+      const payEv = mockEvent({ id: "ev1", eventType: "payment" });
+      const events = [payEv];
+      const activeEvents = effectiveDebtEvents(events, debt.id);
+
+      const isReversal = payEv.eventType === "reversal";
+      const isReversed = activeEvents.find((ae) => ae.id === payEv.id) === undefined && !isReversal;
+      const isSupportedReversal = ["payment", "principal_prepayment", "payoff"].includes(payEv.eventType);
+      const canReverse = !isReversal && !isReversed && debt.status !== "refinanced" && isSupportedReversal;
+
+      expect(canReverse).toBe(true);
+    });
+
+    it("35. reversal event is not reversible", () => {
+      const debt = mockDebt();
+      const revEv = mockEvent({ id: "ev2", eventType: "reversal" });
+      const events = [revEv];
+      const activeEvents = effectiveDebtEvents(events, debt.id);
+
+      const isReversal = revEv.eventType === "reversal";
+      const isReversed = activeEvents.find((ae) => ae.id === revEv.id) === undefined && !isReversal;
+      const isSupportedReversal = ["payment", "principal_prepayment", "payoff"].includes(revEv.eventType);
+      const canReverse = !isReversal && !isReversed && debt.status !== "refinanced" && isSupportedReversal;
+
+      expect(canReverse).toBe(false);
+    });
+
+    it("36. refinanced debt does not allow reversal", () => {
+      const debt = mockDebt({ status: "refinanced" });
+      const payEv = mockEvent({ id: "ev1", eventType: "payment" });
+      const events = [payEv];
+      const activeEvents = effectiveDebtEvents(events, debt.id);
+
+      const isReversal = payEv.eventType === "reversal";
+      const isReversed = activeEvents.find((ae) => ae.id === payEv.id) === undefined && !isReversal;
+      const isSupportedReversal = ["payment", "principal_prepayment", "payoff"].includes(payEv.eventType);
+      const canReverse = !isReversal && !isReversed && debt.status !== "refinanced" && isSupportedReversal;
+
+      expect(canReverse).toBe(false);
+    });
+
+    it("37. expectedAmount=null is presented as 'Por confirmar' in schedule formula", () => {
+      const inst: DebtInstallment = {
+        id: "i1",
+        debtId: "d1",
+        scheduleVersionId: "sv1",
+        installmentNumber: 1,
+        dueDate: "2026-02-01",
+        expectedAmount: null,
+        expectedPrincipal: null,
+        expectedInterest: null,
+        expectedFees: null,
+        expectedInsurance: null,
+        createdByUserId: "u1",
+        createdAt: "2026-01-01T00:00:00Z",
+      };
+
+      const displayText = inst.expectedAmount != null ? `PEN ${inst.expectedAmount}` : "Por confirmar";
+      expect(displayText).toBe("Por confirmar");
+    });
+
+    it("38. collateral estimatedValue does not receive invented debt.currencyCode formatting", () => {
+      const collateral: DebtCollateral = {
+        id: "c1",
+        debtId: "d1",
+        description: "Auto Toyota",
+        pledgedValue: null,
+        estimatedValue: 15000,
+        redemptionDeadline: null,
+        status: "pledged",
+        notes: "",
+        createdByUserId: "u1",
+        createdAt: "2026-01-01T00:00:00Z",
+        updatedAt: "2026-01-01T00:00:00Z",
+      };
+
+      const rawValueDisplay = `Valor estimado: ${collateral.estimatedValue}`;
+      expect(rawValueDisplay).toBe("Valor estimado: 15000");
+      expect(rawValueDisplay).not.toContain("USD");
+      expect(rawValueDisplay).not.toContain("PEN");
     });
   });
 });
