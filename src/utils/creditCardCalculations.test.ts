@@ -49,7 +49,7 @@ function mockEntry(overrides: Partial<CreditCardEntry> = {}): CreditCardEntry {
   };
 }
 
-describe("DEBT-5A Credit Card Liability Foundation", () => {
+describe("DEBT-5A Credit Card Liability Foundation & Hardening", () => {
   // -------------------------------------------------------------------------
   // 1. EFFECTIVE ENTRIES (Tests 1-10)
   // -------------------------------------------------------------------------
@@ -203,27 +203,27 @@ describe("DEBT-5A Credit Card Liability Foundation", () => {
   // -------------------------------------------------------------------------
   describe("Profile & Normalization", () => {
     it("21. numeric creditLimit is preserved", () => {
-      const p = normalizeCreditCardProfile({ debtId: "d1", creditLimit: 5000 });
+      const p = normalizeCreditCardProfile({ debtId: "d1", creditLimit: 5000, createdByUserId: "u1", createdAt: "2026-08-01", updatedAt: "2026-08-01" });
       expect(p?.creditLimit).toBe(5000);
     });
 
     it("22. null creditLimit is preserved", () => {
-      const p = normalizeCreditCardProfile({ debtId: "d1", creditLimit: null });
+      const p = normalizeCreditCardProfile({ debtId: "d1", creditLimit: null, createdByUserId: "u1", createdAt: "2026-08-01", updatedAt: "2026-08-01" });
       expect(p?.creditLimit).toBeNull();
     });
 
     it("23. null closingDay is preserved", () => {
-      const p = normalizeCreditCardProfile({ debtId: "d1", closingDay: null });
+      const p = normalizeCreditCardProfile({ debtId: "d1", closingDay: null, createdByUserId: "u1", createdAt: "2026-08-01", updatedAt: "2026-08-01" });
       expect(p?.closingDay).toBeNull();
     });
 
     it("24. null dueDay is preserved", () => {
-      const p = normalizeCreditCardProfile({ debtId: "d1", dueDay: null });
+      const p = normalizeCreditCardProfile({ debtId: "d1", dueDay: null, createdByUserId: "u1", createdAt: "2026-08-01", updatedAt: "2026-08-01" });
       expect(p?.dueDay).toBeNull();
     });
 
     it("25. null last4 is preserved", () => {
-      const p = normalizeCreditCardProfile({ debtId: "d1", last4: null });
+      const p = normalizeCreditCardProfile({ debtId: "d1", last4: null, createdByUserId: "u1", createdAt: "2026-08-01", updatedAt: "2026-08-01" });
       expect(p?.last4).toBeNull();
     });
 
@@ -259,6 +259,7 @@ describe("DEBT-5A Credit Card Liability Foundation", () => {
         liability_delta: 350.5,
         movement_id: "m1",
         registered_by_user_id: "u1",
+        created_at: "2026-08-01T00:00:00Z",
       });
       expect(e?.liabilityDelta).toBe(350.5);
     });
@@ -336,6 +337,104 @@ describe("DEBT-5A Credit Card Liability Foundation", () => {
         creditCardEntries: [entry],
       });
       expect(norm.creditCardEntries[0].movementId).toBe("mov-123");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 5. POST-AUDIT HARDENING TESTS (Tests 35-41)
+  // -------------------------------------------------------------------------
+  describe("Post-Audit Hardening Tests (35-41)", () => {
+    it("35. debtId filter is not affected by reversal belonging to another debt", () => {
+      const p1 = mockEntry({ id: "e1", debtId: "d1", entryType: "purchase", liabilityDelta: 500 });
+      const revD2 = mockEntry({ id: "r1", debtId: "d2", entryType: "reversal", liabilityDelta: 0, reversalOfEntryId: "e1", movementId: null });
+
+      const d1Effective = effectiveCreditCardEntries([p1, revD2], "d1");
+      expect(d1Effective).toHaveLength(1);
+      expect(d1Effective[0].id).toBe("e1");
+
+      const debt1 = mockDebt({ id: "d1", openingPrincipalBalance: 1000 });
+      expect(currentCreditCardBalance(debt1, [p1, revD2])).toBe(1500);
+    });
+
+    it("36. profile sin createdByUserId => null", () => {
+      const p = normalizeCreditCardProfile({
+        debtId: "d1",
+        createdAt: "2026-08-01T00:00:00Z",
+        updatedAt: "2026-08-01T00:00:00Z",
+      });
+      expect(p).toBeNull();
+    });
+
+    it("37. profile sin createdAt => null", () => {
+      const p = normalizeCreditCardProfile({
+        debtId: "d1",
+        createdByUserId: "u1",
+        updatedAt: "2026-08-01T00:00:00Z",
+      });
+      expect(p).toBeNull();
+    });
+
+    it("38. profile sin updatedAt => null", () => {
+      const p = normalizeCreditCardProfile({
+        debtId: "d1",
+        createdByUserId: "u1",
+        createdAt: "2026-08-01T00:00:00Z",
+      });
+      expect(p).toBeNull();
+    });
+
+    it("39. entry sin registeredByUserId => null", () => {
+      const e = normalizeCreditCardEntry({
+        id: "e1",
+        debtId: "d1",
+        entryDate: "2026-08-01",
+        entryType: "purchase",
+        liabilityDelta: 200,
+        createdAt: "2026-08-01T00:00:00Z",
+      });
+      expect(e).toBeNull();
+    });
+
+    it("40. entry sin createdAt => null", () => {
+      const e = normalizeCreditCardEntry({
+        id: "e1",
+        debtId: "d1",
+        entryDate: "2026-08-01",
+        entryType: "purchase",
+        liabilityDelta: 200,
+        registeredByUserId: "u1",
+      });
+      expect(e).toBeNull();
+    });
+
+    it("41. normalizar el mismo input dos veces produce exactamente el mismo resultado", () => {
+      const profileInput = {
+        debt_id: "d1",
+        credit_limit: 5000,
+        closing_day: 15,
+        due_day: 5,
+        last4: "1234",
+        created_by_user_id: "u1",
+        created_at: "2026-08-01T00:00:00Z",
+        updated_at: "2026-08-01T00:00:00Z",
+      };
+      const res1 = normalizeCreditCardProfile(profileInput);
+      const res2 = normalizeCreditCardProfile(profileInput);
+      expect(res1).toEqual(res2);
+
+      const entryInput = {
+        id: "e1",
+        debt_id: "d1",
+        entry_date: "2026-08-01",
+        entry_type: "purchase",
+        liability_delta: 200,
+        movement_id: "m1",
+        registered_by_user_id: "u1",
+        created_at: "2026-08-01T00:00:00Z",
+      };
+      const entryRes1 = normalizeCreditCardEntry(entryInput);
+      const entryRes2 = normalizeCreditCardEntry(entryInput);
+      expect(entryRes1).toEqual(entryRes2);
     });
   });
 });

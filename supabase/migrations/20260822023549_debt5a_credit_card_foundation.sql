@@ -76,7 +76,7 @@ create table public.credit_card_entries (
   entry_date date not null,
   entry_type text not null,
   liability_delta numeric not null,
-  movement_id uuid null,
+  movement_id text null,
   reversal_of_entry_id uuid null,
   description text not null default '',
   registered_by_user_id uuid not null,
@@ -95,6 +95,8 @@ create table public.credit_card_entries (
     ),
   constraint credit_card_entries_reversal_self_check
     check (reversal_of_entry_id is null or reversal_of_entry_id <> id),
+  constraint credit_card_entries_id_debt_household_key
+    unique (id, debt_id, household_id),
   constraint credit_card_entries_profile_fkey
     foreign key (debt_id, household_id)
     references public.credit_card_profiles(debt_id, household_id)
@@ -104,9 +106,9 @@ create table public.credit_card_entries (
     references public.movements(id, household_id)
     on delete restrict,
   constraint credit_card_entries_reversal_fkey
-    foreign key (reversal_of_entry_id)
-    references public.credit_card_entries(id)
-    on delete restrict,
+    foreign key (reversal_of_entry_id, debt_id, household_id)
+    references public.credit_card_entries(id, debt_id, household_id)
+    on delete no action,
   constraint credit_card_entries_registered_by_user_fkey
     foreign key (registered_by_user_id)
     references auth.users(id)

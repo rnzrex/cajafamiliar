@@ -1,17 +1,19 @@
 import type { CreditCardEntry, Debt } from "../types";
 
 export function effectiveCreditCardEntries(entries: CreditCardEntry[], debtId?: string): CreditCardEntry[] {
+  const scopedEntries =
+    debtId === undefined
+      ? entries
+      : entries.filter((entry) => entry.debtId === debtId);
+
   const reversedIds = new Set<string>(
-    entries
+    scopedEntries
       .filter((entry) => entry.entryType === "reversal" && entry.reversalOfEntryId !== null)
       .map((entry) => entry.reversalOfEntryId!)
   );
 
-  return entries.filter(
-    (entry) =>
-      entry.entryType !== "reversal" &&
-      !reversedIds.has(entry.id) &&
-      (debtId === undefined || entry.debtId === debtId)
+  return scopedEntries.filter(
+    (entry) => entry.entryType !== "reversal" && !reversedIds.has(entry.id)
   );
 }
 

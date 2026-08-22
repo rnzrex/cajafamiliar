@@ -25,21 +25,24 @@ export function normalizeCreditCardProfile(item: unknown): CreditCardProfile | n
       ? raw.createdByUserId
       : typeof raw.created_by_user_id === "string"
       ? raw.created_by_user_id
-      : "system";
+      : null;
+  if (!createdByUserId) return null;
 
   const createdAt =
     typeof raw.createdAt === "string"
       ? raw.createdAt
       : typeof raw.created_at === "string"
       ? raw.created_at
-      : new Date().toISOString();
+      : null;
+  if (!createdAt) return null;
 
   const updatedAt =
     typeof raw.updatedAt === "string"
       ? raw.updatedAt
       : typeof raw.updated_at === "string"
       ? raw.updated_at
-      : createdAt;
+      : null;
+  if (!updatedAt) return null;
 
   return {
     debtId,
@@ -95,14 +98,16 @@ export function normalizeCreditCardEntry(item: unknown): CreditCardEntry | null 
       ? raw.registeredByUserId
       : typeof raw.registered_by_user_id === "string"
       ? raw.registered_by_user_id
-      : "system";
+      : null;
+  if (!registeredByUserId) return null;
 
   const createdAt =
     typeof raw.createdAt === "string"
       ? raw.createdAt
       : typeof raw.created_at === "string"
       ? raw.created_at
-      : new Date().toISOString();
+      : null;
+  if (!createdAt) return null;
 
   return {
     id,
