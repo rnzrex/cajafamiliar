@@ -190,7 +190,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const canWriteDebt = isSupabaseConfigured && isBrowserOnline && Boolean(currentMember);
   const expected = useMemo(() => {
     const cashAccount = getActiveCashAccount(data.financialAccounts);
-    return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null);
+    return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null, data.creditCardEntries);
   }, [data.financialAccounts, data.movements, data.initialBalance]);
   const debtPlanningItems = useMemo(
     () =>
@@ -1216,6 +1216,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
             <Dashboard
               movements={data.movements}
               debtEvents={data.debtEvents}
+              creditCardEntries={data.creditCardEntries}
               pendingMovementIds={pendingMovementIds}
               cashCounts={data.cashCounts}
               recurringPayments={data.recurringPayments}
@@ -1266,6 +1267,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
           {view === "conteo" && (
             <CashCounter
               movements={data.movements}
+              creditCardEntries={data.creditCardEntries}
               initialBalance={data.initialBalance}
               cashCounts={data.cashCounts}
               cashAccount={cashAccount}
@@ -1288,7 +1290,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
           )}
           {view === "reportes" && (
             <Suspense fallback={<section className="rounded-lg bg-white p-5 text-slate-600 soft-shadow">Cargando reportes...</section>}>
-              <Reports movements={data.movements} debtEvents={data.debtEvents} categories={data.categories} accounts={data.financialAccounts} initialBalance={data.initialBalance} />
+              <Reports movements={data.movements} debtEvents={data.debtEvents} creditCardEntries={data.creditCardEntries} categories={data.categories} accounts={data.financialAccounts} initialBalance={data.initialBalance} />
             </Suspense>
           )}
           {view === "categorias" && <CategoriesManager categories={data.categories} onSave={saveCategory} onDelete={deleteCategory} onToggle={toggleCategory} />}

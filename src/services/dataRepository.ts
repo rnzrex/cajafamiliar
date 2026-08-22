@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -682,6 +682,15 @@ export function mapCreditCardOperationError(message: string): CreditCardOperatio
     "INVALID_CREDIT_CARD_PURCHASE",
     "INVALID_CREDIT_CARD_PAYMENT",
     "INVALID_CREDIT_CARD_STATEMENT",
+    "INVALID_CREDIT_CARD_FEE",
+    "INVALID_CREDIT_CARD_CREDIT",
+    "INVALID_CREDIT_CARD_REVERSAL",
+    "TARGET_ENTRY_NOT_FOUND",
+    "REVERSAL_TARGET_INVALID",
+    "TARGET_ALREADY_REVERSED",
+    "CREDIT_CARD_CREDIT_TARGET_INVALID",
+    "CREDIT_CARD_REFUND_EXCEEDS_TARGET",
+    "CREDIT_CARD_TARGET_HAS_EFFECTIVE_CREDITS",
     "ACCOUNT_NOT_FOUND",
     "ACCOUNT_INACTIVE",
     "ACCOUNT_CURRENCY_MISMATCH",
@@ -749,6 +758,97 @@ export async function recordCreditCardPayment(input: CreditCardPaymentInput): Pr
     throw error;
   }
   if (!data || typeof data !== "object") throw new Error("La RPC record_credit_card_payment_v1 no devolvió un resultado válido.");
+  return {
+    success: Boolean((data as any).success),
+    entryId: String((data as any).entry_id),
+    movementId: String((data as any).movement_id),
+    idempotent: Boolean((data as any).idempotent),
+  };
+}
+
+export function toCreditCardFeeRpcArgs(input: CreditCardFeeInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_entry_id: input.entryId,
+    p_movement_id: input.movementId,
+    p_fee_date: input.feeDate,
+    p_amount: input.amount,
+    p_description: input.description,
+    p_category: input.category,
+  };
+}
+
+export async function recordCreditCardFee(input: CreditCardFeeInput): Promise<CreditCardFeeResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+
+  const { data, error } = await supabase.rpc("record_credit_card_fee_v1", toCreditCardFeeRpcArgs(input));
+  if (error) {
+    const mapped = mapCreditCardOperationError(error.message);
+    if (mapped) throw mapped;
+    throw error;
+  }
+  if (!data || typeof data !== "object") throw new Error("La RPC record_credit_card_fee_v1 no devolvió un resultado válido.");
+  return {
+    success: Boolean((data as any).success),
+    entryId: String((data as any).entry_id),
+    movementId: String((data as any).movement_id),
+    idempotent: Boolean((data as any).idempotent),
+  };
+}
+
+export function toCreditCardReversalRpcArgs(input: CreditCardReversalInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_reversal_entry_id: input.reversalEntryId,
+    p_target_entry_id: input.targetEntryId,
+    p_reversal_date: input.reversalDate,
+    p_description: input.description,
+  };
+}
+
+export async function reverseCreditCardEntry(input: CreditCardReversalInput): Promise<CreditCardReversalResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+
+  const { data, error } = await supabase.rpc("reverse_credit_card_entry_v1", toCreditCardReversalRpcArgs(input));
+  if (error) {
+    const mapped = mapCreditCardOperationError(error.message);
+    if (mapped) throw mapped;
+    throw error;
+  }
+  if (!data || typeof data !== "object") throw new Error("La RPC reverse_credit_card_entry_v1 no devolvió un resultado válido.");
+  return {
+    success: Boolean((data as any).success),
+    entryId: String((data as any).entry_id),
+    reversalOfEntryId: String((data as any).reversal_of_entry_id),
+    idempotent: Boolean((data as any).idempotent),
+  };
+}
+
+export function toCreditCardCreditRpcArgs(input: CreditCardCreditInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_entry_id: input.entryId,
+    p_movement_id: input.movementId,
+    p_target_entry_id: input.targetEntryId,
+    p_credit_date: input.creditDate,
+    p_amount: input.amount,
+    p_description: input.description,
+  };
+}
+
+export async function recordCreditCardCredit(input: CreditCardCreditInput): Promise<CreditCardCreditResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+
+  const { data, error } = await supabase.rpc("record_credit_card_credit_v1", toCreditCardCreditRpcArgs(input));
+  if (error) {
+    const mapped = mapCreditCardOperationError(error.message);
+    if (mapped) throw mapped;
+    throw error;
+  }
+  if (!data || typeof data !== "object") throw new Error("La RPC record_credit_card_credit_v1 no devolvió un resultado válido.");
   return {
     success: Boolean((data as any).success),
     entryId: String((data as any).entry_id),
@@ -1042,7 +1142,18 @@ function fromMovementRow(row: Record<string, any>): Movement {
     person: row.person,
     registeredByUserId: row.registered_by_user_id ?? null,
     accountId: row.account_id ?? null,
-    movementContext: row.movement_context === "debt_service" ? "debt_service" : row.movement_context === "credit_card_purchase" ? "credit_card_purchase" : "standard",
+    movementContext:
+      row.movement_context === "debt_service"
+        ? "debt_service"
+        : row.movement_context === "credit_card_purchase"
+        ? "credit_card_purchase"
+        : row.movement_context === "credit_card_payment"
+        ? "credit_card_payment"
+        : row.movement_context === "credit_card_fee"
+        ? "credit_card_fee"
+        : row.movement_context === "credit_card_credit"
+        ? "credit_card_credit"
+        : "standard",
     createdAt: row.created_at,
   };
 }
@@ -1240,6 +1351,7 @@ export function fromCreditCardEntryRow(row: Record<string, any>): CreditCardEntr
     entryType: row.entry_type,
     liabilityDelta: Number(row.liability_delta),
     movementId: row.movement_id ?? null,
+    creditOfEntryId: row.credit_of_entry_id ?? null,
     reversalOfEntryId: row.reversal_of_entry_id ?? null,
     description: String(row.description ?? ""),
     registeredByUserId: String(row.registered_by_user_id),

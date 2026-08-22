@@ -1,4 +1,5 @@
-import type { DebtEvent, Movement } from "../types.js";
+import type { CreditCardEntry, DebtEvent, Movement } from "../types.js";
+import { isCreditCardMovementEffective } from "./creditCardCalculations.js";
 import { effectiveDebtFundEvents } from "./debtCalculations.js";
 
 export interface MovementEconomics {
@@ -13,7 +14,11 @@ export interface MovementEconomics {
   effectiveDebtEventId: string | null;
 }
 
-export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]): MovementEconomics {
+export function getMovementEconomics(
+  movement: Movement,
+  debtEvents: DebtEvent[],
+  creditCardEntries?: CreditCardEntry[]
+): MovementEconomics {
   const empty: MovementEconomics = {
     cashOutflow: 0,
     economicExpense: 0,
@@ -32,30 +37,39 @@ export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]
     return { ...empty, cashOutflow: movement.amount, economicExpense: movement.amount };
   }
 
-  if (movement.movementContext === "credit_card_purchase") {
-    return {
-      ...empty,
-      cashOutflow: 0,
-      economicExpense: movement.amount,
-      liabilityDelta: movement.amount,
-    };
-  }
+  if (
+    movement.movementContext === "credit_card_purchase" ||
+    movement.movementContext === "credit_card_payment" ||
+    movement.movementContext === "credit_card_fee" ||
+    movement.movementContext === "credit_card_credit"
+  ) {
+    if (creditCardEntries && !isCreditCardMovementEffective(movement.id, creditCardEntries)) {
+      return empty;
+    }
 
-  if (movement.movementContext === "credit_card_payment") {
+    if (movement.movementContext === "credit_card_purchase" || movement.movementContext === "credit_card_fee") {
+      return {
+        ...empty,
+        cashOutflow: 0,
+        economicExpense: movement.amount,
+        liabilityDelta: movement.amount,
+      };
+    }
+
+    if (movement.movementContext === "credit_card_credit") {
+      return {
+        ...empty,
+        cashOutflow: 0,
+        economicExpense: -movement.amount,
+        liabilityDelta: -movement.amount,
+      };
+    }
+
     return {
       ...empty,
       cashOutflow: movement.amount,
       economicExpense: 0,
       liabilityDelta: -movement.amount,
-    };
-  }
-
-  if (movement.movementContext === "credit_card_fee") {
-    return {
-      ...empty,
-      cashOutflow: 0,
-      economicExpense: movement.amount,
-      liabilityDelta: movement.amount,
     };
   }
 
@@ -95,5 +109,6 @@ export function movementLabel(movement: Movement): string {
   if (movement.movementContext === "credit_card_purchase") return "Compra con tarjeta";
   if (movement.movementContext === "credit_card_payment") return "Pago de tarjeta";
   if (movement.movementContext === "credit_card_fee") return "Cargo de tarjeta";
+  if (movement.movementContext === "credit_card_credit") return "Devolución / abono tarjeta";
   return movement.type === "ingreso" ? "Ingreso" : "Egreso";
 }

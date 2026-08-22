@@ -88,6 +88,9 @@ export function normalizeCreditCardEntry(item: unknown): CreditCardEntry | null 
   const movementIdRaw = raw.movementId ?? raw.movement_id;
   const movementId = typeof movementIdRaw === "string" ? movementIdRaw : null;
 
+  const creditOfEntryIdRaw = raw.creditOfEntryId ?? raw.credit_of_entry_id;
+  const creditOfEntryId = typeof creditOfEntryIdRaw === "string" ? creditOfEntryIdRaw : null;
+
   const reversalOfEntryIdRaw = raw.reversalOfEntryId ?? raw.reversal_of_entry_id;
   const reversalOfEntryId = typeof reversalOfEntryIdRaw === "string" ? reversalOfEntryIdRaw : null;
 
@@ -116,6 +119,7 @@ export function normalizeCreditCardEntry(item: unknown): CreditCardEntry | null 
     entryType,
     liabilityDelta,
     movementId,
+    creditOfEntryId,
     reversalOfEntryId,
     description,
     registeredByUserId,

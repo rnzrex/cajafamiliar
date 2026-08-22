@@ -396,6 +396,8 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
           ? "credit_card_payment"
           : movement.movementContext === "credit_card_fee"
           ? "credit_card_fee"
+          : movement.movementContext === "credit_card_credit"
+          ? "credit_card_credit"
           : "standard",
       registeredByUserId: movement.registeredByUserId ?? null,
     })),

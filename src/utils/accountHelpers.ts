@@ -1,4 +1,5 @@
-import type { FinancialAccount, Movement, PaymentMethod } from "../types";
+import type { CreditCardEntry, FinancialAccount, Movement, PaymentMethod } from "../types";
+import { isCreditCardMovementEffective } from "./creditCardCalculations";
 
 export const UNASSIGNED_ACCOUNT_ID = "__unassigned__";
 const UNASSIGNED_ACCOUNT_LABEL = "Sin cuenta (histórico)";
@@ -26,9 +27,17 @@ export function legacyMethodForAccount(account: FinancialAccount | null): Paymen
   return account?.reconciliationType === "balance" ? "transferencia" : "efectivo";
 }
 
-export function expectedAccountBalance(movements: Movement[], accountId: string, openingBalance: number) {
+export function expectedAccountBalance(
+  movements: Movement[],
+  accountId: string,
+  openingBalance: number,
+  creditCardEntries?: CreditCardEntry[]
+) {
   return movements.reduce((total, movement) => {
     if (movement.accountId !== accountId) return total;
+    if (creditCardEntries && !isCreditCardMovementEffective(movement.id, creditCardEntries)) {
+      return total;
+    }
     return movement.type === "ingreso" ? total + movement.amount : total - movement.amount;
   }, openingBalance);
 }

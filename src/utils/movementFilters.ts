@@ -2,6 +2,7 @@ import { DebtEvent, FinancialAccount, Movement, MovementType } from "../types";
 import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "./accountHelpers";
 import { monthKey } from "./calculations";
 import { localDateString, localMonthString } from "./date";
+import type { CreditCardEntry } from "../types";
 import { getMovementEconomics } from "./movementEconomics";
 
 export type DateFilterMode = "all" | "month" | "date" | "range";
@@ -80,7 +81,11 @@ export function describeFilters(filters: MovementFilters, accountName?: string) 
   return parts.join(" - ");
 }
 
-export function movementTotals(movements: Movement[], debtEvents: DebtEvent[] = []) {
+export function movementTotals(
+  movements: Movement[],
+  debtEvents: DebtEvent[] = [],
+  creditCardEntries: CreditCardEntry[] = []
+) {
   const totals = movements.reduce(
     (totals, movement) => {
       if (movement.type === "ingreso") {
@@ -88,7 +93,7 @@ export function movementTotals(movements: Movement[], debtEvents: DebtEvent[] = 
         return totals;
       }
 
-      const economics = getMovementEconomics(movement, debtEvents);
+      const economics = getMovementEconomics(movement, debtEvents, creditCardEntries);
       totals.cashOutflow += economics.cashOutflow;
       totals.expense += economics.economicExpense;
       totals.principalReduction += economics.principalReduction;

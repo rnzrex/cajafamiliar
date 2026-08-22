@@ -10,7 +10,7 @@ import {
   PiggyBank,
   Scale,
 } from "lucide-react";
-import { CashCount, DebtEvent, FinancialAccount, Movement, RecurringPayment } from "../types";
+import { CashCount, CreditCardEntry, DebtEvent, FinancialAccount, Movement, RecurringPayment } from "../types";
 import type { DebtInstallmentPlanningItem } from "../utils/debtPlanning";
 import { selectDebtPlanningAttentionItems } from "../utils/debtPlanning";
 import type { ObligationProjectionResult } from "../utils/obligationProjection";
@@ -23,6 +23,7 @@ import { formatLocalDate } from "../utils/date";
 interface DashboardProps {
   movements: Movement[];
   debtEvents: DebtEvent[];
+  creditCardEntries?: CreditCardEntry[];
   pendingMovementIds: ReadonlySet<string>;
   cashCounts: CashCount[];
   recurringPayments: RecurringPayment[];
@@ -38,6 +39,7 @@ interface DashboardProps {
 export function Dashboard({
   movements,
   debtEvents,
+  creditCardEntries = [],
   pendingMovementIds,
   cashCounts,
   recurringPayments,
@@ -50,12 +52,12 @@ export function Dashboard({
   onOpenDebt,
 }: DashboardProps) {
   const cashAccount = getActiveCashAccount(accounts);
-  const expected = expectedCash(movements, cashAccount ? cashAccount.openingBalance : initialBalance, cashAccount?.id ?? null);
+  const expected = expectedCash(movements, cashAccount ? cashAccount.openingBalance : initialBalance, cashAccount?.id ?? null, creditCardEntries);
   const lastCount = lastCashCount(cashCounts);
   const hasCount = Boolean(lastCount);
   const difference = hasCount ? (lastCount?.total ?? 0) - expected : null;
-  const totals = monthlyTotals(movements, undefined, debtEvents);
-  const topCategory = topExpenseCategory(movements, undefined, debtEvents);
+  const totals = monthlyTotals(movements, undefined, debtEvents, creditCardEntries);
+  const topCategory = topExpenseCategory(movements, undefined, debtEvents, creditCardEntries);
   const latestMovements = [...movements]
     .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
     .slice(0, 5);
@@ -133,7 +135,7 @@ export function Dashboard({
               .map((account) => (
                 <button key={account.id} type="button" onClick={() => onNavigate("cuentas")} className="rounded-2xl border border-slate-100 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50">
                   <p className="text-sm font-bold text-slate-500">{account.name}</p>
-                  <p className="mt-2 text-2xl font-black text-slate-900">{formatMoney(expectedAccountBalance(movements, account.id, account.openingBalance))}</p>
+                  <p className="mt-2 text-2xl font-black text-slate-900">{formatMoney(expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries))}</p>
                 </button>
               ))}
           </div>

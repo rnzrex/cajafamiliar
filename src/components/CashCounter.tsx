@@ -1,6 +1,6 @@
 import { Save } from "lucide-react";
 import { useMemo, useState } from "react";
-import { CashCount, FinancialAccount, Movement } from "../types";
+import { CashCount, CreditCardEntry, FinancialAccount, Movement } from "../types";
 import { expectedCash, formatMoney } from "../utils/calculations";
 
 const denominations = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200];
@@ -9,16 +9,17 @@ const billDenominations = denominations.slice(6);
 
 interface CashCounterProps {
   movements: Movement[];
+  creditCardEntries?: CreditCardEntry[];
   initialBalance: number;
   cashCounts: CashCount[];
   cashAccount: FinancialAccount | null;
   onSave: (cashCount: Omit<CashCount, "id">) => void | Promise<boolean>;
 }
 
-export function CashCounter({ movements, initialBalance, cashCounts, cashAccount, onSave }: CashCounterProps) {
+export function CashCounter({ movements, creditCardEntries = [], initialBalance, cashCounts, cashAccount, onSave }: CashCounterProps) {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [isSaving, setIsSaving] = useState(false);
-  const expected = expectedCash(movements, cashAccount ? cashAccount.openingBalance : initialBalance, cashAccount?.id ?? null);
+  const expected = expectedCash(movements, cashAccount ? cashAccount.openingBalance : initialBalance, cashAccount?.id ?? null, creditCardEntries);
   const total = useMemo(() => denominations.reduce((sum, denomination) => sum + denomination * (counts[denomination] ?? 0), 0), [counts]);
   const difference = total - expected;
 
