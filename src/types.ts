@@ -1,5 +1,5 @@
 export type MovementType = "ingreso" | "egreso";
-export type MovementContext = "standard" | "debt_service" | "credit_card_purchase" | "credit_card_payment" | "credit_card_fee";
+export type MovementContext = "standard" | "debt_service" | "credit_card_purchase" | "credit_card_payment" | "credit_card_fee" | "credit_card_credit";
 export type PaymentMethod = "efectivo" | "Yape" | "transferencia" | "tarjeta";
 export type AccountReconciliationType = "cash" | "balance";
 export type RecurringStatus = "pendiente" | "pagado";
@@ -167,6 +167,7 @@ export interface CreditCardEntry {
   entryType: CreditCardEntryType;
   liabilityDelta: number;
   movementId: string | null;
+  creditOfEntryId?: string | null;
   reversalOfEntryId: string | null;
   description: string;
   registeredByUserId: string;
@@ -234,6 +235,55 @@ export interface CreditCardStatementCloseResult {
   statementId: string;
   statementBalance: number;
   minimumPaymentAmount: number | null;
+  idempotent: boolean;
+}
+
+export interface CreditCardFeeInput {
+  debtId: string;
+  entryId: string;
+  movementId: string;
+  feeDate: string;
+  amount: number;
+  description: string;
+  category: string;
+}
+
+export interface CreditCardFeeResult {
+  success: boolean;
+  entryId: string;
+  movementId: string;
+  idempotent: boolean;
+}
+
+export interface CreditCardCreditInput {
+  debtId: string;
+  entryId: string;
+  movementId: string;
+  targetEntryId: string;
+  creditDate: string;
+  amount: number;
+  description: string;
+}
+
+export interface CreditCardCreditResult {
+  success: boolean;
+  entryId: string;
+  movementId: string;
+  idempotent: boolean;
+}
+
+export interface CreditCardReversalInput {
+  debtId: string;
+  reversalEntryId: string;
+  targetEntryId: string;
+  reversalDate: string;
+  description: string;
+}
+
+export interface CreditCardReversalResult {
+  success: boolean;
+  entryId: string;
+  reversalOfEntryId: string;
   idempotent: boolean;
 }
 

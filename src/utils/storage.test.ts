@@ -102,6 +102,12 @@ describe("normalizeData con cuentas financieras", () => {
     expect(result.movements[0].movementContext).toBe("standard");
   });
 
+  it("movementContext credit_card_credit sobrevive normalizeData sin degradarse a standard", () => {
+    const creditMov = movement({ id: "mc1", movementContext: "credit_card_credit" });
+    const result = normalizeData(snapshot({ movements: [creditMov] }));
+    expect(result.movements[0].movementContext).toBe("credit_card_credit");
+  });
+
   it("cashCount legacy sin accountId produce null", () => {
     const legacyCount: CashCount = {
       id: "c1",

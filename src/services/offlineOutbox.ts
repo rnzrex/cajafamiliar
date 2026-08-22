@@ -36,7 +36,8 @@ export async function enqueueCreateMovement(member: HouseholdMember, movement: M
   if (
     movement.movementContext === "credit_card_purchase" ||
     movement.movementContext === "credit_card_payment" ||
-    movement.movementContext === "credit_card_fee"
+    movement.movementContext === "credit_card_fee" ||
+    movement.movementContext === "credit_card_credit"
   ) {
     throw new CreditCardPurchaseOfflineUnsupportedError();
   }
@@ -74,7 +75,18 @@ export async function listPendingCreateMovements(member: HouseholdMember): Promi
         movement: {
           ...operation.movement,
           accountId: operation.movement.accountId ?? null,
-          movementContext: operation.movement.movementContext === "debt_service" ? "debt_service" : operation.movement.movementContext === "credit_card_purchase" ? "credit_card_purchase" : "standard",
+          movementContext:
+            operation.movement.movementContext === "debt_service"
+              ? "debt_service"
+              : operation.movement.movementContext === "credit_card_purchase"
+              ? "credit_card_purchase"
+              : operation.movement.movementContext === "credit_card_payment"
+              ? "credit_card_payment"
+              : operation.movement.movementContext === "credit_card_fee"
+              ? "credit_card_fee"
+              : operation.movement.movementContext === "credit_card_credit"
+              ? "credit_card_credit"
+              : "standard",
         },
       }));
   } finally {

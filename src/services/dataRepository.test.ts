@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DebtOperationUnavailableError, recordDebtPayment, toCashCountRow, toDebtPayoffRpcArgs, toDebtPaymentRpcArgs, toDebtPrepaymentRpcArgs, toDebtReversalRpcArgs, toFinancialAccountRow, toMovementRow } from "./dataRepository";
+import { DebtOperationUnavailableError, recordDebtPayment, toCashCountRow, toCreditCardCreditRpcArgs, toCreditCardFeeRpcArgs, toCreditCardReversalRpcArgs, toDebtPayoffRpcArgs, toDebtPaymentRpcArgs, toDebtPrepaymentRpcArgs, toDebtReversalRpcArgs, toFinancialAccountRow, toMovementRow } from "./dataRepository";
 
 vi.mock("./supabaseClient", () => ({
   householdId: "00000000-0000-4000-8000-000000000001",
@@ -151,6 +151,61 @@ describe("serializers de dataRepository", () => {
 
     it("no cae a local cuando Supabase no está configurado", async () => {
       await expect(recordDebtPayment(payment)).rejects.toBeInstanceOf(DebtOperationUnavailableError);
+    });
+
+    it("mapea toCreditCardFeeRpcArgs y toCreditCardReversalRpcArgs con nombres p_* requeridos por las RPCs", () => {
+      const feeRpc = toCreditCardFeeRpcArgs({
+        debtId: "d-1",
+        entryId: "e-1",
+        movementId: "m-1",
+        feeDate: "2026-08-22",
+        amount: 25,
+        description: "Mantenimiento",
+        category: "Otros",
+      });
+      expect(feeRpc).toMatchObject({
+        p_debt_id: "d-1",
+        p_entry_id: "e-1",
+        p_movement_id: "m-1",
+        p_fee_date: "2026-08-22",
+        p_amount: 25,
+        p_description: "Mantenimiento",
+        p_category: "Otros",
+      });
+
+      const revRpc = toCreditCardReversalRpcArgs({
+        debtId: "d-1",
+        reversalEntryId: "e-rev-1",
+        targetEntryId: "e-1",
+        reversalDate: "2026-08-23",
+        description: "Extorno de mantenimiento",
+      });
+      expect(revRpc).toMatchObject({
+        p_debt_id: "d-1",
+        p_reversal_entry_id: "e-rev-1",
+        p_target_entry_id: "e-1",
+        p_reversal_date: "2026-08-23",
+        p_description: "Extorno de mantenimiento",
+      });
+
+      const creditRpc = toCreditCardCreditRpcArgs({
+        debtId: "d-1",
+        entryId: "e-c1",
+        movementId: "m-c1",
+        targetEntryId: "e-p1",
+        creditDate: "2026-08-25",
+        amount: 40,
+        description: "Devolución prenda",
+      });
+      expect(creditRpc).toMatchObject({
+        p_debt_id: "d-1",
+        p_entry_id: "e-c1",
+        p_movement_id: "m-c1",
+        p_target_entry_id: "e-p1",
+        p_credit_date: "2026-08-25",
+        p_amount: 40,
+        p_description: "Devolución prenda",
+      });
     });
   });
 });

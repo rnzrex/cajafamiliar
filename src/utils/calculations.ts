@@ -1,6 +1,7 @@
-import type { CashCount, DebtEvent, Movement, RecurringPayment } from "../types.js";
+import type { CashCount, CreditCardEntry, DebtEvent, Movement, RecurringPayment } from "../types.js";
 import { formatLocalDate, localDateString, localMonthString, parseLocalDate } from "./date.js";
 import { getMovementEconomics } from "./movementEconomics.js";
+import { isCreditCardMovementEffective } from "./creditCardCalculations.js";
 import { dueDateStatus as genericDueDateStatus } from "./dueDates.js";
 
 export type PaymentStatusKind = "overdue" | "today" | "tomorrow" | "upcoming" | "later" | "paid" | "completed" | "inactive";
@@ -36,15 +37,28 @@ export const formatMoneyByCurrency = (value: number, currencyCode?: string) => {
 
 export const monthKey = (date: string) => date.slice(0, 7);
 
-export function expectedCash(movements: Movement[], initialBalance: number, cashAccountId?: string | null) {
+export function expectedCash(
+  movements: Movement[],
+  initialBalance: number,
+  cashAccountId?: string | null,
+  creditCardEntries: CreditCardEntry[] = []
+) {
   return movements.reduce((total, movement) => {
     const belongsToCash = cashAccountId == null ? movement.method === "efectivo" : movement.accountId === cashAccountId;
     if (!belongsToCash) return total;
+    if (creditCardEntries.length > 0 && !isCreditCardMovementEffective(movement.id, creditCardEntries)) {
+      return total;
+    }
     return movement.type === "ingreso" ? total + movement.amount : total - movement.amount;
   }, initialBalance);
 }
 
-export function monthlyTotals(movements: Movement[], selectedMonth = localMonthString(), debtEvents: DebtEvent[] = []) {
+export function monthlyTotals(
+  movements: Movement[],
+  selectedMonth = localMonthString(),
+  debtEvents: DebtEvent[] = [],
+  creditCardEntries: CreditCardEntry[] = []
+) {
   return movements
     .filter((movement) => monthKey(movement.date) === selectedMonth)
     .reduce(
@@ -52,7 +66,7 @@ export function monthlyTotals(movements: Movement[], selectedMonth = localMonthS
         if (movement.type === "ingreso") {
           totals.income += movement.amount;
         } else {
-          const economics = getMovementEconomics(movement, debtEvents);
+          const economics = getMovementEconomics(movement, debtEvents, creditCardEntries);
           totals.cashOutflow += economics.cashOutflow;
           totals.expense += economics.economicExpense;
         }
@@ -62,12 +76,17 @@ export function monthlyTotals(movements: Movement[], selectedMonth = localMonthS
     );
 }
 
-export function topExpenseCategory(movements: Movement[], selectedMonth = localMonthString(), debtEvents: DebtEvent[] = []) {
+export function topExpenseCategory(
+  movements: Movement[],
+  selectedMonth = localMonthString(),
+  debtEvents: DebtEvent[] = [],
+  creditCardEntries: CreditCardEntry[] = []
+) {
   const totals = new Map<string, number>();
   movements
     .filter((movement) => movement.type === "egreso" && monthKey(movement.date) === selectedMonth)
     .forEach((movement) => {
-      const expense = getMovementEconomics(movement, debtEvents).economicExpense;
+      const expense = getMovementEconomics(movement, debtEvents, creditCardEntries).economicExpense;
       if (expense > 0) totals.set(movement.category, (totals.get(movement.category) ?? 0) + expense);
     });
 

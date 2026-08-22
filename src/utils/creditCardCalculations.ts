@@ -1,4 +1,4 @@
-import type { CreditCardEntry, CreditCardStatement, Debt } from "../types";
+import type { CreditCardEntry, CreditCardStatement, Debt } from "../types.js";
 
 export function effectiveCreditCardEntries(entries: CreditCardEntry[], debtId?: string): CreditCardEntry[] {
   const scopedEntries =
@@ -36,6 +36,23 @@ export function effectiveCreditCardEntriesAsOf(
   return scopedAsOf.filter(
     (entry) => entry.entryType !== "reversal" && !reversedIds.has(entry.id)
   );
+}
+
+export function isCreditCardMovementEffective(
+  movementId: string,
+  creditCardEntries?: CreditCardEntry[],
+  asOfDate?: string
+): boolean {
+  if (!creditCardEntries || creditCardEntries.length === 0) return true;
+
+  const linkedEntry = creditCardEntries.find((entry) => entry.movementId === movementId);
+  if (!linkedEntry) return true;
+
+  const effective = asOfDate
+    ? effectiveCreditCardEntriesAsOf(creditCardEntries, asOfDate)
+    : effectiveCreditCardEntries(creditCardEntries);
+
+  return effective.some((e) => e.id === linkedEntry.id);
 }
 
 export function currentCreditCardBalance(debt: Debt, entries: CreditCardEntry[]): number {

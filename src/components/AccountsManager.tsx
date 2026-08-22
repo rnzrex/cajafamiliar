@@ -1,6 +1,6 @@
 import { ArchiveRestore, Archive, Pencil, Plus, Save, Wallet, X } from "lucide-react";
 import { FormEvent, useState } from "react";
-import { FinancialAccount, Movement } from "../types";
+import { CreditCardEntry, FinancialAccount, Movement } from "../types";
 import { formatMoney, formatMoneyByCurrency } from "../utils/calculations";
 import { accountDisplayName, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
 
@@ -12,12 +12,13 @@ const accountTypeLabels: Record<FinancialAccount["reconciliationType"], string> 
 interface AccountsManagerProps {
   accounts: FinancialAccount[];
   movements: Movement[];
+  creditCardEntries?: CreditCardEntry[];
   onSave: (account: Omit<FinancialAccount, "id" | "createdAt" | "updatedAt">, id?: string) => FinancialAccount | null | Promise<FinancialAccount | null>;
   onToggle: (id: string, isActive: boolean) => boolean | Promise<boolean>;
   onEditInitialBalance: () => void;
 }
 
-export function AccountsManager({ accounts, movements, onSave, onToggle, onEditInitialBalance }: AccountsManagerProps) {
+export function AccountsManager({ accounts, movements, creditCardEntries = [], onSave, onToggle, onEditInitialBalance }: AccountsManagerProps) {
   const [editing, setEditing] = useState<FinancialAccount | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
@@ -107,7 +108,7 @@ export function AccountsManager({ accounts, movements, onSave, onToggle, onEditI
               <AccountCard
                 key={account.id}
                 account={account}
-                balance={expectedAccountBalance(movements, account.id, account.openingBalance)}
+                balance={expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries)}
                 onEdit={() => openEditForm(account)}
                 onToggle={() => void handleToggle(account)}
                 onEditInitialBalance={onEditInitialBalance}
@@ -124,7 +125,7 @@ export function AccountsManager({ accounts, movements, onSave, onToggle, onEditI
               <AccountCard
                 key={account.id}
                 account={account}
-                balance={expectedAccountBalance(movements, account.id, account.openingBalance)}
+                balance={expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries)}
                 onEdit={() => openEditForm(account)}
                 onToggle={() => void handleToggle(account)}
                 onEditInitialBalance={onEditInitialBalance}

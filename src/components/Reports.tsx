@@ -16,7 +16,7 @@ import {
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Download, RotateCcw } from "lucide-react";
-import { Category, DebtEvent, FinancialAccount, Movement } from "../types";
+import { Category, CreditCardEntry, DebtEvent, FinancialAccount, Movement } from "../types";
 import { expectedCash, formatMoney } from "../utils/calculations";
 import { UNASSIGNED_ACCOUNT_ID, getActiveCashAccount } from "../utils/accountHelpers";
 import { defaultMovementFilters, filterMovements, movementTotals, type MovementFilters } from "../utils/movementFilters";
@@ -25,6 +25,7 @@ import { getMovementEconomics } from "../utils/movementEconomics";
 interface ReportsProps {
   movements: Movement[];
   debtEvents: DebtEvent[];
+  creditCardEntries?: CreditCardEntry[];
   categories: Category[];
   accounts: FinancialAccount[];
   initialBalance: number;
@@ -37,16 +38,16 @@ export async function exportReportFromReports(movements: Movement[], filters: Mo
   exportReportExcel(movements, filters, accounts, debtEvents);
 }
 
-export function Reports({ movements, debtEvents, categories, accounts, initialBalance }: ReportsProps) {
+export function Reports({ movements, debtEvents, creditCardEntries = [], categories, accounts, initialBalance }: ReportsProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
   const filteredMovements = useMemo(() => filterMovements(movements, filters, accounts), [movements, filters, accounts]);
   const expenses = filteredMovements
     .filter((movement) => movement.type === "egreso")
-    .map((movement) => ({ ...movement, amount: getMovementEconomics(movement, debtEvents).economicExpense }))
+    .map((movement) => ({ ...movement, amount: getMovementEconomics(movement, debtEvents, creditCardEntries).economicExpense }))
     .filter((movement) => movement.amount > 0);
   const incomes = filteredMovements.filter((movement) => movement.type === "ingreso");
   const cashAccount = getActiveCashAccount(accounts);
-  const totals = movementTotals(filteredMovements, debtEvents);
+  const totals = movementTotals(filteredMovements, debtEvents, creditCardEntries);
 
   const byCategory = groupBy(expenses, "category");
   const byAccount = groupBy(expenses, "accountId", accounts);
@@ -56,7 +57,7 @@ export function Reports({ movements, debtEvents, categories, accounts, initialBa
     { name: "Gastos", monto: totals.expense },
   ];
   const topFive = [...byCategory].sort((a, b) => b.monto - a.monto).slice(0, 5);
-  const cashEvolution = buildCashEvolution(filteredMovements, cashAccount?.openingBalance ?? initialBalance, cashAccount?.id ?? null);
+  const cashEvolution = buildCashEvolution(filteredMovements, cashAccount?.openingBalance ?? initialBalance, cashAccount?.id ?? null, creditCardEntries);
 
   async function handleExport() {
     if (filteredMovements.length === 0) {
@@ -248,7 +249,12 @@ function readableAccountName(key: string, accounts: FinancialAccount[]) {
   return accounts.find((account) => account.id === key)?.name ?? "Sin cuenta (historico)";
 }
 
-export function buildCashEvolution(movements: Movement[], initialBalance: number, cashAccountId: string | null) {
+export function buildCashEvolution(
+  movements: Movement[],
+  initialBalance: number,
+  cashAccountId: string | null,
+  creditCardEntries: CreditCardEntry[] = []
+) {
   const cashMovements = movements
     .filter((movement) => (cashAccountId ? movement.accountId === cashAccountId : movement.method === "efectivo"))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -258,7 +264,7 @@ export function buildCashEvolution(movements: Movement[], initialBalance: number
   let balance = initialBalance;
   const result = [{ date: "Inicio", saldo: initialBalance }];
   [...grouped.entries()].forEach(([date, dayMovements]) => {
-    balance = expectedCash(dayMovements, balance, cashAccountId);
+    balance = expectedCash(dayMovements, balance, cashAccountId, creditCardEntries);
     result.push({ date: date.slice(5), saldo: balance });
   });
 
