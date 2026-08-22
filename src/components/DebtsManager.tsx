@@ -1,12 +1,26 @@
 import { useState } from "react";
-import { Plus, Landmark, Search, Archive, AlertCircle } from "lucide-react";
-import type { Debt, DebtEvent, DebtScheduleVersion, DebtInstallment, DebtEventInstallmentAllocation, DebtCollateral, FinancialAccount, Category, HouseholdMember } from "../types";
+import { Plus, Landmark, Search, Archive } from "lucide-react";
+import type {
+  Debt,
+  DebtEvent,
+  DebtScheduleVersion,
+  DebtInstallment,
+  DebtEventInstallmentAllocation,
+  DebtCollateral,
+  FinancialAccount,
+  Category,
+  HouseholdMember,
+} from "../types";
 import type { DebtInstallmentPlanningItem, DebtPlanningAlertSummary } from "../utils/debtPlanning";
-import { currentDebtPrincipal } from "../utils/debtCalculations";
+import type { DebtIntelligenceItem, DebtPortfolioIntelligence } from "../utils/debtIntelligence";
+import type { DebtStrategyResult } from "../utils/debtStrategy";
 import { formatDebtKind, formatDebtStatus } from "../utils/debtViewModel";
+import { formatDebtMoney } from "../utils/debtPresentation";
 import { DebtPlanningPanel } from "./DebtPlanningPanel";
+import { DebtPortfolioIntelligencePanel } from "./DebtPortfolioIntelligencePanel";
+import { DebtStrategyPanel } from "./DebtStrategyPanel";
 
-interface DebtsManagerProps {
+export interface DebtsManagerProps {
   debts: Debt[];
   debtEvents: DebtEvent[];
   scheduleVersions: DebtScheduleVersion[];
@@ -18,6 +32,9 @@ interface DebtsManagerProps {
   currentMember?: HouseholdMember;
   debtPlanningItems: DebtInstallmentPlanningItem[];
   debtPlanningAlertSummary: DebtPlanningAlertSummary;
+  debtPortfolioIntelligence: DebtPortfolioIntelligence;
+  debtStrategies: DebtStrategyResult;
+  intelligenceItems: DebtIntelligenceItem[];
   onOpenNewDebt: () => void;
   onSelectDebt: (debt: Debt) => void;
   onSelectDebtId?: (debtId: string) => void;
@@ -25,9 +42,11 @@ interface DebtsManagerProps {
 
 export function DebtsManager({
   debts,
-  debtEvents,
   debtPlanningItems,
   debtPlanningAlertSummary,
+  debtPortfolioIntelligence,
+  debtStrategies,
+  intelligenceItems,
   onOpenNewDebt,
   onSelectDebt,
   onSelectDebtId,
@@ -52,12 +71,11 @@ export function DebtsManager({
     return matchesTab && matchesQuery;
   });
 
-  const totalActivePrincipal = debts
-    .filter((d) => !d.isArchived && d.status === "active")
-    .reduce((sum, d) => sum + currentDebtPrincipal(d, debtEvents), 0);
+  const intelligenceMap = new Map(intelligenceItems.map((item) => [item.debtId, item]));
 
   return (
     <section className="space-y-6">
+      {/* 1. Header */}
       <div className="flex flex-col gap-4 rounded-3xl bg-white p-6 shadow-xl sm:flex-row sm:items-center sm:justify-between lg:p-8">
         <div>
           <div className="flex items-center gap-3">
@@ -79,47 +97,42 @@ export function DebtsManager({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-3xl bg-white p-6 shadow-md">
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Principal total activo</p>
-          <p className="mt-2 text-3xl font-extrabold text-slate-900">
-            S/ {totalActivePrincipal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-        </div>
-        <div className="rounded-3xl bg-white p-6 shadow-md">
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Deudas activas</p>
-          <p className="mt-2 text-3xl font-extrabold text-blue-600">
-            {debts.filter((d) => !d.isArchived && d.status === "active").length}
-          </p>
-        </div>
-        <div className="rounded-3xl bg-white p-6 shadow-md">
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Deudas pagadas / archivadas</p>
-          <p className="mt-2 text-3xl font-extrabold text-emerald-600">
-            {debts.filter((d) => d.isArchived || d.status === "paid_off").length}
-          </p>
-        </div>
-      </div>
+      {/* 2. DebtPortfolioIntelligencePanel */}
+      <DebtPortfolioIntelligencePanel portfolio={debtPortfolioIntelligence} />
 
+      {/* 3. DebtPlanningPanel */}
       <DebtPlanningPanel
         debtPlanningItems={debtPlanningItems}
         debtPlanningAlertSummary={debtPlanningAlertSummary}
         onSelectDebtId={handleSelectDebtId}
       />
 
+      {/* 4. DebtStrategyPanel */}
+      <DebtStrategyPanel
+        strategies={debtStrategies}
+        intelligenceItems={intelligenceItems}
+        onSelectDebtId={handleSelectDebtId}
+      />
+
+      {/* 5. Debts Search & List */}
       <div className="rounded-3xl bg-white p-6 shadow-xl lg:p-8 space-y-6">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setTab("unarchived")}
-              className={`rounded-xl px-5 py-2.5 font-bold transition ${tab === "unarchived" ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+              className={`rounded-xl px-5 py-2.5 font-bold transition ${
+                tab === "unarchived" ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
             >
               No archivadas
             </button>
             <button
               type="button"
               onClick={() => setTab("archived")}
-              className={`rounded-xl px-5 py-2.5 font-bold transition ${tab === "archived" ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+              className={`rounded-xl px-5 py-2.5 font-bold transition ${
+                tab === "archived" ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
             >
               Archivadas
             </button>
@@ -146,33 +159,46 @@ export function DebtsManager({
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filteredDebts.map((debt) => {
-              const principal = currentDebtPrincipal(debt, debtEvents);
+              const intelItem = intelligenceMap.get(debt.id);
+              const principalDisplay = intelItem
+                ? formatDebtMoney(intelItem.currentPrincipal, intelItem.currencyCode)
+                : "Saldo no disponible";
+
               return (
-                <div
+                <button
                   key={debt.id}
+                  type="button"
                   onClick={() => onSelectDebt(debt)}
-                  className="group flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:border-blue-500 hover:shadow-md transition cursor-pointer"
+                  className="w-full text-left group flex flex-col justify-between rounded-2xl border border-slate-200 bg-white p-5 shadow-sm hover:border-blue-500 hover:shadow-md transition"
                 >
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700">{formatDebtKind(debt.debtKind)}</span>
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${debt.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-700"}`}>
+                      <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700">
+                        {formatDebtKind(debt.debtKind)}
+                      </span>
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                          debt.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-700"
+                        }`}
+                      >
                         {formatDebtStatus(debt.status)}
                       </span>
                     </div>
-                    <h3 className="text-lg font-bold text-slate-900 group-hover:text-blue-600 transition">{debt.name}</h3>
+                    <h3 className="text-lg font-bold text-slate-900 group-hover:text-blue-600 transition">
+                      {debt.name}
+                    </h3>
                     <p className="text-xs text-slate-500">Acreedor: {debt.creditorName}</p>
                   </div>
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between w-full">
                     <div>
                       <p className="text-xs font-semibold text-slate-400">Saldo principal</p>
-                      <p className="text-lg font-extrabold text-slate-900">
-                        {debt.currencyCode} {principal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </p>
+                      <p className="text-lg font-extrabold text-slate-900">{principalDisplay}</p>
                     </div>
-                    <span className="text-sm font-bold text-blue-600 group-hover:translate-x-1 transition">Ver detalle &rarr;</span>
+                    <span className="text-sm font-bold text-blue-600 group-hover:translate-x-1 transition">
+                      Ver detalle &rarr;
+                    </span>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

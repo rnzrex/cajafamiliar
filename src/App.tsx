@@ -32,6 +32,8 @@ import { AppData, CashCount, Category, Debt, FinancialAccount, HouseholdMember, 
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
 import { currentDebtPrincipal } from "./utils/debtCalculations";
 import { buildDebtPlanningItems, summarizeDebtPlanningAlerts } from "./utils/debtPlanning";
+import { buildDebtIntelligenceItems, buildDebtPortfolioIntelligence } from "./utils/debtIntelligence";
+import { buildDebtStrategies } from "./utils/debtStrategy";
 import { parseNotificationDeepLink } from "./utils/deepLink";
 import { buildObligationProjection } from "./utils/obligationProjection";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
@@ -197,6 +199,34 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         data.debtEventInstallmentAllocations
       ),
     [data.debts, data.debtEvents, data.debtScheduleVersions, data.debtInstallments, data.debtEventInstallmentAllocations]
+  );
+
+  const debtIntelligenceItems = useMemo(
+    () =>
+      buildDebtIntelligenceItems({
+        debts: data.debts,
+        debtEvents: data.debtEvents,
+        debtScheduleVersions: data.debtScheduleVersions,
+        debtInstallments: data.debtInstallments,
+        debtCollaterals: data.debtCollaterals,
+        debtPlanningItems,
+      }),
+    [data.debts, data.debtEvents, data.debtScheduleVersions, data.debtInstallments, data.debtCollaterals, debtPlanningItems]
+  );
+
+  const debtPortfolioIntelligence = useMemo(
+    () => buildDebtPortfolioIntelligence(debtIntelligenceItems),
+    [debtIntelligenceItems]
+  );
+
+  const debtStrategies = useMemo(
+    () => buildDebtStrategies(debtIntelligenceItems),
+    [debtIntelligenceItems]
+  );
+
+  const selectedDebtIntelligence = useMemo(
+    () => (selectedDebtId ? debtIntelligenceItems.find((item) => item.debtId === selectedDebtId) ?? null : null),
+    [debtIntelligenceItems, selectedDebtId]
   );
 
   const obligationProjection = useMemo(
@@ -1274,6 +1304,9 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               currentMember={currentMember}
               debtPlanningItems={debtPlanningItems}
               debtPlanningAlertSummary={debtPlanningAlertSummary}
+              debtPortfolioIntelligence={debtPortfolioIntelligence}
+              debtStrategies={debtStrategies}
+              intelligenceItems={debtIntelligenceItems}
               onOpenNewDebt={() => setView("registrar-deuda")}
               onSelectDebt={(debt) => setSelectedDebtId(debt.id)}
               onSelectDebtId={openDebt}
@@ -1320,9 +1353,10 @@ async function saveInitialBalance(value: number): Promise<boolean> {
             />
           )}
 
-          {selectedDebt && view !== "operacion-deuda" && (
+          {selectedDebt && selectedDebtIntelligence && view !== "operacion-deuda" && (
             <DebtDetailModal
               debt={selectedDebt}
+              debtIntelligence={selectedDebtIntelligence}
               debtEvents={data.debtEvents}
               scheduleVersions={data.debtScheduleVersions}
               installments={data.debtInstallments}

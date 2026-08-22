@@ -1,12 +1,33 @@
 import { useState } from "react";
-import { X, Calendar, DollarSign, Shield, FileText, ArrowUpRight, History, CheckCircle2, RotateCcw } from "lucide-react";
-import type { Debt, DebtEvent, DebtScheduleVersion, DebtInstallment, DebtEventInstallmentAllocation, DebtCollateral, FinancialAccount, Category, HouseholdMember } from "../types";
-import { currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents } from "../utils/debtCalculations";
-import { formatDebtKind, formatDebtStatus, formatPaymentFrequency, formatEventType, getInstallmentProgress, translateDebtError } from "../utils/debtViewModel";
+import { X, DollarSign, ArrowUpRight, CheckCircle2 } from "lucide-react";
+import type {
+  Debt,
+  DebtEvent,
+  DebtScheduleVersion,
+  DebtInstallment,
+  DebtEventInstallmentAllocation,
+  DebtCollateral,
+  FinancialAccount,
+  Category,
+  HouseholdMember,
+} from "../types";
+import type { DebtIntelligenceItem } from "../utils/debtIntelligence";
+import { currentDebtScheduleVersion, effectiveDebtEvents } from "../utils/debtCalculations";
+import {
+  formatDebtKind,
+  formatDebtStatus,
+  formatPaymentFrequency,
+  formatEventType,
+  getInstallmentProgress,
+  translateDebtError,
+} from "../utils/debtViewModel";
+import { formatDebtMoney } from "../utils/debtPresentation";
 import { setDebtArchived, updateDebtMetadata } from "../services/dataRepository";
+import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 
 interface DebtDetailModalProps {
   debt: Debt;
+  debtIntelligence: DebtIntelligenceItem;
   debtEvents: DebtEvent[];
   scheduleVersions: DebtScheduleVersion[];
   installments: DebtInstallment[];
@@ -17,13 +38,17 @@ interface DebtDetailModalProps {
   currentMember?: HouseholdMember;
   canWriteDebt?: boolean;
   onClose: () => void;
-  onOpenOperation: (operationType: "payment" | "prepayment" | "payoff" | "reversal", targetEventId?: string) => void;
+  onOpenOperation: (
+    operationType: "payment" | "prepayment" | "payoff" | "reversal",
+    targetEventId?: string
+  ) => void;
   onRefresh: () => Promise<void> | void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
 }
 
 export function DebtDetailModal({
   debt,
+  debtIntelligence,
   debtEvents,
   scheduleVersions,
   installments,
@@ -42,16 +67,20 @@ export function DebtDetailModal({
   const [editNotes, setEditNotes] = useState(debt.notes);
   const [submitting, setSubmitting] = useState(false);
 
-  const currentPrincipal = currentDebtPrincipal(debt, debtEvents);
   const currentSchedule = currentDebtScheduleVersion(debt.id, scheduleVersions);
-  const debtInstallments = installments.filter((i) => currentSchedule && i.scheduleVersionId === currentSchedule.id);
+  const debtInstallments = installments.filter(
+    (i) => currentSchedule && i.scheduleVersionId === currentSchedule.id
+  );
   const debtCollaterals = collaterals.filter((c) => c.debtId === debt.id);
   const activeEvents = effectiveDebtEvents(debtEvents, debt.id);
   const allEventsForDebt = debtEvents.filter((e) => e.debtId === debt.id);
 
   const handleToggleArchive = async () => {
     if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
-      setToast({ message: "Las operaciones de deuda requieren conexión a internet y estado habilitado.", type: "error" });
+      setToast({
+        message: "Las operaciones de deuda requieren conexión a internet y estado habilitado.",
+        type: "error",
+      });
       return;
     }
     setSubmitting(true);
@@ -65,7 +94,10 @@ export function DebtDetailModal({
       if (!success) {
         setToast({ message: translateDebtError(err), type: "error" });
       } else {
-        setToast({ message: "Operación aplicada, pero falló la actualización de datos locales.", type: "error" });
+        setToast({
+          message: "Operación aplicada, pero falló la actualización de datos locales.",
+          type: "error",
+        });
       }
     } finally {
       setSubmitting(false);
@@ -75,7 +107,10 @@ export function DebtDetailModal({
   const handleSaveMetadata = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
-      setToast({ message: "Las operaciones de deuda requieren conexión a internet y estado habilitado.", type: "error" });
+      setToast({
+        message: "Las operaciones de deuda requieren conexión a internet y estado habilitado.",
+        type: "error",
+      });
       return;
     }
     setSubmitting(true);
@@ -88,14 +123,17 @@ export function DebtDetailModal({
         notes: editNotes.trim(),
       });
       success = true;
-      setToast({ message: "Metadata actualizada exitosamente.", type: "success" });
+      setToast({ message: "Metadata de deuda actualizada.", type: "success" });
       setIsEditingMetadata(false);
       await onRefresh();
     } catch (err) {
       if (!success) {
         setToast({ message: translateDebtError(err), type: "error" });
       } else {
-        setToast({ message: "Metadata actualizada, pero falló la actualización de datos locales.", type: "error" });
+        setToast({
+          message: "Operación aplicada, pero falló la actualización de datos locales.",
+          type: "error",
+        });
       }
     } finally {
       setSubmitting(false);
@@ -103,54 +141,77 @@ export function DebtDetailModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+      <button type="button" className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} />
       <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col rounded-3xl bg-white shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
+        <div className="flex items-center justify-between border-b border-slate-100 p-6">
           <div>
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-bold text-blue-800">{formatDebtKind(debt.debtKind)}</span>
-              <span className={`rounded-full px-3 py-1 text-xs font-bold ${debt.status === "active" ? "bg-emerald-100 text-emerald-800" : "bg-slate-200 text-slate-800"}`}>
+              <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+                {formatDebtKind(debt.debtKind)}
+              </span>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-bold ${
+                  debt.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-700"
+                }`}
+              >
                 {formatDebtStatus(debt.status)}
               </span>
-              {debt.isArchived && <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800">Archivada</span>}
+              {debt.isArchived && (
+                <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700">
+                  Archivada
+                </span>
+              )}
             </div>
-            <h2 className="mt-1 text-2xl font-bold text-slate-900">{debt.name}</h2>
+            <h2 className="mt-1 text-2xl font-black text-slate-900">{debt.name}</h2>
             <p className="text-sm text-slate-500">Acreedor: {debt.creditorName}</p>
           </div>
-          <button type="button" onClick={onClose} className="rounded-full bg-slate-200 p-2.5 text-slate-700 hover:bg-slate-300">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200 transition"
+          >
             <X className="h-6 w-6" />
           </button>
         </div>
 
-        {/* Action Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white px-6 py-3">
+        {/* Toolbar & Tabs */}
+        <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/50 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setActiveTab("overview")}
-              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${activeTab === "overview" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                activeTab === "overview" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
             >
               Resumen
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("schedule")}
-              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${activeTab === "schedule" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                activeTab === "schedule" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
             >
               Cronograma ({debtInstallments.length})
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("collaterals")}
-              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${activeTab === "collaterals" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                activeTab === "collaterals" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
             >
               Garantías ({debtCollaterals.length})
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("history")}
-              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${activeTab === "history" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"}`}
+              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${
+                activeTab === "history" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
             >
               Historial ({allEventsForDebt.length})
             </button>
@@ -230,7 +291,11 @@ export function DebtDetailModal({
                     />
                   </div>
                   <div className="flex justify-end gap-2">
-                    <button type="button" onClick={() => setIsEditingMetadata(false)} className="rounded-xl px-4 py-2 text-sm font-bold text-slate-600">
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingMetadata(false)}
+                      className="rounded-xl px-4 py-2 text-sm font-bold text-slate-600"
+                    >
                       Cancelar
                     </button>
                     <button type="submit" disabled={submitting} className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white">
@@ -243,9 +308,11 @@ export function DebtDetailModal({
                   <div>
                     <p className="text-xs font-bold uppercase tracking-wider text-blue-600">Saldo principal actual</p>
                     <p className="text-3xl font-extrabold text-blue-900">
-                      {debt.currencyCode} {currentPrincipal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {formatDebtMoney(debtIntelligence.currentPrincipal, debtIntelligence.currencyCode)}
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">Principal inicial de apertura: {debt.openingPrincipalBalance.toLocaleString()}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Principal inicial de apertura: {formatDebtMoney(debt.openingPrincipalBalance, debt.currencyCode)}
+                    </p>
                   </div>
                   <button
                     type="button"
@@ -256,6 +323,9 @@ export function DebtDetailModal({
                   </button>
                 </div>
               )}
+
+              {/* Comprehensive Intelligence & Analysis Panel */}
+              <DebtAnalysisPanel intelligence={debtIntelligence} />
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="rounded-2xl border border-slate-200 p-4">
@@ -288,34 +358,34 @@ export function DebtDetailModal({
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-bold text-slate-900">
-                  Cronograma vigente {currentSchedule ? `(Versión #${currentSchedule.versionNumber})` : ""}
+                  Cronograma activo ({currentSchedule ? `Versión ${currentSchedule.versionNumber}` : "Sin cronograma"})
                 </h3>
               </div>
               {debtInstallments.length === 0 ? (
-                <p className="text-sm text-slate-500 italic">No hay cuotas registradas en el cronograma actual.</p>
+                <p className="text-sm text-slate-500">No hay cuotas registradas para esta versión del cronograma.</p>
               ) : (
-                <div className="space-y-3">
+                <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white overflow-hidden">
                   {debtInstallments.map((inst) => {
-                    const prog = getInstallmentProgress(inst, allocations, debtEvents);
+                    const progress = getInstallmentProgress(inst, allocations, activeEvents);
                     return (
-                      <div key={inst.id} className="flex flex-col gap-2 rounded-2xl border border-slate-200 p-4 bg-slate-50/50 sm:flex-row sm:items-center sm:justify-between">
+                      <div key={inst.id} className="flex items-center justify-between p-4 hover:bg-slate-50">
                         <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-slate-900">Cuota #{inst.installmentNumber}</span>
-                            <span className="text-xs text-slate-500">Vence: {inst.dueDate}</span>
-                            {prog.isPaid && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">Pagada</span>}
-                          </div>
-                          <p className="mt-1 text-sm text-slate-600">
-                            Esperado: {debt.currencyCode} {inst.expectedAmount ?? 0} (Principal: {inst.expectedPrincipal ?? 0} | Interés: {inst.expectedInterest ?? 0})
-                          </p>
+                          <p className="text-sm font-bold text-slate-900">Cuota N° {inst.installmentNumber}</p>
+                          <p className="text-xs text-slate-500">Vencimiento: {inst.dueDate}</p>
                         </div>
                         <div className="text-right">
-                          <p className="text-sm font-bold text-slate-900">
-                            Pagado: {debt.currencyCode} {prog.allocated.toFixed(2)}
+                          <p className="text-sm font-extrabold text-slate-900">
+                            {inst.expectedAmount != null
+                              ? formatDebtMoney(inst.expectedAmount, debt.currencyCode)
+                              : "Por confirmar"}
                           </p>
-                          <div className="mt-1 h-2 w-32 bg-slate-200 rounded-full overflow-hidden inline-block">
-                            <div className="h-full bg-emerald-500" style={{ width: `${prog.progressPercent}%` }} />
-                          </div>
+                          <span
+                            className={`inline-block rounded-md px-2 py-0.5 text-xs font-bold ${
+                              progress.isPaid ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                            }`}
+                          >
+                            {progress.isPaid ? "Cubierta" : "Pendiente"}
+                          </span>
                         </div>
                       </div>
                     );
@@ -327,16 +397,27 @@ export function DebtDetailModal({
 
           {activeTab === "collaterals" && (
             <div className="space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Garantías y colaterales</h3>
+              <h3 className="text-lg font-bold text-slate-900">Garantías declaradas</h3>
               {debtCollaterals.length === 0 ? (
-                <p className="text-sm text-slate-500 italic">No hay garantías registradas para esta deuda.</p>
+                <p className="text-sm text-slate-500">No se han registrado garantías para esta deuda.</p>
               ) : (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {debtCollaterals.map((col) => (
-                    <div key={col.id} className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
-                      <p className="font-bold text-slate-900">{col.description}</p>
-                      <p className="mt-1 text-sm text-slate-600">Estado: {col.status}</p>
-                      {col.estimatedValue != null && <p className="text-sm font-semibold text-blue-700">Valor estimado: {col.estimatedValue}</p>}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {debtCollaterals.map((c) => (
+                    <div key={c.id} className="rounded-2xl border border-slate-200 p-4 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-900">{c.description}</span>
+                        <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-bold text-emerald-700">
+                          {c.status}
+                        </span>
+                      </div>
+                      {c.pledgedValue != null && (
+                        <p className="text-xs text-slate-600">
+                          Valor en garantía: {formatDebtMoney(c.pledgedValue, debt.currencyCode)}
+                        </p>
+                      )}
+                      {c.redemptionDeadline && (
+                        <p className="text-xs text-slate-500">Plazo rescate: {c.redemptionDeadline}</p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -346,39 +427,30 @@ export function DebtDetailModal({
 
           {activeTab === "history" && (
             <div className="space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Historial de la deuda</h3>
+              <h3 className="text-lg font-bold text-slate-900">Historial de eventos</h3>
               {allEventsForDebt.length === 0 ? (
-                <p className="text-sm text-slate-500 italic">No se han registrado operaciones financieras.</p>
+                <p className="text-sm text-slate-500">No hay eventos registrados para esta deuda.</p>
               ) : (
-                <div className="space-y-3">
-                  {allEventsForDebt.map((ev) => {
-                    const isReversal = ev.eventType === "reversal";
-                    const isReversed = activeEvents.find((ae) => ae.id === ev.id) === undefined && !isReversal;
-                    const isSupportedReversal = ["payment", "principal_prepayment", "payoff"].includes(ev.eventType);
-                    const canReverse = !isReversal && !isReversed && debt.status !== "refinanced" && isSupportedReversal && canWriteDebt;
-                    return (
-                      <div key={ev.id} className="flex flex-col gap-2 rounded-2xl border border-slate-200 p-4 bg-slate-50 sm:flex-row sm:items-center sm:justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-bold text-blue-800">{formatEventType(ev.eventType)}</span>
-                            <span className="text-xs text-slate-500">{ev.eventDate}</span>
-                            {isReversed && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800">Revertido</span>}
-                          </div>
-                          <p className="mt-1 text-sm font-medium text-slate-900">{ev.description || "Sin descripción"}</p>
-                          <p className="text-xs text-slate-500">Monto: {debt.currencyCode} {ev.cashAmount} | Capital aplicado: {debt.currencyCode} {Math.max(0, -ev.principalDelta).toFixed(2)}</p>
+                <div className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                  {allEventsForDebt.map((ev) => (
+                    <div key={ev.id} className="flex items-center justify-between p-4 hover:bg-slate-50">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-slate-900">{formatEventType(ev.eventType)}</span>
+                          <span className="text-xs text-slate-400">{ev.eventDate}</span>
                         </div>
-                        {canReverse && (
-                          <button
-                            type="button"
-                            onClick={() => onOpenOperation("reversal", ev.id)}
-                            className="flex items-center gap-1 rounded-xl bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 self-start sm:self-center"
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" /> Revertir
-                          </button>
-                        )}
+                        {ev.description && <p className="text-xs text-slate-500 mt-0.5">{ev.description}</p>}
                       </div>
-                    );
-                  })}
+                      <div className="text-right">
+                        <p className="text-sm font-extrabold text-slate-900">
+                          {formatDebtMoney(ev.cashAmount, debt.currencyCode)}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Principal: {formatDebtMoney(-ev.principalDelta, debt.currencyCode)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
