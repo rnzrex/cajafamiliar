@@ -9,6 +9,7 @@ function account(overrides: Partial<FinancialAccount>): FinancialAccount {
     name: "Cuenta",
     reconciliationType: "balance",
     openingBalance: 0,
+    currencyCode: "PEN",
     isActive: true,
     sortOrder: 0,
     createdAt: "2026-08-01T00:00:00.000Z",

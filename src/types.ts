@@ -1,5 +1,5 @@
 export type MovementType = "ingreso" | "egreso";
-export type MovementContext = "standard" | "debt_service" | "credit_card_purchase";
+export type MovementContext = "standard" | "debt_service" | "credit_card_purchase" | "credit_card_payment" | "credit_card_fee";
 export type PaymentMethod = "efectivo" | "Yape" | "transferencia" | "tarjeta";
 export type AccountReconciliationType = "cash" | "balance";
 export type RecurringStatus = "pendiente" | "pagado";
@@ -26,6 +26,7 @@ export interface FinancialAccount {
   name: string;
   reconciliationType: AccountReconciliationType;
   openingBalance: number;
+  currencyCode: string;
   isActive: boolean;
   sortOrder: number;
   createdAt: string;
@@ -172,6 +173,19 @@ export interface CreditCardEntry {
   createdAt: string;
 }
 
+export interface CreditCardStatement {
+  id: string;
+  debtId: string;
+  statementDate: string;
+  dueDate: string;
+  statementBalance: number;
+  minimumPaymentAmount: number | null;
+  closingEntryId: string | null;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CreditCardPurchaseInput {
   debtId: string;
   entryId: string;
@@ -186,6 +200,40 @@ export interface CreditCardPurchaseResult {
   success: boolean;
   entryId: string;
   movementId: string;
+  idempotent: boolean;
+}
+
+export interface CreditCardPaymentInput {
+  debtId: string;
+  entryId: string;
+  movementId: string;
+  paymentDate: string;
+  amount: number;
+  accountId: string;
+  description: string;
+  category: string;
+}
+
+export interface CreditCardPaymentResult {
+  success: boolean;
+  entryId: string;
+  movementId: string;
+  idempotent: boolean;
+}
+
+export interface CreditCardStatementCloseInput {
+  statementId: string;
+  debtId: string;
+  statementDate: string;
+  dueDate: string;
+  minimumPaymentAmount?: number | null;
+}
+
+export interface CreditCardStatementCloseResult {
+  success: boolean;
+  statementId: string;
+  statementBalance: number;
+  minimumPaymentAmount: number | null;
   idempotent: boolean;
 }
 
@@ -321,6 +369,7 @@ export interface AppData {
   debtCollaterals: DebtCollateral[];
   creditCardProfiles: CreditCardProfile[];
   creditCardEntries: CreditCardEntry[];
+  creditCardStatements: CreditCardStatement[];
 }
 
 export const baseCategories: Category[] = [

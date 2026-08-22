@@ -22,6 +22,18 @@ export const formatMoney = (value: number) =>
     .format(value)
     .replace("PEN", "S/");
 
+export const formatMoneyByCurrency = (value: number, currencyCode?: string) => {
+  const code = (currencyCode || "PEN").toUpperCase();
+  if (code === "USD") {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      currencyDisplay: "narrowSymbol",
+    }).format(value);
+  }
+  return formatMoney(value);
+};
+
 export const monthKey = (date: string) => date.slice(0, 7);
 
 export function expectedCash(movements: Movement[], initialBalance: number, cashAccountId?: string | null) {

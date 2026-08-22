@@ -33,7 +33,13 @@ export interface OfflineCreateMovementOperation {
 
 export async function enqueueCreateMovement(member: HouseholdMember, movement: Movement): Promise<void> {
   if (movement.movementContext === "debt_service") throw new DebtServiceOfflineUnsupportedError();
-  if (movement.movementContext === "credit_card_purchase") throw new CreditCardPurchaseOfflineUnsupportedError();
+  if (
+    movement.movementContext === "credit_card_purchase" ||
+    movement.movementContext === "credit_card_payment" ||
+    movement.movementContext === "credit_card_fee"
+  ) {
+    throw new CreditCardPurchaseOfflineUnsupportedError();
+  }
 
   const database = await openOutbox();
   const operation: OfflineCreateMovementOperation = {

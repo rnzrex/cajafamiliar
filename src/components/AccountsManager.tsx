@@ -1,7 +1,7 @@
 import { ArchiveRestore, Archive, Pencil, Plus, Save, Wallet, X } from "lucide-react";
 import { FormEvent, useState } from "react";
 import { FinancialAccount, Movement } from "../types";
-import { formatMoney } from "../utils/calculations";
+import { formatMoney, formatMoneyByCurrency } from "../utils/calculations";
 import { accountDisplayName, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
 
 const accountTypeLabels: Record<FinancialAccount["reconciliationType"], string> = {
@@ -56,6 +56,7 @@ export function AccountsManager({ accounts, movements, onSave, onToggle, onEditI
           name: name.trim(),
           reconciliationType: "balance",
           openingBalance: Number(openingBalance) || 0,
+          currencyCode: editing?.currencyCode ?? "PEN",
           isActive: editing?.isActive ?? true,
           sortOrder: editing?.sortOrder ?? sorted.length,
         },
@@ -150,7 +151,7 @@ export function AccountsManager({ accounts, movements, onSave, onToggle, onEditI
               <label className="block space-y-2 text-base font-bold text-slate-700">
                 Saldo inicial
                 <div className="flex h-16 items-center rounded-2xl border border-slate-200 bg-slate-50 px-4">
-                  <span className="mr-2 text-xl font-black text-slate-500">S/</span>
+                  <span className="mr-2 text-xl font-black text-slate-500">{(editing?.currencyCode ?? "PEN") === "USD" ? "$" : "S/"}</span>
                   <input min="0" step="0.01" inputMode="decimal" type="number" value={openingBalance} onChange={(event) => setOpeningBalance(event.target.value)} placeholder="0.00" className="h-full min-w-0 flex-1 bg-transparent text-2xl font-black text-slate-900 outline-none" />
                 </div>
               </label>
@@ -189,10 +190,11 @@ function AccountCard({
             <Wallet className="h-5 w-5 text-blue-700" />
             <h4 className="truncate text-xl font-black text-slate-900">{accountDisplayName(account)}</h4>
             <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-black uppercase tracking-wide text-blue-800">{accountTypeLabels[account.reconciliationType]}</span>
+            {account.currencyCode && <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-black uppercase text-slate-700">{account.currencyCode}</span>}
             {!account.isActive && <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-black text-slate-700">Archivada</span>}
           </div>
-          <p className="mt-1 text-sm font-semibold text-slate-600">Saldo esperado: {formatMoney(balance)}</p>
-          <p className="text-sm font-semibold text-slate-600">Saldo inicial: {formatMoney(account.openingBalance)}</p>
+          <p className="mt-1 text-sm font-semibold text-slate-600">Saldo esperado: {formatMoneyByCurrency(balance, account.currencyCode)}</p>
+          <p className="text-sm font-semibold text-slate-600">Saldo inicial: {formatMoneyByCurrency(account.openingBalance, account.currencyCode)}</p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {isCash ? (

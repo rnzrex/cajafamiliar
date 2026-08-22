@@ -80,6 +80,7 @@ describe("serializers de dataRepository", () => {
         name: "Efectivo",
         reconciliationType: "cash",
         openingBalance: 120.5,
+        currencyCode: "PEN",
         isActive: true,
         sortOrder: 0,
         createdAt: "2026-08-01T00:00:00.000Z",
@@ -88,6 +89,7 @@ describe("serializers de dataRepository", () => {
       expect(row.reconciliation_type).toBe("cash");
       expect(row.opening_balance).toBe(120.5);
       expect(row.is_active).toBe(true);
+      expect(row.currency_code).toBe("PEN");
     });
 
     it("las cuentas balance usan reconciliation_type balance", () => {
@@ -96,6 +98,7 @@ describe("serializers de dataRepository", () => {
         name: "Banco",
         reconciliationType: "balance",
         openingBalance: 0,
+        currencyCode: "PEN",
         isActive: true,
         sortOrder: 1,
         createdAt: "2026-08-01T00:00:00.000Z",
