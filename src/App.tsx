@@ -32,6 +32,7 @@ import { AppData, CashCount, Category, Debt, FinancialAccount, HouseholdMember, 
 import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
 import { currentDebtPrincipal } from "./utils/debtCalculations";
 import { buildDebtPlanningItems, summarizeDebtPlanningAlerts } from "./utils/debtPlanning";
+import { parseNotificationDeepLink } from "./utils/deepLink";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
 import {
   CategoryNotFoundError,
@@ -312,13 +313,14 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   useEffect(() => {
     if (!dataReady || typeof window === "undefined") return;
 
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("view") !== "pagos") return;
+    const parsed = parseNotificationDeepLink(window.location.search, data.debts);
+    if (!parsed.view) return;
 
-    setView("pagos");
-    setFocusedPaymentId(params.get("payment")?.trim() || null);
+    setView(parsed.view);
+    setFocusedPaymentId(parsed.focusedPaymentId);
+    setSelectedDebtId(parsed.selectedDebtId);
     window.history.replaceState(window.history.state, document.title, `${window.location.pathname}${window.location.hash}`);
-  }, [dataReady]);
+  }, [dataReady, data.debts]);
 
   useEffect(() => {
     if (!dataReady) return;
