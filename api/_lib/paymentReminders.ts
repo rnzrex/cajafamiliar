@@ -21,7 +21,7 @@ import { createSupabaseAdmin, readServerEnvironment } from "./supabaseAdmin.js";
  * Unique index on (subscription_id, notification_date, notification_type) guarantees
  * at most ONE push delivery per subscription per day. DO NOT alter this string.
  */
-const NOTIFICATION_TYPE = "urgent-payments-v1";
+export const NOTIFICATION_TYPE = "urgent-payments-v1";
 
 interface PushSubscriptionRow {
   id: string;
@@ -313,14 +313,42 @@ async function loadUrgentDebtInstallments(
     const events = rawEvents.filter((r: any) => r.household_id === householdId).map(fromDebtEventRow);
     const allocations = rawAllocations.filter((r: any) => r.household_id === householdId).map(fromDebtEventInstallmentAllocationRow);
 
-    const planningItems = buildDebtPlanningItems(debts, events, versions, installments, allocations, today);
-    // Request all urgent items (not capped at 3 for Push Reminders)
-    const urgentItems = selectDebtPlanningAttentionItems(planningItems, planningItems.length);
+    const urgentItems = selectUrgentDebtInstallmentsForReminder(
+      debts,
+      events,
+      versions,
+      installments,
+      allocations,
+      today
+    );
 
     grouped.set(householdId, urgentItems);
   }
 
   return grouped;
+}
+
+/**
+ * Pure helper to compute urgent debt planning items for push reminders.
+ * Reuses buildDebtPlanningItems SSOT and selectDebtPlanningAttentionItems.
+ */
+export function selectUrgentDebtInstallmentsForReminder(
+  debts: Debt[],
+  debtEvents: DebtEvent[],
+  scheduleVersions: DebtScheduleVersion[],
+  installments: DebtInstallment[],
+  allocations: DebtEventInstallmentAllocation[],
+  today: string
+): DebtInstallmentPlanningItem[] {
+  const planningItems = buildDebtPlanningItems(
+    debts,
+    debtEvents,
+    scheduleVersions,
+    installments,
+    allocations,
+    today
+  );
+  return selectDebtPlanningAttentionItems(planningItems, planningItems.length);
 }
 
 async function claimDelivery(
