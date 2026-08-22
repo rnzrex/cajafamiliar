@@ -5,6 +5,7 @@ export interface MovementEconomics {
   cashOutflow: number;
   economicExpense: number;
   principalReduction: number;
+  liabilityDelta: number;
   unresolvedDebtServiceOutflow: number;
   knownDetailedCosts: number;
   unclassifiedDebtCost: number;
@@ -17,6 +18,7 @@ export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]
     cashOutflow: 0,
     economicExpense: 0,
     principalReduction: 0,
+    liabilityDelta: 0,
     unresolvedDebtServiceOutflow: 0,
     knownDetailedCosts: 0,
     unclassifiedDebtCost: 0,
@@ -28,6 +30,15 @@ export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]
 
   if (movement.movementContext === "standard") {
     return { ...empty, cashOutflow: movement.amount, economicExpense: movement.amount };
+  }
+
+  if (movement.movementContext === "credit_card_purchase") {
+    return {
+      ...empty,
+      cashOutflow: 0,
+      economicExpense: movement.amount,
+      liabilityDelta: movement.amount,
+    };
   }
 
   const effectiveFundEvents = effectiveDebtFundEvents(debtEvents).filter(
@@ -52,6 +63,7 @@ export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]
     cashOutflow: movement.amount,
     economicExpense,
     principalReduction: -event.principalDelta,
+    liabilityDelta: 0,
     unresolvedDebtServiceOutflow: 0,
     knownDetailedCosts,
     unclassifiedDebtCost,
@@ -60,7 +72,8 @@ export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]
   };
 }
 
-export function movementLabel(movement: Movement) {
-  if (movement.type === "ingreso") return "Ingreso";
-  return movement.movementContext === "debt_service" ? "Pago de deuda" : "Gasto";
+export function movementLabel(movement: Movement): string {
+  if (movement.movementContext === "debt_service") return "Servicio de deuda";
+  if (movement.movementContext === "credit_card_purchase") return "Compra con tarjeta";
+  return movement.type === "ingreso" ? "Ingreso" : "Egreso";
 }

@@ -1,5 +1,5 @@
 export type MovementType = "ingreso" | "egreso";
-export type MovementContext = "standard" | "debt_service";
+export type MovementContext = "standard" | "debt_service" | "credit_card_purchase";
 export type PaymentMethod = "efectivo" | "Yape" | "transferencia" | "tarjeta";
 export type AccountReconciliationType = "cash" | "balance";
 export type RecurringStatus = "pendiente" | "pagado";
@@ -170,6 +170,23 @@ export interface CreditCardEntry {
   description: string;
   registeredByUserId: string;
   createdAt: string;
+}
+
+export interface CreditCardPurchaseInput {
+  debtId: string;
+  entryId: string;
+  movementId: string;
+  purchaseDate: string;
+  amount: number;
+  description: string;
+  category: string;
+}
+
+export interface CreditCardPurchaseResult {
+  success: boolean;
+  entryId: string;
+  movementId: string;
+  idempotent: boolean;
 }
 
 export interface DebtScheduleInstallmentInput {
