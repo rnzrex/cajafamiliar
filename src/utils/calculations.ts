@@ -162,9 +162,10 @@ function dueDateStatus(dueDate: string | null, today: Date): PaymentStatus {
   return result as PaymentStatus;
 }
 
-function monthlyDueDate(dueDay: number | null, todayKey: string) {
+export function monthlyDueDate(dueDay: number | null, todayKey: string) {
   if (dueDay == null) return null;
   const [year, month] = todayKey.split("-").map(Number);
+  if (!year || !month) return null;
   const lastDay = new Date(Date.UTC(year, month, 0, 12)).getUTCDate();
   return `${year}-${String(month).padStart(2, "0")}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`;
 }
