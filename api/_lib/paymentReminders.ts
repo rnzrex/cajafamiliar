@@ -1,10 +1,27 @@
 import webpush from "web-push";
-import type { RecurringPayment } from "../../src/types.js";
+import type {
+  Debt,
+  DebtEvent,
+  DebtEventInstallmentAllocation,
+  DebtInstallment,
+  DebtScheduleVersion,
+  RecurringPayment,
+} from "../../src/types.js";
 import { paymentAlert } from "../../src/utils/calculations.js";
 import { localDateString } from "../../src/utils/date.js";
+import type { DebtInstallmentPlanningItem } from "../../src/utils/debtPlanning.js";
+import {
+  buildDebtPlanningItems,
+  selectDebtPlanningAttentionItems,
+} from "../../src/utils/debtPlanning.js";
 import { createSupabaseAdmin, readServerEnvironment } from "./supabaseAdmin.js";
 
-const NOTIFICATION_TYPE = "urgent-payments-v1";
+/**
+ * Historical stable identifier for the single daily urgent obligation push delivery.
+ * Unique index on (subscription_id, notification_date, notification_type) guarantees
+ * at most ONE push delivery per subscription per day. DO NOT alter this string.
+ */
+export const NOTIFICATION_TYPE = "urgent-payments-v1";
 
 interface PushSubscriptionRow {
   id: string;
@@ -42,12 +59,76 @@ interface RecurringPaymentRow {
   paid_at: string | null;
 }
 
-interface ReminderSummary {
+export interface ReminderSummary {
   subscriptions: number;
   sent: number;
   skipped: number;
   failed: number;
   deactivated: number;
+  recurringUrgent?: number;
+  debtUrgent?: number;
+}
+
+export interface ObligationReminderPayloadInput {
+  urgentRecurringPayments: RecurringPayment[];
+  urgentDebtInstallments: DebtInstallmentPlanningItem[];
+  today: string;
+}
+
+export interface ObligationReminderPayload {
+  title: string;
+  body: string;
+  url: string;
+  tag: string;
+}
+
+/**
+ * Pure helper to build the consolidated push notification payload
+ * for urgent recurring payments and debt installments.
+ */
+export function buildObligationReminderPayload({
+  urgentRecurringPayments,
+  urgentDebtInstallments,
+  today,
+}: ObligationReminderPayloadInput): ObligationReminderPayload {
+  const numRecurring = urgentRecurringPayments.length;
+  const numDebt = urgentDebtInstallments.length;
+  const total = numRecurring + numDebt;
+
+  let body = "";
+  let url = "/?view=dashboard";
+
+  if (numRecurring > 0 && numDebt === 0) {
+    body =
+      numRecurring === 1
+        ? "Tienes 1 pago que requiere atención."
+        : `Tienes ${numRecurring} pagos que requieren atención.`;
+    url =
+      numRecurring === 1
+        ? `/?view=pagos&payment=${encodeURIComponent(urgentRecurringPayments[0].id)}`
+        : "/?view=pagos";
+  } else if (numDebt > 0 && numRecurring === 0) {
+    body =
+      numDebt === 1
+        ? "Tienes 1 cuota de deuda que requiere atención."
+        : `Tienes ${numDebt} cuotas de deuda que requieren atención.`;
+    url =
+      numDebt === 1
+        ? `/?view=deudas&debt=${encodeURIComponent(urgentDebtInstallments[0].debtId)}`
+        : "/?view=deudas";
+  } else if (numRecurring > 0 && numDebt > 0) {
+    const recurringText = numRecurring === 1 ? "1 pago" : `${numRecurring} pagos`;
+    const debtText = numDebt === 1 ? "1 cuota de deuda" : `${numDebt} cuotas de deuda`;
+    body = `Tienes ${total} obligaciones que requieren atención: ${recurringText} y ${debtText}.`;
+    url = "/?view=dashboard";
+  }
+
+  return {
+    title: "Caja Familiar",
+    body,
+    url,
+    tag: `urgent-payments-${today}`,
+  };
 }
 
 export async function runPaymentReminderJob(): Promise<ReminderSummary> {
@@ -57,12 +138,33 @@ export async function runPaymentReminderJob(): Promise<ReminderSummary> {
   webpush.setVapidDetails(environment.vapidSubject, environment.vapidPublicKey, environment.vapidPrivateKey);
 
   const subscriptions = await loadSubscriptions(admin, environment.appOrigin);
-  const urgentByHousehold = await loadUrgentPayments(admin, subscriptions);
-  const summary: ReminderSummary = { subscriptions: subscriptions.length, sent: 0, skipped: 0, failed: 0, deactivated: 0 };
+  const urgentPaymentsByHousehold = await loadUrgentPayments(admin, subscriptions);
+  const urgentDebtsByHousehold = await loadUrgentDebtInstallments(admin, subscriptions, today);
+
+  let totalRecurringUrgent = 0;
+  for (const list of urgentPaymentsByHousehold.values()) {
+    totalRecurringUrgent += list.length;
+  }
+  let totalDebtUrgent = 0;
+  for (const list of urgentDebtsByHousehold.values()) {
+    totalDebtUrgent += list.length;
+  }
+
+  const summary: ReminderSummary = {
+    subscriptions: subscriptions.length,
+    sent: 0,
+    skipped: 0,
+    failed: 0,
+    deactivated: 0,
+    recurringUrgent: totalRecurringUrgent,
+    debtUrgent: totalDebtUrgent,
+  };
 
   for (const subscription of subscriptions) {
-    const urgentPayments = urgentByHousehold.get(subscription.household_id) ?? [];
-    if (urgentPayments.length === 0) {
+    const urgentPayments = urgentPaymentsByHousehold.get(subscription.household_id) ?? [];
+    const urgentDebts = urgentDebtsByHousehold.get(subscription.household_id) ?? [];
+
+    if (urgentPayments.length === 0 && urgentDebts.length === 0) {
       summary.skipped += 1;
       continue;
     }
@@ -73,12 +175,11 @@ export async function runPaymentReminderJob(): Promise<ReminderSummary> {
       continue;
     }
 
-    const payload = {
-      title: "Caja Familiar",
-      body: urgentPayments.length === 1 ? "Tienes 1 pago que requiere atención." : `Tienes ${urgentPayments.length} pagos que requieren atención.`,
-      url: urgentPayments.length === 1 ? `/?view=pagos&payment=${encodeURIComponent(urgentPayments[0].id)}` : "/?view=pagos",
-      tag: `urgent-payments-${today}`,
-    };
+    const payload = buildObligationReminderPayload({
+      urgentRecurringPayments: urgentPayments,
+      urgentDebtInstallments: urgentDebts,
+      today,
+    });
 
     try {
       await webpush.sendNotification(
@@ -107,7 +208,10 @@ export async function runPaymentReminderJob(): Promise<ReminderSummary> {
       await markSubscriptionFailure(admin, subscription.id);
 
       if (isExpiredPushError(error)) {
-        await admin.from("push_subscriptions").update({ is_active: false, updated_at: new Date().toISOString() }).eq("id", subscription.id);
+        await admin
+          .from("push_subscriptions")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("id", subscription.id);
         summary.deactivated += 1;
       }
       summary.failed += 1;
@@ -117,7 +221,10 @@ export async function runPaymentReminderJob(): Promise<ReminderSummary> {
   return summary;
 }
 
-async function loadSubscriptions(admin: ReturnType<typeof createSupabaseAdmin>, appOrigin: string): Promise<PushSubscriptionRow[]> {
+async function loadSubscriptions(
+  admin: ReturnType<typeof createSupabaseAdmin>,
+  appOrigin: string
+): Promise<PushSubscriptionRow[]> {
   const { data, error } = await admin
     .from("push_subscriptions")
     .select("id,household_id,user_id,endpoint,p256dh,auth,expires_at")
@@ -144,14 +251,19 @@ async function loadSubscriptions(admin: ReturnType<typeof createSupabaseAdmin>, 
   return rows.filter((row) => authorizedMembers.has(`${row.household_id}:${row.user_id}`));
 }
 
-async function loadUrgentPayments(admin: ReturnType<typeof createSupabaseAdmin>, subscriptions: PushSubscriptionRow[]) {
+async function loadUrgentPayments(
+  admin: ReturnType<typeof createSupabaseAdmin>,
+  subscriptions: PushSubscriptionRow[]
+) {
   const householdIds = [...new Set(subscriptions.map((subscription) => subscription.household_id))];
   const grouped = new Map<string, RecurringPayment[]>();
   if (householdIds.length === 0) return grouped;
 
   const { data, error } = await admin
     .from("recurring_payments")
-    .select("id,household_id,name,amount,amount_mode,due_day,due_date,category,status,notes,recurrence_type,total_installments,paid_installments,is_active,last_paid_month,last_paid_year,paid_at")
+    .select(
+      "id,household_id,name,amount,amount_mode,due_day,due_date,category,status,notes,recurrence_type,total_installments,paid_installments,is_active,last_paid_month,last_paid_year,paid_at"
+    )
     .in("household_id", householdIds);
   if (error) throw error;
 
@@ -165,7 +277,85 @@ async function loadUrgentPayments(admin: ReturnType<typeof createSupabaseAdmin>,
   return grouped;
 }
 
-async function claimDelivery(admin: ReturnType<typeof createSupabaseAdmin>, subscription: PushSubscriptionRow, notificationDate: string) {
+async function loadUrgentDebtInstallments(
+  admin: ReturnType<typeof createSupabaseAdmin>,
+  subscriptions: PushSubscriptionRow[],
+  today: string
+) {
+  const householdIds = [...new Set(subscriptions.map((s) => s.household_id))];
+  const grouped = new Map<string, DebtInstallmentPlanningItem[]>();
+  if (householdIds.length === 0) return grouped;
+
+  const [debtsRes, versionsRes, installmentsRes, eventsRes, allocationsRes] = await Promise.all([
+    admin.from("debts").select("*").in("household_id", householdIds),
+    admin.from("debt_schedule_versions").select("*").in("household_id", householdIds),
+    admin.from("debt_installments").select("*").in("household_id", householdIds),
+    admin.from("debt_events").select("*").in("household_id", householdIds),
+    admin.from("debt_event_installment_allocations").select("*").in("household_id", householdIds),
+  ]);
+
+  if (debtsRes.error) throw debtsRes.error;
+  if (versionsRes.error) throw versionsRes.error;
+  if (installmentsRes.error) throw installmentsRes.error;
+  if (eventsRes.error) throw eventsRes.error;
+  if (allocationsRes.error) throw allocationsRes.error;
+
+  const rawDebts = debtsRes.data ?? [];
+  const rawVersions = versionsRes.data ?? [];
+  const rawInstallments = installmentsRes.data ?? [];
+  const rawEvents = eventsRes.data ?? [];
+  const rawAllocations = allocationsRes.data ?? [];
+
+  for (const householdId of householdIds) {
+    const debts = rawDebts.filter((r: any) => r.household_id === householdId).map(fromDebtRow);
+    const versions = rawVersions.filter((r: any) => r.household_id === householdId).map(fromDebtScheduleVersionRow);
+    const installments = rawInstallments.filter((r: any) => r.household_id === householdId).map(fromDebtInstallmentRow);
+    const events = rawEvents.filter((r: any) => r.household_id === householdId).map(fromDebtEventRow);
+    const allocations = rawAllocations.filter((r: any) => r.household_id === householdId).map(fromDebtEventInstallmentAllocationRow);
+
+    const urgentItems = selectUrgentDebtInstallmentsForReminder(
+      debts,
+      events,
+      versions,
+      installments,
+      allocations,
+      today
+    );
+
+    grouped.set(householdId, urgentItems);
+  }
+
+  return grouped;
+}
+
+/**
+ * Pure helper to compute urgent debt planning items for push reminders.
+ * Reuses buildDebtPlanningItems SSOT and selectDebtPlanningAttentionItems.
+ */
+export function selectUrgentDebtInstallmentsForReminder(
+  debts: Debt[],
+  debtEvents: DebtEvent[],
+  scheduleVersions: DebtScheduleVersion[],
+  installments: DebtInstallment[],
+  allocations: DebtEventInstallmentAllocation[],
+  today: string
+): DebtInstallmentPlanningItem[] {
+  const planningItems = buildDebtPlanningItems(
+    debts,
+    debtEvents,
+    scheduleVersions,
+    installments,
+    allocations,
+    today
+  );
+  return selectDebtPlanningAttentionItems(planningItems, planningItems.length);
+}
+
+async function claimDelivery(
+  admin: ReturnType<typeof createSupabaseAdmin>,
+  subscription: PushSubscriptionRow,
+  notificationDate: string
+) {
   const { data, error } = await admin
     .from("push_notification_deliveries")
     .insert({
@@ -185,14 +375,20 @@ async function claimDelivery(admin: ReturnType<typeof createSupabaseAdmin>, subs
   return { id: data.id as string };
 }
 
-async function markSubscriptionSuccess(admin: ReturnType<typeof createSupabaseAdmin>, subscriptionId: string) {
+async function markSubscriptionSuccess(
+  admin: ReturnType<typeof createSupabaseAdmin>,
+  subscriptionId: string
+) {
   await admin
     .from("push_subscriptions")
     .update({ last_success_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq("id", subscriptionId);
 }
 
-async function markSubscriptionFailure(admin: ReturnType<typeof createSupabaseAdmin>, subscriptionId: string) {
+async function markSubscriptionFailure(
+  admin: ReturnType<typeof createSupabaseAdmin>,
+  subscriptionId: string
+) {
   await admin
     .from("push_subscriptions")
     .update({ last_failure_at: new Date().toISOString(), updated_at: new Date().toISOString() })
@@ -210,13 +406,110 @@ function toRecurringPayment(row: RecurringPaymentRow): RecurringPayment {
     category: row.category,
     status: row.status === "pagado" ? "pagado" : "pendiente",
     notes: row.notes ?? "",
-    recurrence_type: row.recurrence_type === "fixed" || row.recurrence_type === "one_time" ? row.recurrence_type : "indefinite",
+    recurrence_type:
+      row.recurrence_type === "fixed" || row.recurrence_type === "one_time"
+        ? row.recurrence_type
+        : "indefinite",
     total_installments: row.total_installments == null ? null : Number(row.total_installments),
     paid_installments: row.paid_installments == null ? 0 : Number(row.paid_installments),
     is_active: Boolean(row.is_active),
     last_paid_month: row.last_paid_month == null ? null : Number(row.last_paid_month),
     last_paid_year: row.last_paid_year == null ? null : Number(row.last_paid_year),
     paidAt: row.paid_at ?? null,
+  };
+}
+
+function fromDebtRow(row: Record<string, any>): Debt {
+  return {
+    id: row.id,
+    name: row.name,
+    creditorName: row.creditor_name,
+    debtKind: row.debt_kind,
+    currencyCode: row.currency_code,
+    originDate: row.origin_date ?? null,
+    trackingStartDate: row.tracking_start_date,
+    originalPrincipal: row.original_principal == null ? null : Number(row.original_principal),
+    openingPrincipalBalance: Number(row.opening_principal_balance),
+    plannedInstallmentCount: row.planned_installment_count == null ? null : Number(row.planned_installment_count),
+    plannedInstallmentAmount: row.planned_installment_amount == null ? null : Number(row.planned_installment_amount),
+    installmentAmountMode: row.installment_amount_mode,
+    paymentFrequency: row.payment_frequency ?? null,
+    customFrequencyDays: row.custom_frequency_days == null ? null : Number(row.custom_frequency_days),
+    firstDueDate: row.first_due_date ?? null,
+    teaPercent: row.tea_percent == null ? null : Number(row.tea_percent),
+    tceaPercent: row.tcea_percent == null ? null : Number(row.tcea_percent),
+    notes: row.notes ?? "",
+    status: row.status,
+    isArchived: Boolean(row.is_archived),
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function fromDebtScheduleVersionRow(row: Record<string, any>): DebtScheduleVersion {
+  return {
+    id: row.id,
+    debtId: row.debt_id,
+    versionNumber: Number(row.version_number),
+    effectiveDate: row.effective_date,
+    reason: row.reason,
+    triggerEventId: row.trigger_event_id ?? null,
+    notes: row.notes ?? "",
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromDebtInstallmentRow(row: Record<string, any>): DebtInstallment {
+  return {
+    id: row.id,
+    scheduleVersionId: row.schedule_version_id,
+    debtId: row.debt_id,
+    installmentNumber: Number(row.installment_number),
+    dueDate: row.due_date,
+    expectedAmount: row.expected_amount == null ? null : Number(row.expected_amount),
+    expectedPrincipal: row.expected_principal == null ? null : Number(row.expected_principal),
+    expectedInterest: row.expected_interest == null ? null : Number(row.expected_interest),
+    expectedFees: row.expected_fees == null ? null : Number(row.expected_fees),
+    expectedInsurance: row.expected_insurance == null ? null : Number(row.expected_insurance),
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromDebtEventRow(row: Record<string, any>): DebtEvent {
+  return {
+    id: row.id,
+    debtId: row.debt_id,
+    eventDate: row.event_date,
+    eventType: row.event_type,
+    cashAmount: Number(row.cash_amount),
+    principalDelta: Number(row.principal_delta),
+    interestPaid: Number(row.interest_paid),
+    feesPaid: Number(row.fees_paid),
+    insurancePaid: Number(row.insurance_paid),
+    otherCostPaid: Number(row.other_cost_paid),
+    breakdownComplete: Boolean(row.breakdown_complete),
+    movementId: row.movement_id ?? null,
+    reversalOfEventId: row.reversal_of_event_id ?? null,
+    description: row.description ?? "",
+    registeredByUserId: row.registered_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromDebtEventInstallmentAllocationRow(
+  row: Record<string, any>
+): DebtEventInstallmentAllocation {
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    installmentId: row.installment_id,
+    debtId: row.debt_id,
+    allocatedAmount: Number(row.allocated_amount),
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
   };
 }
 
@@ -227,7 +520,14 @@ function isExpiredPushError(error: unknown) {
 function normalizePushErrorCode(error: unknown) {
   const statusCode = getPushStatusCode(error);
   if (statusCode) return `HTTP_${statusCode}`;
-  if (error && typeof error === "object" && "code" in error && typeof error.code === "string" && /^[A-Za-z0-9_-]+$/.test(error.code)) return error.code.slice(0, 64).toUpperCase();
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    /^[A-Za-z0-9_-]+$/.test(error.code)
+  )
+    return error.code.slice(0, 64).toUpperCase();
   return "PUSH_SEND_FAILED";
 }
 
