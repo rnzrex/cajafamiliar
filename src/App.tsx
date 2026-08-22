@@ -33,6 +33,7 @@ import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth, p
 import { currentDebtPrincipal } from "./utils/debtCalculations";
 import { buildDebtPlanningItems, summarizeDebtPlanningAlerts } from "./utils/debtPlanning";
 import { parseNotificationDeepLink } from "./utils/deepLink";
+import { buildObligationProjection } from "./utils/obligationProjection";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
 import {
   CategoryNotFoundError,
@@ -196,6 +197,16 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         data.debtEventInstallmentAllocations
       ),
     [data.debts, data.debtEvents, data.debtScheduleVersions, data.debtInstallments, data.debtEventInstallmentAllocations]
+  );
+
+  const obligationProjection = useMemo(
+    () =>
+      buildObligationProjection({
+        recurringPayments: data.recurringPayments,
+        debts: data.debts,
+        debtPlanningItems,
+      }),
+    [data.recurringPayments, data.debts, debtPlanningItems]
   );
 
   const debtPlanningAlertSummary = useMemo(() => summarizeDebtPlanningAlerts(debtPlanningItems), [debtPlanningItems]);
@@ -1176,6 +1187,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               cashCounts={data.cashCounts}
               recurringPayments={data.recurringPayments}
               debtPlanningItems={debtPlanningItems}
+              obligationProjection={obligationProjection}
               initialBalance={data.initialBalance}
               accounts={data.financialAccounts}
               onNavigate={navigate}

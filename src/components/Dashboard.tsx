@@ -13,6 +13,8 @@ import {
 import { CashCount, DebtEvent, FinancialAccount, Movement, RecurringPayment } from "../types";
 import type { DebtInstallmentPlanningItem } from "../utils/debtPlanning";
 import { selectDebtPlanningAttentionItems } from "../utils/debtPlanning";
+import type { ObligationProjectionResult } from "../utils/obligationProjection";
+import { ObligationsProjectionPanel } from "./ObligationsProjectionPanel";
 import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAmountLabel, paymentScheduleLabel, paymentStatus, topExpenseCategory } from "../utils/calculations";
 import { accountNameForMovement, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
 import { movementLabel } from "../utils/movementEconomics";
@@ -25,6 +27,7 @@ interface DashboardProps {
   cashCounts: CashCount[];
   recurringPayments: RecurringPayment[];
   debtPlanningItems?: DebtInstallmentPlanningItem[];
+  obligationProjection: ObligationProjectionResult;
   initialBalance: number;
   accounts: FinancialAccount[];
   onNavigate: (view: string) => void;
@@ -39,6 +42,7 @@ export function Dashboard({
   cashCounts,
   recurringPayments,
   debtPlanningItems = [],
+  obligationProjection,
   initialBalance,
   accounts,
   onNavigate,
@@ -230,6 +234,12 @@ export function Dashboard({
           </div>
         )}
       </section>
+
+      <ObligationsProjectionPanel
+        obligationProjection={obligationProjection}
+        onOpenPayment={onOpenPayment}
+        onOpenDebt={onOpenDebt}
+      />
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <article className="rounded-3xl bg-white p-5 shadow-sm lg:col-span-1">
