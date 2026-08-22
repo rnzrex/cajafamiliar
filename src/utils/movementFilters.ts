@@ -117,3 +117,92 @@ export function movementTotals(
     economicBalance: totals.income - totals.expense,
   };
 }
+
+import type { Debt } from "../types";
+import { resolveMovementCurrencyCode } from "./movementEconomics";
+
+export interface SingleCurrencyMovementTotals {
+  currencyCode: string;
+  income: number;
+  cashOutflow: number;
+  expense: number;
+  principalReduction: number;
+  unresolvedDebtServiceOutflow: number;
+  unclassifiedDebtCost: number;
+  balance: number;
+  economicBalance: number;
+  movementCount: number;
+}
+
+export interface CurrencyMovementTotalsResult {
+  byCurrency: Record<string, SingleCurrencyMovementTotals>;
+  unresolvedMovements: Movement[];
+  totalMovementCount: number;
+}
+
+export function movementTotalsByCurrency(
+  movements: Movement[],
+  debtEvents: DebtEvent[] = [],
+  creditCardEntries: CreditCardEntry[] = [],
+  accounts: FinancialAccount[] = [],
+  debts: Debt[] = []
+): CurrencyMovementTotalsResult {
+  const byCurrency: Record<string, SingleCurrencyMovementTotals> = {};
+  const unresolvedMovements: Movement[] = [];
+
+  for (const movement of movements) {
+    const currencyCode = resolveMovementCurrencyCode(
+      movement,
+      accounts,
+      debts,
+      debtEvents,
+      creditCardEntries
+    );
+
+    if (!currencyCode) {
+      unresolvedMovements.push(movement);
+      continue;
+    }
+
+    if (!byCurrency[currencyCode]) {
+      byCurrency[currencyCode] = {
+        currencyCode,
+        income: 0,
+        cashOutflow: 0,
+        expense: 0,
+        principalReduction: 0,
+        unresolvedDebtServiceOutflow: 0,
+        unclassifiedDebtCost: 0,
+        balance: 0,
+        economicBalance: 0,
+        movementCount: 0,
+      };
+    }
+
+    const currTotals = byCurrency[currencyCode];
+    currTotals.movementCount += 1;
+
+    if (movement.type === "ingreso") {
+      currTotals.income += movement.amount;
+    } else {
+      const economics = getMovementEconomics(movement, debtEvents, creditCardEntries);
+      currTotals.cashOutflow += economics.cashOutflow;
+      currTotals.expense += economics.economicExpense;
+      currTotals.principalReduction += economics.principalReduction;
+      currTotals.unresolvedDebtServiceOutflow += economics.unresolvedDebtServiceOutflow;
+      currTotals.unclassifiedDebtCost += economics.unclassifiedDebtCost;
+    }
+  }
+
+  for (const curr of Object.keys(byCurrency)) {
+    const t = byCurrency[curr];
+    t.balance = t.income - t.cashOutflow;
+    t.economicBalance = t.income - t.expense;
+  }
+
+  return {
+    byCurrency,
+    unresolvedMovements,
+    totalMovementCount: movements.length,
+  };
+}

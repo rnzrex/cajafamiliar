@@ -16,11 +16,11 @@ import {
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { Download, RotateCcw } from "lucide-react";
-import { Category, CreditCardEntry, DebtEvent, FinancialAccount, Movement } from "../types";
-import { expectedCash, formatMoney } from "../utils/calculations";
+import { Category, CreditCardEntry, Debt, DebtEvent, FinancialAccount, Movement } from "../types";
+import { expectedCash, formatMoney, formatMoneyByCurrency } from "../utils/calculations";
 import { UNASSIGNED_ACCOUNT_ID, getActiveCashAccount } from "../utils/accountHelpers";
-import { defaultMovementFilters, filterMovements, movementTotals, type MovementFilters } from "../utils/movementFilters";
-import { getMovementEconomics } from "../utils/movementEconomics";
+import { defaultMovementFilters, filterMovements, movementTotals, movementTotalsByCurrency, type MovementFilters } from "../utils/movementFilters";
+import { getMovementEconomics, resolveMovementCurrencyCode } from "../utils/movementEconomics";
 
 interface ReportsProps {
   movements: Movement[];
@@ -28,36 +28,96 @@ interface ReportsProps {
   creditCardEntries?: CreditCardEntry[];
   categories: Category[];
   accounts: FinancialAccount[];
+  debts?: Debt[];
   initialBalance: number;
 }
 
 const colors = ["#2563eb", "#16a34a", "#dc2626", "#f59e0b", "#7c3aed", "#0f766e", "#db2777", "#64748b"];
 
-export async function exportReportFromReports(movements: Movement[], filters: MovementFilters, accounts: FinancialAccount[], debtEvents: DebtEvent[]) {
+export async function exportReportFromReports(
+  movements: Movement[],
+  filters: MovementFilters,
+  accounts: FinancialAccount[],
+  debtEvents: DebtEvent[],
+  creditCardEntries: CreditCardEntry[] = [],
+  debts: Debt[] = []
+) {
   const { exportReportExcel } = await import("../utils/excelExport");
-  exportReportExcel(movements, filters, accounts, debtEvents);
+  if (creditCardEntries.length > 0 || debts.length > 0) {
+    exportReportExcel(movements, filters, accounts, debtEvents, creditCardEntries, debts);
+  } else {
+    exportReportExcel(movements, filters, accounts, debtEvents);
+  }
 }
 
-export function Reports({ movements, debtEvents, creditCardEntries = [], categories, accounts, initialBalance }: ReportsProps) {
+export function Reports({ movements, debtEvents, creditCardEntries = [], categories, accounts, debts = [], initialBalance }: ReportsProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
-  const filteredMovements = useMemo(() => filterMovements(movements, filters, accounts), [movements, filters, accounts]);
-  const expenses = filteredMovements
-    .filter((movement) => movement.type === "egreso")
-    .map((movement) => ({ ...movement, amount: getMovementEconomics(movement, debtEvents, creditCardEntries).economicExpense }))
-    .filter((movement) => movement.amount > 0);
-  const incomes = filteredMovements.filter((movement) => movement.type === "ingreso");
-  const cashAccount = getActiveCashAccount(accounts);
-  const totals = movementTotals(filteredMovements, debtEvents, creditCardEntries);
+  const [selectedCurrency, setSelectedCurrency] = useState<string>("all");
 
-  const byCategory = groupBy(expenses, "category");
-  const byAccount = groupBy(expenses, "accountId", accounts);
+  const filteredMovements = useMemo(() => filterMovements(movements, filters, accounts), [movements, filters, accounts]);
+
+  const currencyTotalsResult = useMemo(
+    () => movementTotalsByCurrency(filteredMovements, debtEvents, creditCardEntries, accounts, debts),
+    [filteredMovements, debtEvents, creditCardEntries, accounts, debts]
+  );
+
+  const availableCurrencies = useMemo(() => Object.keys(currencyTotalsResult.byCurrency), [currencyTotalsResult]);
+
+  const activeCurrency = useMemo(() => {
+    if (selectedCurrency !== "all" && availableCurrencies.includes(selectedCurrency)) {
+      return selectedCurrency;
+    }
+    return availableCurrencies[0] || "PEN";
+  }, [selectedCurrency, availableCurrencies]);
+
+  const scopedMovements = useMemo(() => {
+    if (availableCurrencies.length <= 1 || selectedCurrency === "all") {
+      return filteredMovements;
+    }
+    return filteredMovements.filter(
+      (m) => resolveMovementCurrencyCode(m, accounts, debts, debtEvents, creditCardEntries) === selectedCurrency
+    );
+  }, [filteredMovements, availableCurrencies, selectedCurrency, accounts, debts, debtEvents, creditCardEntries]);
+
+  const currentTotals = useMemo(() => {
+    if (availableCurrencies.length <= 1) {
+      return currencyTotalsResult.byCurrency[availableCurrencies[0]] || {
+        currencyCode: "PEN",
+        income: 0,
+        cashOutflow: 0,
+        expense: 0,
+        balance: 0,
+        economicBalance: 0,
+      };
+    }
+    if (selectedCurrency !== "all" && currencyTotalsResult.byCurrency[selectedCurrency]) {
+      return currencyTotalsResult.byCurrency[selectedCurrency];
+    }
+    return currencyTotalsResult.byCurrency[activeCurrency] || {
+      currencyCode: activeCurrency,
+      income: 0,
+      cashOutflow: 0,
+      expense: 0,
+      balance: 0,
+      economicBalance: 0,
+    };
+  }, [currencyTotalsResult, availableCurrencies, selectedCurrency, activeCurrency]);
+
+  const expenses = scopedMovements
+    .filter((movement) => movement.type === "egreso")
+    .map((movement) => ({ ...movement, amount: getMovementEconomics(movement, debtEvents, creditCardEntries).economicExpense }));
+  const incomes = scopedMovements.filter((movement) => movement.type === "ingreso");
+  const cashAccount = getActiveCashAccount(accounts);
+
+  const byCategory = groupBy(expenses, "category").filter((item) => item.monto > 0);
+  const byAccount = groupBy(expenses, "accountId", accounts).filter((item) => item.monto > 0);
   const incomeExpense = [
     { name: "Ingresos", monto: incomes.reduce((sum, movement) => sum + movement.amount, 0) },
-    { name: "Salidas de dinero", monto: totals.cashOutflow },
-    { name: "Gastos", monto: totals.expense },
+    { name: "Salidas de dinero", monto: currentTotals.cashOutflow },
+    { name: "Gastos", monto: currentTotals.expense },
   ];
   const topFive = [...byCategory].sort((a, b) => b.monto - a.monto).slice(0, 5);
-  const cashEvolution = buildCashEvolution(filteredMovements, cashAccount?.openingBalance ?? initialBalance, cashAccount?.id ?? null, creditCardEntries);
+  const cashEvolution = buildCashEvolution(scopedMovements, cashAccount?.openingBalance ?? initialBalance, cashAccount?.id ?? null, creditCardEntries);
 
   async function handleExport() {
     if (filteredMovements.length === 0) {
@@ -66,7 +126,7 @@ export function Reports({ movements, debtEvents, creditCardEntries = [], categor
     }
 
     try {
-      await exportReportFromReports(filteredMovements, filters, accounts, debtEvents);
+      await exportReportFromReports(filteredMovements, filters, accounts, debtEvents, creditCardEntries, debts);
     } catch {
       window.alert("No se pudo preparar el archivo Excel. Intenta nuevamente.");
     }

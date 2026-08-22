@@ -10,15 +10,16 @@ import {
   PiggyBank,
   Scale,
 } from "lucide-react";
-import { CashCount, CreditCardEntry, DebtEvent, FinancialAccount, Movement, RecurringPayment } from "../types";
+import { CashCount, CreditCardEntry, Debt, DebtEvent, FinancialAccount, Movement, RecurringPayment } from "../types";
 import type { DebtInstallmentPlanningItem } from "../utils/debtPlanning";
 import { selectDebtPlanningAttentionItems } from "../utils/debtPlanning";
 import type { ObligationProjectionResult } from "../utils/obligationProjection";
 import { ObligationsProjectionPanel } from "./ObligationsProjectionPanel";
-import { expectedCash, formatMoney, lastCashCount, monthlyTotals, paymentAmountLabel, paymentScheduleLabel, paymentStatus, topExpenseCategory } from "../utils/calculations";
+import { expectedCash, formatMoney, formatMoneyByCurrency, lastCashCount, monthKey, paymentAmountLabel, paymentScheduleLabel, paymentStatus } from "../utils/calculations";
 import { accountNameForMovement, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
-import { movementLabel } from "../utils/movementEconomics";
-import { formatLocalDate } from "../utils/date";
+import { getMovementEconomics, movementLabel, resolveMovementCurrencyCode } from "../utils/movementEconomics";
+import { localMonthString, formatLocalDate } from "../utils/date";
+import { movementTotalsByCurrency } from "../utils/movementFilters";
 
 interface DashboardProps {
   movements: Movement[];
@@ -31,6 +32,7 @@ interface DashboardProps {
   obligationProjection: ObligationProjectionResult;
   initialBalance: number;
   accounts: FinancialAccount[];
+  debts?: Debt[];
   onNavigate: (view: string) => void;
   onOpenPayment: (id: string) => void;
   onOpenDebt?: (debtId: string) => void;
@@ -47,17 +49,62 @@ export function Dashboard({
   obligationProjection,
   initialBalance,
   accounts,
+  debts = [],
   onNavigate,
   onOpenPayment,
   onOpenDebt,
 }: DashboardProps) {
   const cashAccount = getActiveCashAccount(accounts);
+  const cashCurrency = cashAccount?.currencyCode ?? "PEN";
   const expected = expectedCash(movements, cashAccount ? cashAccount.openingBalance : initialBalance, cashAccount?.id ?? null, creditCardEntries);
   const lastCount = lastCashCount(cashCounts);
   const hasCount = Boolean(lastCount);
   const difference = hasCount ? (lastCount?.total ?? 0) - expected : null;
-  const totals = monthlyTotals(movements, undefined, debtEvents, creditCardEntries);
-  const topCategory = topExpenseCategory(movements, undefined, debtEvents, creditCardEntries);
+
+  const currentMonthStr = localMonthString();
+  const monthlyMovements = movements.filter((m) => monthKey(m.date) === currentMonthStr);
+  const monthlyCurrencyTotals = movementTotalsByCurrency(monthlyMovements, debtEvents, creditCardEntries, accounts, debts);
+  const currenciesPresent = Object.keys(monthlyCurrencyTotals.byCurrency);
+
+  const formatMonthlyStat = (field: "income" | "cashOutflow" | "expense") => {
+    if (currenciesPresent.length === 0) return formatMoneyByCurrency(0, "PEN");
+    if (currenciesPresent.length === 1) {
+      const code = currenciesPresent[0];
+      return formatMoneyByCurrency(monthlyCurrencyTotals.byCurrency[code][field], code);
+    }
+    return currenciesPresent
+      .map((code) => `${code}: ${formatMoneyByCurrency(monthlyCurrencyTotals.byCurrency[code][field], code)}`)
+      .join(" · ");
+  };
+
+  const getTopExpenseCategoryPerCurrency = () => {
+    if (currenciesPresent.length === 0) return "Sin gastos";
+    const parts: string[] = [];
+
+    for (const code of currenciesPresent) {
+      const currMovements = monthlyMovements.filter(
+        (m) => resolveMovementCurrencyCode(m, accounts, debts, debtEvents, creditCardEntries) === code
+      );
+      const categoryMap = new Map<string, number>();
+      for (const m of currMovements) {
+        if (m.type !== "egreso") continue;
+        const econ = getMovementEconomics(m, debtEvents, creditCardEntries).economicExpense;
+        categoryMap.set(m.category, (categoryMap.get(m.category) ?? 0) + econ);
+      }
+      let topCat = "Sin gastos";
+      let topAmt = 0;
+      for (const [cat, amt] of categoryMap.entries()) {
+        if (amt > topAmt) {
+          topAmt = amt;
+          topCat = cat;
+        }
+      }
+      parts.push(currenciesPresent.length === 1 ? topCat : `${code}: ${topCat}`);
+    }
+
+    return parts.join(" · ");
+  };
+
   const latestMovements = [...movements]
     .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
     .slice(0, 5);
@@ -70,10 +117,10 @@ export function Dashboard({
   const relevantDebtItems = selectDebtPlanningAttentionItems(debtPlanningItems, 3);
 
   const secondaryStats = [
-    { label: "Ingresos del mes", value: formatMoney(totals.income), icon: ArrowUpCircle, tone: "text-emerald-700 bg-emerald-50" },
-    { label: "Salidas de dinero", value: formatMoney(totals.cashOutflow), icon: ArrowDownCircle, tone: "text-red-700 bg-red-50" },
-    { label: "Gastos del mes", value: formatMoney(totals.expense), icon: CreditCard, tone: "text-amber-800 bg-amber-50" },
-    { label: "Categoría con más gasto", value: topCategory, icon: CreditCard, tone: "text-amber-800 bg-amber-50" },
+    { label: "Ingresos del mes", value: formatMonthlyStat("income"), icon: ArrowUpCircle, tone: "text-emerald-700 bg-emerald-50" },
+    { label: "Salidas de dinero", value: formatMonthlyStat("cashOutflow"), icon: ArrowDownCircle, tone: "text-red-700 bg-red-50" },
+    { label: "Gastos del mes", value: formatMonthlyStat("expense"), icon: CreditCard, tone: "text-amber-800 bg-amber-50" },
+    { label: "Categoría con más gasto", value: getTopExpenseCategoryPerCurrency(), icon: CreditCard, tone: "text-amber-800 bg-amber-50" },
     { label: "Pagos próximos", value: `${attentionPayments.length}`, icon: CalendarClock, tone: "text-orange-800 bg-orange-50" },
   ];
 
@@ -83,11 +130,17 @@ export function Dashboard({
         <div className="relative z-10 max-w-xl">
           <p className="text-sm font-bold uppercase tracking-[0.18em] text-blue-100">Saldo esperado</p>
           <h2 className="mt-3 text-2xl font-bold sm:text-3xl">Dinero que debería haber en caja</h2>
-          <p className="mt-4 text-5xl font-black tracking-tight sm:text-6xl">{formatMoney(expected)}</p>
+          <p className="mt-4 text-5xl font-black tracking-tight sm:text-6xl">{formatMoneyByCurrency(expected, cashCurrency)}</p>
           <p className="mt-4 max-w-md text-sm leading-relaxed text-blue-100">{cashAccount ? `Calculado con el saldo inicial y los movimientos de la cuenta ${cashAccount.name}.` : "Calculado con el saldo inicial y los movimientos en efectivo."}</p>
         </div>
         <PiggyBank className="absolute -right-6 -top-5 h-44 w-44 text-blue-500/40 sm:h-56 sm:w-56" aria-hidden="true" />
       </section>
+
+      {monthlyCurrencyTotals.unresolvedMovements.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-900">
+          Hay {monthlyCurrencyTotals.unresolvedMovements.length} movimientos cuya moneda no pudo determinarse.
+        </div>
+      )}
 
       <section>
         <div className="mb-3 flex items-center justify-between">
@@ -135,7 +188,7 @@ export function Dashboard({
               .map((account) => (
                 <button key={account.id} type="button" onClick={() => onNavigate("cuentas")} className="rounded-2xl border border-slate-100 bg-white p-4 text-left shadow-sm transition hover:bg-slate-50">
                   <p className="text-sm font-bold text-slate-500">{account.name}</p>
-                  <p className="mt-2 text-2xl font-black text-slate-900">{formatMoney(expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries))}</p>
+                  <p className="mt-2 text-2xl font-black text-slate-900">{formatMoneyByCurrency(expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries), account.currencyCode)}</p>
                 </button>
               ))}
           </div>
@@ -213,26 +266,30 @@ export function Dashboard({
           <p className="rounded-2xl bg-slate-50 p-5 text-slate-600">Aún no hay movimientos registrados.</p>
         ) : (
           <div className="space-y-2">
-            {latestMovements.map((movement) => (
-              <article key={movement.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-black ${movement.type === "ingreso" ? "bg-emerald-100 text-emerald-800" : movement.movementContext === "debt_service" ? "bg-blue-100 text-blue-800" : "bg-red-100 text-red-800"}`}>
-                        {movementLabel(movement)}
-                      </span>
-                      {pendingMovementIds.has(movement.id) && <PendingMovementBadge />}
-                      <h3 className="truncate text-lg font-bold text-slate-900">{movement.description}</h3>
+            {latestMovements.map((movement) => {
+              const movCurrency = resolveMovementCurrencyCode(movement, accounts, debts, debtEvents, creditCardEntries);
+              return (
+                <article key={movement.id} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-black ${movement.type === "ingreso" ? "bg-emerald-100 text-emerald-800" : movement.movementContext === "debt_service" ? "bg-blue-100 text-blue-800" : "bg-red-100 text-red-800"}`}>
+                          {movementLabel(movement)}
+                        </span>
+                        {pendingMovementIds.has(movement.id) && <PendingMovementBadge />}
+                        <h3 className="truncate text-lg font-bold text-slate-900">{movement.description}</h3>
+                      </div>
+                      <p className="mt-2 text-sm text-slate-600">{formatMovementDate(movement.date)} · {accountNameForMovement(movement, accounts)}</p>
+                      <p className="mt-1 text-sm text-slate-500">{movement.category} · {movement.person}</p>
                     </div>
-                    <p className="mt-2 text-sm text-slate-600">{formatMovementDate(movement.date)} · {accountNameForMovement(movement, accounts)}</p>
-                    <p className="mt-1 text-sm text-slate-500">{movement.category} · {movement.person}</p>
+                    <p className={`text-xl font-black sm:text-right ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>
+                      {movement.type === "ingreso" ? "+" : "-"}
+                      {movCurrency ? formatMoneyByCurrency(movement.amount, movCurrency) : `${movement.amount} (Moneda sin resolver)`}
+                    </p>
                   </div>
-                  <p className={`text-xl font-black sm:text-right ${movement.type === "ingreso" ? "text-emerald-700" : "text-red-700"}`}>
-                    {movement.type === "ingreso" ? "+" : "-"}{formatMoney(movement.amount)}
-                  </p>
-                </div>
-              </article>
-            ))}
+                </article>
+              );
+            })}
           </div>
         )}
       </section>

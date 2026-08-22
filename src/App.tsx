@@ -213,8 +213,21 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         debtInstallments: data.debtInstallments,
         debtCollaterals: data.debtCollaterals,
         debtPlanningItems,
+        creditCardProfiles: data.creditCardProfiles,
+        creditCardEntries: data.creditCardEntries,
+        creditCardStatements: data.creditCardStatements,
       }),
-    [data.debts, data.debtEvents, data.debtScheduleVersions, data.debtInstallments, data.debtCollaterals, debtPlanningItems]
+    [
+      data.debts,
+      data.debtEvents,
+      data.debtScheduleVersions,
+      data.debtInstallments,
+      data.debtCollaterals,
+      debtPlanningItems,
+      data.creditCardProfiles,
+      data.creditCardEntries,
+      data.creditCardStatements,
+    ]
   );
 
   const debtPortfolioIntelligence = useMemo(
@@ -1224,6 +1237,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               obligationProjection={obligationProjection}
               initialBalance={data.initialBalance}
               accounts={data.financialAccounts}
+              debts={data.debts}
               onNavigate={navigate}
               onOpenPayment={openPayment}
               onOpenDebt={openDebt}
@@ -1290,7 +1304,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
           )}
           {view === "reportes" && (
             <Suspense fallback={<section className="rounded-lg bg-white p-5 text-slate-600 soft-shadow">Cargando reportes...</section>}>
-              <Reports movements={data.movements} debtEvents={data.debtEvents} creditCardEntries={data.creditCardEntries} categories={data.categories} accounts={data.financialAccounts} initialBalance={data.initialBalance} />
+              <Reports movements={data.movements} debtEvents={data.debtEvents} creditCardEntries={data.creditCardEntries} categories={data.categories} accounts={data.financialAccounts} debts={data.debts} initialBalance={data.initialBalance} />
             </Suspense>
           )}
           {view === "categorias" && <CategoriesManager categories={data.categories} onSave={saveCategory} onDelete={deleteCategory} onToggle={toggleCategory} />}

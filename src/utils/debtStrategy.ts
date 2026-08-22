@@ -128,7 +128,7 @@ export function buildSnowballStrategy(items: DebtIntelligenceItem[]): SnowballSt
   }
 
   for (const curr of Object.keys(byCurrency)) {
-    const currencyItems = activeItems.filter((i) => (i.currencyCode || "PEN") === curr);
+    const currencyItems = activeItems.filter((i) => (i.currencyCode || "PEN") === curr && i.currentPrincipal > 0);
 
     const sorted = [...currencyItems].sort(
       (a, b) =>

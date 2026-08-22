@@ -69,9 +69,12 @@ export interface ReminderSummary {
   debtUrgent?: number;
 }
 
+import type { CreditCardStatementAlertItem } from "../../src/utils/creditCardCalculations.js";
+
 export interface ObligationReminderPayloadInput {
   urgentRecurringPayments: RecurringPayment[];
   urgentDebtInstallments: DebtInstallmentPlanningItem[];
+  urgentCardAlerts?: CreditCardStatementAlertItem[];
   today: string;
 }
 
@@ -84,43 +87,65 @@ export interface ObligationReminderPayload {
 
 /**
  * Pure helper to build the consolidated push notification payload
- * for urgent recurring payments and debt installments.
+ * for urgent recurring payments, debt installments, and card statement alerts.
  */
 export function buildObligationReminderPayload({
   urgentRecurringPayments,
   urgentDebtInstallments,
+  urgentCardAlerts = [],
   today,
 }: ObligationReminderPayloadInput): ObligationReminderPayload {
   const numRecurring = urgentRecurringPayments.length;
   const numDebt = urgentDebtInstallments.length;
-  const total = numRecurring + numDebt;
+  const numCard = urgentCardAlerts.length;
+  const total = numRecurring + numDebt + numCard;
 
   let body = "";
   let url = "/?view=dashboard";
 
-  if (numRecurring > 0 && numDebt === 0) {
-    body =
-      numRecurring === 1
-        ? "Tienes 1 pago que requiere atención."
-        : `Tienes ${numRecurring} pagos que requieren atención.`;
-    url =
-      numRecurring === 1
-        ? `/?view=pagos&payment=${encodeURIComponent(urgentRecurringPayments[0].id)}`
-        : "/?view=pagos";
-  } else if (numDebt > 0 && numRecurring === 0) {
-    body =
-      numDebt === 1
-        ? "Tienes 1 cuota de deuda que requiere atención."
-        : `Tienes ${numDebt} cuotas de deuda que requieren atención.`;
-    url =
-      numDebt === 1
-        ? `/?view=deudas&debt=${encodeURIComponent(urgentDebtInstallments[0].debtId)}`
-        : "/?view=deudas";
-  } else if (numRecurring > 0 && numDebt > 0) {
-    const recurringText = numRecurring === 1 ? "1 pago" : `${numRecurring} pagos`;
-    const debtText = numDebt === 1 ? "1 cuota de deuda" : `${numDebt} cuotas de deuda`;
-    body = `Tienes ${total} obligaciones que requieren atención: ${recurringText} y ${debtText}.`;
-    url = "/?view=dashboard";
+  if (numCard === 0) {
+    if (numRecurring > 0 && numDebt === 0) {
+      body =
+        numRecurring === 1
+          ? "Tienes 1 pago que requiere atención."
+          : `Tienes ${numRecurring} pagos que requieren atención.`;
+      url =
+        numRecurring === 1
+          ? `/?view=pagos&payment=${encodeURIComponent(urgentRecurringPayments[0].id)}`
+          : "/?view=pagos";
+    } else if (numDebt > 0 && numRecurring === 0) {
+      body =
+        numDebt === 1
+          ? "Tienes 1 cuota de deuda que requiere atención."
+          : `Tienes ${numDebt} cuotas de deuda que requieren atención.`;
+      url =
+        numDebt === 1
+          ? `/?view=deudas&debt=${encodeURIComponent(urgentDebtInstallments[0].debtId)}`
+          : "/?view=deudas";
+    } else if (numRecurring > 0 && numDebt > 0) {
+      const recurringText = numRecurring === 1 ? "1 pago" : `${numRecurring} pagos`;
+      const debtText = numDebt === 1 ? "1 cuota de deuda" : `${numDebt} cuotas de deuda`;
+      body = `Tienes ${total} obligaciones que requieren atención: ${recurringText} y ${debtText}.`;
+      url = "/?view=dashboard";
+    }
+  } else {
+    if (total === 1 && numCard === 1) {
+      const card = urgentCardAlerts[0];
+      const minPayText = card.minimumPaymentKnown
+        ? `. Pago mínimo: ${card.currencyCode} ${card.minimumPaymentAmount}`
+        : " (pago mínimo no registrado)";
+      body = `${card.cardName} — estado de cuenta vence. ${minPayText}`;
+      url = "/?view=deudas";
+    } else {
+      const parts: string[] = [];
+      if (numRecurring > 0) parts.push(numRecurring === 1 ? "1 pago" : `${numRecurring} pagos`);
+      if (numDebt > 0) parts.push(numDebt === 1 ? "1 cuota de deuda" : `${numDebt} cuotas de deuda`);
+      if (numCard > 0) parts.push(numCard === 1 ? "1 estado de cuenta de tarjeta" : `${numCard} estados de cuenta de tarjeta`);
+
+      const textSummary = parts.length === 2 ? parts.join(" y ") : parts.join(", ");
+      body = `Tienes ${total} obligaciones que requieren atención: ${textSummary}.`;
+      url = "/?view=dashboard";
+    }
   }
 
   return {

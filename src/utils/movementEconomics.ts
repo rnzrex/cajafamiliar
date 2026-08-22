@@ -112,3 +112,50 @@ export function movementLabel(movement: Movement): string {
   if (movement.movementContext === "credit_card_credit") return "Devolución / abono tarjeta";
   return movement.type === "ingreso" ? "Ingreso" : "Egreso";
 }
+
+import type { Debt, FinancialAccount } from "../types.js";
+
+/**
+ * Resolves the economic currency code for a given Movement using authoritative domain sources.
+ */
+export function resolveMovementCurrencyCode(
+  movement: Movement,
+  financialAccounts: FinancialAccount[] = [],
+  debts: Debt[] = [],
+  debtEvents: DebtEvent[] = [],
+  creditCardEntries: CreditCardEntry[] = []
+): string | null {
+  if (
+    movement.movementContext === "credit_card_purchase" ||
+    movement.movementContext === "credit_card_payment" ||
+    movement.movementContext === "credit_card_fee" ||
+    movement.movementContext === "credit_card_credit"
+  ) {
+    const entry = creditCardEntries.find((e) => e.movementId === movement.id);
+    if (entry) {
+      const debt = debts.find((d) => d.id === entry.debtId);
+      if (debt?.currencyCode) return debt.currencyCode;
+    }
+    return null;
+  }
+
+  if (movement.movementContext === "debt_service") {
+    const event = debtEvents.find((e) => e.movementId === movement.id);
+    if (event) {
+      const debt = debts.find((d) => d.id === event.debtId);
+      if (debt?.currencyCode) return debt.currencyCode;
+    }
+    return null;
+  }
+
+  if (movement.accountId) {
+    const account = financialAccounts.find((a) => a.id === movement.accountId);
+    if (account?.currencyCode) return account.currencyCode;
+  }
+
+  if (!movement.accountId && movement.movementContext === "standard") {
+    return "PEN";
+  }
+
+  return null;
+}
