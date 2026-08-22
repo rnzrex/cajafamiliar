@@ -1,5 +1,5 @@
 import type { DebtEvent, Movement } from "../types.js";
-import { effectiveDebtEvents } from "./debtCalculations.js";
+import { effectiveDebtFundEvents } from "./debtCalculations.js";
 
 export interface MovementEconomics {
   cashOutflow: number;
@@ -11,8 +11,6 @@ export interface MovementEconomics {
   inconsistent: boolean;
   effectiveDebtEventId: string | null;
 }
-
-const fundEventTypes = new Set(["payment", "principal_prepayment", "payoff"]);
 
 export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]): MovementEconomics {
   const empty: MovementEconomics = {
@@ -32,8 +30,8 @@ export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]
     return { ...empty, cashOutflow: movement.amount, economicExpense: movement.amount };
   }
 
-  const effectiveFundEvents = effectiveDebtEvents(debtEvents).filter(
-    (event) => event.movementId === movement.id && fundEventTypes.has(event.eventType)
+  const effectiveFundEvents = effectiveDebtFundEvents(debtEvents).filter(
+    (event) => event.movementId === movement.id
   );
 
   if (effectiveFundEvents.length !== 1) {
