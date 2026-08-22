@@ -14,6 +14,13 @@ export class DebtServiceOfflineUnsupportedError extends Error {
   }
 }
 
+export class CreditCardPurchaseOfflineUnsupportedError extends Error {
+  constructor() {
+    super("CREDIT_CARD_PURCHASE_OFFLINE_UNSUPPORTED");
+    this.name = "CreditCardPurchaseOfflineUnsupportedError";
+  }
+}
+
 export interface OfflineCreateMovementOperation {
   version: typeof OPERATION_VERSION;
   operationId: string;
@@ -26,6 +33,7 @@ export interface OfflineCreateMovementOperation {
 
 export async function enqueueCreateMovement(member: HouseholdMember, movement: Movement): Promise<void> {
   if (movement.movementContext === "debt_service") throw new DebtServiceOfflineUnsupportedError();
+  if (movement.movementContext === "credit_card_purchase") throw new CreditCardPurchaseOfflineUnsupportedError();
 
   const database = await openOutbox();
   const operation: OfflineCreateMovementOperation = {
@@ -60,7 +68,7 @@ export async function listPendingCreateMovements(member: HouseholdMember): Promi
         movement: {
           ...operation.movement,
           accountId: operation.movement.accountId ?? null,
-          movementContext: operation.movement.movementContext === "debt_service" ? "debt_service" : "standard",
+          movementContext: operation.movement.movementContext === "debt_service" ? "debt_service" : operation.movement.movementContext === "credit_card_purchase" ? "credit_card_purchase" : "standard",
         },
       }));
   } finally {

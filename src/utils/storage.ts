@@ -384,7 +384,7 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
       ...movement,
       category: movementCategoryMap[movement.category] ?? movement.category,
       accountId: movement.accountId ?? null,
-      movementContext: movement.movementContext === "debt_service" ? "debt_service" : "standard",
+      movementContext: movement.movementContext === "debt_service" ? "debt_service" : movement.movementContext === "credit_card_purchase" ? "credit_card_purchase" : "standard",
       registeredByUserId: movement.registeredByUserId ?? null,
     })),
     cashCounts: (data.cashCounts ?? []).map((count) => ({

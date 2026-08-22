@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -659,6 +659,62 @@ export async function reverseDebtEvent(input: DebtReversalInput): Promise<DebtRe
   return callDebtOperation("reverse_debt_event_v1", toDebtReversalRpcArgs(input), fromDebtReversalResult);
 }
 
+export class CreditCardOperationError extends Error {
+  constructor(public code: string) {
+    super(`Operación de tarjeta de crédito fallida: ${code}`);
+    this.name = "CreditCardOperationError";
+  }
+}
+
+export function mapCreditCardOperationError(message: string): CreditCardOperationError | null {
+  const codes = [
+    "AUTH_REQUIRED",
+    "HOUSEHOLD_ACCESS_DENIED",
+    "DEBT_NOT_FOUND",
+    "DEBT_NOT_CREDIT_CARD",
+    "DEBT_ARCHIVED",
+    "DEBT_NOT_ACTIVE",
+    "CREDIT_CARD_PROFILE_NOT_FOUND",
+    "INVALID_CREDIT_CARD_PURCHASE",
+    "CREDIT_CARD_ENTRY_ID_CONFLICT",
+    "CREDIT_CARD_MOVEMENT_ALREADY_LINKED",
+    "CREDIT_CARD_MOVEMENT_RPC_ONLY",
+  ];
+  const matched = codes.find((code) => message.includes(code));
+  return matched ? new CreditCardOperationError(matched) : null;
+}
+
+export function toCreditCardPurchaseRpcArgs(input: CreditCardPurchaseInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_entry_id: input.entryId,
+    p_movement_id: input.movementId,
+    p_purchase_date: input.purchaseDate,
+    p_amount: input.amount,
+    p_description: input.description,
+    p_category: input.category,
+  };
+}
+
+export async function recordCreditCardPurchase(input: CreditCardPurchaseInput): Promise<CreditCardPurchaseResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+
+  const { data, error } = await supabase.rpc("record_credit_card_purchase_v1", toCreditCardPurchaseRpcArgs(input));
+  if (error) {
+    const mapped = mapCreditCardOperationError(error.message);
+    if (mapped) throw mapped;
+    throw error;
+  }
+  if (!data || typeof data !== "object") throw new Error("La RPC record_credit_card_purchase_v1 no devolvió un resultado válido.");
+  return {
+    success: Boolean((data as any).success),
+    entryId: String((data as any).entry_id),
+    movementId: String((data as any).movement_id),
+    idempotent: Boolean((data as any).idempotent),
+  };
+}
+
 function toDebtAllocationRow(input: DebtAllocationInput) {
   return {
     installment_id: input.installmentId,
@@ -914,7 +970,7 @@ function fromMovementRow(row: Record<string, any>): Movement {
     person: row.person,
     registeredByUserId: row.registered_by_user_id ?? null,
     accountId: row.account_id ?? null,
-    movementContext: row.movement_context === "debt_service" ? "debt_service" : "standard",
+    movementContext: row.movement_context === "debt_service" ? "debt_service" : row.movement_context === "credit_card_purchase" ? "credit_card_purchase" : "standard",
     createdAt: row.created_at,
   };
 }
