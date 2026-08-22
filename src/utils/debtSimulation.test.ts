@@ -319,17 +319,17 @@ describe("DEBT-4C Principal Prepayment Simulator", () => {
   // -------------------------------------------------------------------------
   describe("Original Principal Progress", () => {
     it("27. simulatedBalanceReductionFromOriginal calculated correctly", () => {
-      const item = mockIntelligenceItem({ originalPrincipal: 10000, currentPrincipal: 8000 }); // current=8000
-      const sim = simulateDebtPrincipalPrepayment(item, 2000); // simulatedPrincipal=6000
+      const item = mockIntelligenceItem({ originalPrincipal: 10000, currentPrincipal: 8000 });
+      const sim = simulateDebtPrincipalPrepayment(item, 2000);
 
-      expect(sim.simulatedBalanceReductionFromOriginal).toBe(4000); // 10000 - 6000
+      expect(sim.simulatedBalanceReductionFromOriginal).toBe(4000);
     });
 
     it("28. simulated balance reduction percent from original calculated correctly", () => {
       const item = mockIntelligenceItem({ originalPrincipal: 10000, currentPrincipal: 8000 });
-      const sim = simulateDebtPrincipalPrepayment(item, 2000); // simulatedPrincipal=6000
+      const sim = simulateDebtPrincipalPrepayment(item, 2000);
 
-      expect(sim.simulatedBalanceReductionPercentFromOriginal).toBe(40); // (4000 / 10000) * 100
+      expect(sim.simulatedBalanceReductionPercentFromOriginal).toBe(40);
     });
 
     it("29. originalPrincipal = null => original progress metrics are null", () => {
@@ -341,11 +341,11 @@ describe("DEBT-4C Principal Prepayment Simulator", () => {
     });
 
     it("30. balance reduction percent from original is not clamped between 0 and 100", () => {
-      const item = mockIntelligenceItem({ originalPrincipal: 10000, currentPrincipal: 12000 }); // refinance increased principal
-      const sim = simulateDebtPrincipalPrepayment(item, 1000); // simulatedPrincipal = 11000
+      const item = mockIntelligenceItem({ originalPrincipal: 10000, currentPrincipal: 12000 });
+      const sim = simulateDebtPrincipalPrepayment(item, 1000);
 
-      expect(sim.simulatedBalanceReductionFromOriginal).toBe(-1000); // 10000 - 11000
-      expect(sim.simulatedBalanceReductionPercentFromOriginal).toBe(-10); // unclamped negative progress
+      expect(sim.simulatedBalanceReductionFromOriginal).toBe(-1000);
+      expect(sim.simulatedBalanceReductionPercentFromOriginal).toBe(-10);
     });
   });
 
@@ -402,7 +402,7 @@ describe("DEBT-4C Principal Prepayment Simulator", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 7. EXTRA RECOMMENDED TESTS (Tests 37-44)
+  // 7. EXTRA SCENARIOS & PROPERTY ABSENCES (Tests 37-44)
   // -------------------------------------------------------------------------
   describe("Extra Scenarios & Property Absences", () => {
     it("37. TCEA 40% vs TCEA 10% produces identical simulatedPrincipal", () => {
@@ -477,6 +477,48 @@ describe("DEBT-4C Principal Prepayment Simulator", () => {
 
       expect((sim as any).globalSummary).toBeUndefined();
       expect((sim as any).crossCurrencyTotal).toBeUndefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 8. MANDATORY BOUNDARY HARDENING TESTS (Tests 45-48)
+  // -------------------------------------------------------------------------
+  describe("Mandatory Boundary & Floating-Point Hardening", () => {
+    it("45. exact positive tolerance boundary (5000.01 vs 5000) => payoff_candidate", () => {
+      const item = mockIntelligenceItem({ currentPrincipal: 5000 });
+      const sim = simulateDebtPrincipalPrepayment(item, 5000.01);
+
+      expect(sim.status).toBe("payoff_candidate");
+      expect(sim.operationHint).toBe("payoff");
+      expect(sim.simulatedPrincipal).toBe(0);
+    });
+
+    it("46. exact negative tolerance boundary (4999.99 vs 5000) => payoff_candidate", () => {
+      const item = mockIntelligenceItem({ currentPrincipal: 5000 });
+      const sim = simulateDebtPrincipalPrepayment(item, 4999.99);
+
+      expect(sim.status).toBe("payoff_candidate");
+      expect(sim.operationHint).toBe("payoff");
+      expect(sim.simulatedPrincipal).toBe(0);
+    });
+
+    it("47. just above positive tolerance (5000.0101 vs 5000) => exceeds_current_principal", () => {
+      const item = mockIntelligenceItem({ currentPrincipal: 5000 });
+      const sim = simulateDebtPrincipalPrepayment(item, 5000.0101);
+
+      expect(sim.status).toBe("exceeds_current_principal");
+      expect(sim.appliedPrincipalReduction).toBeNull();
+      expect(sim.simulatedPrincipal).toBeNull();
+    });
+
+    it("48. just outside negative tolerance (4999.9899 vs 5000) => valid_prepayment", () => {
+      const item = mockIntelligenceItem({ currentPrincipal: 5000 });
+      const sim = simulateDebtPrincipalPrepayment(item, 4999.9899);
+
+      expect(sim.status).toBe("valid_prepayment");
+      expect(sim.operationHint).toBe("principal_prepayment");
+      expect(sim.simulatedPrincipal).toBeGreaterThan(0);
+      expect(sim.simulatedPrincipal).toBeCloseTo(0.0101, 4);
     });
   });
 });

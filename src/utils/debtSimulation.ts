@@ -65,6 +65,14 @@ const STANDARD_SIMULATION_LIMITATIONS: DebtPrepaymentSimulationLimitation[] = [
   "recalculated_schedule_required",
 ];
 
+/**
+ * Calculates a tiny epsilon to guard money comparisons against IEEE-754 binary floating point artifacts
+ * without altering the 0.01 functional monetary tolerance rule.
+ */
+function moneyComparisonEpsilon(a: number, b: number): number {
+  return Number.EPSILON * Math.max(1, Math.abs(a), Math.abs(b)) * 4;
+}
+
 // ---------------------------------------------------------------------------
 // Pure Prepayment Simulator Function
 // ---------------------------------------------------------------------------
@@ -141,10 +149,12 @@ export function simulateDebtPrincipalPrepayment(
     return { ...baseResult, status: "invalid_amount" };
   }
 
-  // 6. Check exceeds current principal
+  // 6. Floating-point robust tolerance check
   const difference = requestedPrincipalReduction - item.currentPrincipal;
+  const comparisonEpsilon = moneyComparisonEpsilon(requestedPrincipalReduction, item.currentPrincipal);
+  const toleranceWithFloatGuard = DEBT_SIMULATION_MONEY_TOLERANCE + comparisonEpsilon;
 
-  if (difference > DEBT_SIMULATION_MONEY_TOLERANCE) {
+  if (difference > toleranceWithFloatGuard) {
     return { ...baseResult, status: "exceeds_current_principal" };
   }
 
@@ -154,7 +164,7 @@ export function simulateDebtPrincipalPrepayment(
   let appliedPrincipalReduction = requestedPrincipalReduction;
   let simulatedPrincipal = item.currentPrincipal - requestedPrincipalReduction;
 
-  if (Math.abs(difference) <= DEBT_SIMULATION_MONEY_TOLERANCE) {
+  if (Math.abs(difference) <= toleranceWithFloatGuard) {
     status = "payoff_candidate";
     operationHint = "payoff";
     appliedPrincipalReduction = item.currentPrincipal;
