@@ -147,8 +147,8 @@ describe("DEBT-2C Exhaustive Hardened Invariants (32 tests)", () => {
 
   it("27. verifies active accounts presence for write operations", () => {
     const accounts: FinancialAccount[] = [
-      { id: "acc1", name: "Bcp", reconciliationType: "balance", openingBalance: 100, isActive: true, sortOrder: 1, createdAt: "", updatedAt: "" },
-      { id: "acc2", name: "Old", reconciliationType: "balance", openingBalance: 0, isActive: false, sortOrder: 2, createdAt: "", updatedAt: "" }
+      { id: "acc1", name: "Bcp", reconciliationType: "balance", openingBalance: 100, currencyCode: "PEN", isActive: true, sortOrder: 1, createdAt: "", updatedAt: "" },
+      { id: "acc2", name: "Old", reconciliationType: "balance", openingBalance: 0, currencyCode: "PEN", isActive: false, sortOrder: 2, createdAt: "", updatedAt: "" }
     ];
     const activeAccounts = accounts.filter(a => a.isActive !== false);
     expect(activeAccounts).toHaveLength(1);

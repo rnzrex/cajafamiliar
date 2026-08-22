@@ -1,4 +1,4 @@
-import type { CreditCardEntry, CreditCardEntryType, CreditCardProfile } from "../types";
+import type { CreditCardEntry, CreditCardEntryType, CreditCardProfile, CreditCardStatement } from "../types";
 
 export function normalizeCreditCardProfile(item: unknown): CreditCardProfile | null {
   if (!item || typeof item !== "object") return null;
@@ -126,4 +126,80 @@ export function normalizeCreditCardEntry(item: unknown): CreditCardEntry | null 
 export function normalizeCreditCardEntries(items: unknown[]): CreditCardEntry[] {
   if (!Array.isArray(items)) return [];
   return items.map(normalizeCreditCardEntry).filter((entry): entry is CreditCardEntry => entry !== null);
+}
+
+export function normalizeCreditCardStatement(item: unknown): CreditCardStatement | null {
+  if (!item || typeof item !== "object") return null;
+  const raw = item as Record<string, unknown>;
+
+  const id = typeof raw.id === "string" ? raw.id : null;
+  const debtId = typeof raw.debtId === "string" ? raw.debtId : typeof raw.debt_id === "string" ? raw.debt_id : null;
+  if (!id || !debtId) return null;
+
+  const statementDate =
+    typeof raw.statementDate === "string"
+      ? raw.statementDate
+      : typeof raw.statement_date === "string"
+      ? raw.statement_date
+      : null;
+  if (!statementDate) return null;
+
+  const dueDate =
+    typeof raw.dueDate === "string" ? raw.dueDate : typeof raw.due_date === "string" ? raw.due_date : null;
+  if (!dueDate) return null;
+
+  const statementBalanceRaw = raw.statementBalance ?? raw.statement_balance;
+  const statementBalance = typeof statementBalanceRaw === "number" && !isNaN(statementBalanceRaw) ? statementBalanceRaw : null;
+  if (statementBalance === null) return null;
+
+  const minimumPaymentAmountRaw = raw.minimumPaymentAmount ?? raw.minimum_payment_amount;
+  const minimumPaymentAmount =
+    typeof minimumPaymentAmountRaw === "number" && !isNaN(minimumPaymentAmountRaw) && minimumPaymentAmountRaw >= 0
+      ? minimumPaymentAmountRaw
+      : null;
+
+  const closingEntryIdRaw = raw.closingEntryId ?? raw.closing_entry_id;
+  const closingEntryId = typeof closingEntryIdRaw === "string" ? closingEntryIdRaw : null;
+
+  const createdByUserId =
+    typeof raw.createdByUserId === "string"
+      ? raw.createdByUserId
+      : typeof raw.created_by_user_id === "string"
+      ? raw.created_by_user_id
+      : null;
+  if (!createdByUserId) return null;
+
+  const createdAt =
+    typeof raw.createdAt === "string"
+      ? raw.createdAt
+      : typeof raw.created_at === "string"
+      ? raw.created_at
+      : null;
+  if (!createdAt) return null;
+
+  const updatedAt =
+    typeof raw.updatedAt === "string"
+      ? raw.updatedAt
+      : typeof raw.updated_at === "string"
+      ? raw.updated_at
+      : null;
+  if (!updatedAt) return null;
+
+  return {
+    id,
+    debtId,
+    statementDate,
+    dueDate,
+    statementBalance,
+    minimumPaymentAmount,
+    closingEntryId,
+    createdByUserId,
+    createdAt,
+    updatedAt,
+  };
+}
+
+export function normalizeCreditCardStatements(items: unknown[]): CreditCardStatement[] {
+  if (!Array.isArray(items)) return [];
+  return items.map(normalizeCreditCardStatement).filter((statement): statement is CreditCardStatement => statement !== null);
 }

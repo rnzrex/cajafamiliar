@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -70,6 +70,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       debtCollateralsResult,
       creditCardProfilesResult,
       creditCardEntriesResult,
+      creditCardStatementsResult,
     ] = await Promise.all([
       supabase.from("settings").select("*").eq("household_id", householdId).maybeSingle(),
       supabase.from("movements").select("*").eq("household_id", householdId).order("date", { ascending: false }),
@@ -85,6 +86,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       supabase.from("debt_collaterals").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
       supabase.from("credit_card_profiles").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
       supabase.from("credit_card_entries").select("*").eq("household_id", householdId).order("entry_date", { ascending: true }).order("created_at", { ascending: true }),
+      supabase.from("credit_card_statements").select("*").eq("household_id", householdId).order("statement_date", { ascending: true }),
     ]);
 
     const queryError = [
@@ -102,6 +104,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       debtCollateralsResult,
       creditCardProfilesResult,
       creditCardEntriesResult,
+      creditCardStatementsResult,
     ].find((result) => result.error)?.error;
     if (queryError) throw queryError;
 
@@ -130,6 +133,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       debtCollaterals: (debtCollateralsResult.data ?? []).map(fromDebtCollateralRow),
       creditCardProfiles: (creditCardProfilesResult.data ?? []).map(fromCreditCardProfileRow),
       creditCardEntries: (creditCardEntriesResult.data ?? []).map(fromCreditCardEntryRow),
+      creditCardStatements: (creditCardStatementsResult.data ?? []).map(fromCreditCardStatementRow),
     });
 
     saveData(remoteData);
@@ -676,8 +680,14 @@ export function mapCreditCardOperationError(message: string): CreditCardOperatio
     "DEBT_NOT_ACTIVE",
     "CREDIT_CARD_PROFILE_NOT_FOUND",
     "INVALID_CREDIT_CARD_PURCHASE",
+    "INVALID_CREDIT_CARD_PAYMENT",
+    "INVALID_CREDIT_CARD_STATEMENT",
+    "ACCOUNT_NOT_FOUND",
+    "ACCOUNT_INACTIVE",
+    "ACCOUNT_CURRENCY_MISMATCH",
     "CREDIT_CARD_ENTRY_ID_CONFLICT",
     "CREDIT_CARD_MOVEMENT_ALREADY_LINKED",
+    "CREDIT_CARD_STATEMENT_CONFLICT",
     "CREDIT_CARD_MOVEMENT_RPC_ONLY",
   ];
   const matched = codes.find((code) => message.includes(code));
@@ -711,6 +721,68 @@ export async function recordCreditCardPurchase(input: CreditCardPurchaseInput): 
     success: Boolean((data as any).success),
     entryId: String((data as any).entry_id),
     movementId: String((data as any).movement_id),
+    idempotent: Boolean((data as any).idempotent),
+  };
+}
+
+export function toCreditCardPaymentRpcArgs(input: CreditCardPaymentInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_entry_id: input.entryId,
+    p_movement_id: input.movementId,
+    p_payment_date: input.paymentDate,
+    p_amount: input.amount,
+    p_account_id: input.accountId,
+    p_description: input.description,
+    p_category: input.category,
+  };
+}
+
+export async function recordCreditCardPayment(input: CreditCardPaymentInput): Promise<CreditCardPaymentResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+
+  const { data, error } = await supabase.rpc("record_credit_card_payment_v1", toCreditCardPaymentRpcArgs(input));
+  if (error) {
+    const mapped = mapCreditCardOperationError(error.message);
+    if (mapped) throw mapped;
+    throw error;
+  }
+  if (!data || typeof data !== "object") throw new Error("La RPC record_credit_card_payment_v1 no devolvió un resultado válido.");
+  return {
+    success: Boolean((data as any).success),
+    entryId: String((data as any).entry_id),
+    movementId: String((data as any).movement_id),
+    idempotent: Boolean((data as any).idempotent),
+  };
+}
+
+export function toCreditCardStatementCloseRpcArgs(input: CreditCardStatementCloseInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_statement_id: input.statementId,
+    p_statement_date: input.statementDate,
+    p_due_date: input.dueDate,
+    p_minimum_payment_amount: input.minimumPaymentAmount ?? null,
+  };
+}
+
+export async function closeCreditCardStatement(input: CreditCardStatementCloseInput): Promise<CreditCardStatementCloseResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+
+  const { data, error } = await supabase.rpc("close_credit_card_statement_v1", toCreditCardStatementCloseRpcArgs(input));
+  if (error) {
+    const mapped = mapCreditCardOperationError(error.message);
+    if (mapped) throw mapped;
+    throw error;
+  }
+  if (!data || typeof data !== "object") throw new Error("La RPC close_credit_card_statement_v1 no devolvió un resultado válido.");
+  return {
+    success: Boolean((data as any).success),
+    statementId: String((data as any).statement_id),
+    statementBalance: Number((data as any).statement_balance),
+    minimumPaymentAmount: (data as any).minimum_payment_amount != null ? Number((data as any).minimum_payment_amount) : null,
     idempotent: Boolean((data as any).idempotent),
   };
 }
@@ -1031,6 +1103,7 @@ function fromFinancialAccountRow(row: Record<string, any>): FinancialAccount {
     name: row.name,
     reconciliationType: row.reconciliation_type === "balance" ? "balance" : "cash",
     openingBalance: Number(row.opening_balance ?? 0),
+    currencyCode: String(row.currency_code ?? "PEN"),
     isActive: Boolean(row.is_active),
     sortOrder: Number(row.sort_order ?? 0),
     createdAt: row.created_at,
@@ -1174,6 +1247,21 @@ export function fromCreditCardEntryRow(row: Record<string, any>): CreditCardEntr
   };
 }
 
+export function fromCreditCardStatementRow(row: Record<string, any>): CreditCardStatement {
+  return {
+    id: String(row.id),
+    debtId: String(row.debt_id),
+    statementDate: String(row.statement_date),
+    dueDate: String(row.due_date),
+    statementBalance: Number(row.statement_balance),
+    minimumPaymentAmount: row.minimum_payment_amount != null ? Number(row.minimum_payment_amount) : null,
+    closingEntryId: row.closing_entry_id ?? null,
+    createdByUserId: String(row.created_by_user_id),
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
 export function toFinancialAccountRow(account: FinancialAccount) {
   return {
     id: account.id,
@@ -1181,6 +1269,7 @@ export function toFinancialAccountRow(account: FinancialAccount) {
     name: account.name,
     reconciliation_type: account.reconciliationType,
     opening_balance: account.openingBalance,
+    currency_code: account.currencyCode ?? "PEN",
     is_active: account.isActive,
     sort_order: account.sortOrder,
     created_at: account.createdAt,

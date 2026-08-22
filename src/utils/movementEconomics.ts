@@ -41,6 +41,24 @@ export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]
     };
   }
 
+  if (movement.movementContext === "credit_card_payment") {
+    return {
+      ...empty,
+      cashOutflow: movement.amount,
+      economicExpense: 0,
+      liabilityDelta: -movement.amount,
+    };
+  }
+
+  if (movement.movementContext === "credit_card_fee") {
+    return {
+      ...empty,
+      cashOutflow: 0,
+      economicExpense: movement.amount,
+      liabilityDelta: movement.amount,
+    };
+  }
+
   const effectiveFundEvents = effectiveDebtFundEvents(debtEvents).filter(
     (event) => event.movementId === movement.id
   );
@@ -75,5 +93,7 @@ export function getMovementEconomics(movement: Movement, debtEvents: DebtEvent[]
 export function movementLabel(movement: Movement): string {
   if (movement.movementContext === "debt_service") return "Servicio de deuda";
   if (movement.movementContext === "credit_card_purchase") return "Compra con tarjeta";
+  if (movement.movementContext === "credit_card_payment") return "Pago de tarjeta";
+  if (movement.movementContext === "credit_card_fee") return "Cargo de tarjeta";
   return movement.type === "ingreso" ? "Ingreso" : "Egreso";
 }

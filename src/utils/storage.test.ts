@@ -145,14 +145,14 @@ describe("normalizeData con cuentas financieras", () => {
     const result = normalizeData(
       snapshot({
         financialAccounts: [
-          { id: "acc-cash-1", name: "Efectivo", reconciliationType: "cash", openingBalance: 120.5, isActive: true, sortOrder: 0, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
-          { id: "acc-banco-1", name: "Banco", reconciliationType: "balance", openingBalance: 0, isActive: true, sortOrder: 1, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
+          { id: "acc-cash-1", name: "Efectivo", reconciliationType: "cash", openingBalance: 120.5, currencyCode: "PEN", isActive: true, sortOrder: 0, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
+          { id: "acc-banco-1", name: "Banco", reconciliationType: "balance", openingBalance: 0, currencyCode: "PEN", isActive: true, sortOrder: 1, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
         ],
       })
     );
     expect(result.financialAccounts).toEqual([
-      { id: "acc-cash-1", name: "Efectivo", reconciliationType: "cash", openingBalance: 120.5, isActive: true, sortOrder: 0, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
-      { id: "acc-banco-1", name: "Banco", reconciliationType: "balance", openingBalance: 0, isActive: true, sortOrder: 1, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
+      { id: "acc-cash-1", name: "Efectivo", reconciliationType: "cash", openingBalance: 120.5, currencyCode: "PEN", isActive: true, sortOrder: 0, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
+      { id: "acc-banco-1", name: "Banco", reconciliationType: "balance", openingBalance: 0, currencyCode: "PEN", isActive: true, sortOrder: 1, createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z" },
     ]);
   });
 });

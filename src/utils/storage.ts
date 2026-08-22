@@ -1,8 +1,8 @@
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardStatement, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
 import { localDateString } from "./date";
 import { isSupabaseConfigured } from "../services/supabaseClient";
 import { normalizeDebtCollaterals, normalizeDebtEventInstallmentAllocations, normalizeDebtEvents, normalizeDebtInstallments, normalizeDebtScheduleVersions, normalizeDebts } from "./debtNormalizers";
-import { normalizeCreditCardEntries, normalizeCreditCardProfiles } from "./creditCardNormalizers";
+import { normalizeCreditCardEntries, normalizeCreditCardProfiles, normalizeCreditCardStatements } from "./creditCardNormalizers";
 
 const STORAGE_KEY = "caja-familiar-data";
 const PREFERRED_PERSON_KEY = "caja-familiar-preferred-person";
@@ -26,6 +26,7 @@ export interface AppDataSnapshotInput {
   debtCollaterals?: DebtCollateral[];
   creditCardProfiles?: CreditCardProfile[];
   creditCardEntries?: CreditCardEntry[];
+  creditCardStatements?: CreditCardStatement[];
 }
 
 export interface OfflineAccessRecord {
@@ -191,6 +192,7 @@ export const defaultData: AppData = {
   debtCollaterals: [],
   creditCardProfiles: [],
   creditCardEntries: [],
+  creditCardStatements: [],
 };
 
 export function loadCachedData(): AppData | null {
@@ -380,11 +382,21 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
     debtCollaterals: normalizeDebtCollaterals(data.debtCollaterals ?? []),
     creditCardProfiles: normalizeCreditCardProfiles(data.creditCardProfiles ?? []),
     creditCardEntries: normalizeCreditCardEntries(data.creditCardEntries ?? []),
+    creditCardStatements: normalizeCreditCardStatements(data.creditCardStatements ?? []),
     movements: data.movements.map((movement) => ({
       ...movement,
       category: movementCategoryMap[movement.category] ?? movement.category,
       accountId: movement.accountId ?? null,
-      movementContext: movement.movementContext === "debt_service" ? "debt_service" : movement.movementContext === "credit_card_purchase" ? "credit_card_purchase" : "standard",
+      movementContext:
+        movement.movementContext === "debt_service"
+          ? "debt_service"
+          : movement.movementContext === "credit_card_purchase"
+          ? "credit_card_purchase"
+          : movement.movementContext === "credit_card_payment"
+          ? "credit_card_payment"
+          : movement.movementContext === "credit_card_fee"
+          ? "credit_card_fee"
+          : "standard",
       registeredByUserId: movement.registeredByUserId ?? null,
     })),
     cashCounts: (data.cashCounts ?? []).map((count) => ({
@@ -546,6 +558,19 @@ function isAppDataSnapshot(value: unknown): value is AppDataSnapshotInput {
             isPresentNumeric(entry.liabilityDelta) &&
             typeof entry.registeredByUserId === "string" &&
             typeof entry.createdAt === "string"
+        ))) &&
+    (value.creditCardStatements === undefined ||
+      (Array.isArray(value.creditCardStatements) &&
+        value.creditCardStatements.every(
+          (statement) =>
+            isRecord(statement) &&
+            typeof statement.id === "string" &&
+            typeof statement.debtId === "string" &&
+            typeof statement.statementDate === "string" &&
+            typeof statement.dueDate === "string" &&
+            isPresentNumeric(statement.statementBalance) &&
+            typeof statement.createdByUserId === "string" &&
+            typeof statement.createdAt === "string"
         )))
   );
 }
@@ -555,6 +580,7 @@ function normalizeFinancialAccounts(savedAccounts: FinancialAccount[]): Financia
     ...account,
     reconciliationType: account.reconciliationType === "balance" ? "balance" : "cash",
     openingBalance: Number.isFinite(Number(account.openingBalance)) ? Number(account.openingBalance) : 0,
+    currencyCode: account.currencyCode ?? "PEN",
     isActive: account.isActive ?? true,
     sortOrder: account.sortOrder ?? index,
     createdAt: account.createdAt ?? new Date().toISOString(),
