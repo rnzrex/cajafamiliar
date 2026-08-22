@@ -15,6 +15,12 @@ export function effectiveDebtEvents(events: DebtEvent[], debtId?: string): DebtE
   );
 }
 
+export const DEBT_FUND_EVENT_TYPES = new Set<string>(["payment", "principal_prepayment", "payoff"]);
+
+export function effectiveDebtFundEvents(events: DebtEvent[], debtId?: string): DebtEvent[] {
+  return effectiveDebtEvents(events, debtId).filter((event) => DEBT_FUND_EVENT_TYPES.has(event.eventType));
+}
+
 export function currentDebtPrincipal(debt: Debt, events: DebtEvent[]): number {
   return debt.openingPrincipalBalance + effectiveDebtEvents(events, debt.id).reduce((sum, event) => sum + event.principalDelta, 0);
 }
