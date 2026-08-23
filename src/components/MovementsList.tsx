@@ -1,10 +1,10 @@
 import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2, ShieldCheck, Filter } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { AccountReconciliation, AccountReconciliationMovement, Category, CreditCardEntry, DebtEvent, FinancialAccount, HouseholdMember, Movement, MovementFormInput } from "../types.js";
-import { formatMoney } from "../utils/calculations.js";
+import type { AccountReconciliation, AccountReconciliationMovement, Category, CreditCardEntry, Debt, DebtEvent, FinancialAccount, HouseholdMember, Movement, MovementFormInput } from "../types.js";
+import { formatMoneyByCurrency } from "../utils/calculations.js";
 import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "../utils/accountHelpers.js";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters.js";
-import { movementLabel } from "../utils/movementEconomics.js";
+import { movementLabel, resolveMovementCurrencyCode } from "../utils/movementEconomics.js";
 import { isMovementCertifiedMatched } from "../utils/reconciliationHelpers.js";
 import { MovementForm } from "./MovementForm.js";
 
@@ -14,6 +14,7 @@ interface MovementsListProps {
   pendingMovementIds: ReadonlySet<string>;
   categories: Category[];
   accounts: FinancialAccount[];
+  debts?: Debt[];
   reconciliations?: AccountReconciliation[];
   reconciliationMovements?: AccountReconciliationMovement[];
   creditCardEntries?: CreditCardEntry[];
@@ -29,6 +30,7 @@ export function MovementsList({
   pendingMovementIds,
   categories,
   accounts,
+  debts = [],
   reconciliations = [],
   reconciliationMovements = [],
   creditCardEntries = [],
@@ -266,6 +268,9 @@ export function MovementsList({
             ? "Se corrige desde Deudas"
             : undefined;
 
+          const currencyCode = resolveMovementCurrencyCode(movement, accounts, debts, debtEvents, creditCardEntries) || "PEN";
+          const formattedAmount = formatMoneyByCurrency(movement.amount, currencyCode);
+
           return (
             <article key={movement.id} className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">
@@ -277,7 +282,7 @@ export function MovementsList({
                   </div>
                   <h3 className="mt-1 break-words text-lg font-black text-slate-900">{movement.description}</h3>
                 </div>
-                <p className={`shrink-0 text-xl font-black ${movement.type === "ingreso" ? "text-emerald-700" : movement.movementContext === "debt_service" ? "text-blue-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "+" : "-"}{formatMoney(movement.amount)}</p>
+                <p className={`shrink-0 text-xl font-black ${movement.type === "ingreso" ? "text-emerald-700" : movement.movementContext === "debt_service" ? "text-blue-700" : "text-red-700"}`}>{movement.type === "ingreso" ? "+" : "-"}{formattedAmount}</p>
               </div>
               <p className="mt-3 text-sm font-semibold text-slate-600">Fecha movimiento: {formatMovementDate(movement.date)} · {accountNameForMovement(movement, accounts)}</p>
               <p className="mt-1 text-xs text-slate-500">Registrado: {formatCreatedAt(movement.createdAt || movement.date)}</p>
@@ -337,6 +342,9 @@ export function MovementsList({
                 ? "Se corrige desde Deudas"
                 : undefined;
 
+              const currencyCode = resolveMovementCurrencyCode(movement, accounts, debts, debtEvents, creditCardEntries) || "PEN";
+              const formattedAmount = formatMoneyByCurrency(movement.amount, currencyCode);
+
               return (
                 <tr key={movement.id} className="rounded-2xl bg-slate-50 text-base">
                   <td className="rounded-l-2xl px-3 py-4 font-semibold">{formatMovementDate(movement.date)}</td>
@@ -351,7 +359,7 @@ export function MovementsList({
                   <td className="px-3 py-4">{movement.description}</td>
                   <td className="px-3 py-4">{movement.category}</td>
                   <td className="px-3 py-4">{accountNameForMovement(movement, accounts)}</td>
-                  <td className="px-3 py-4 font-black">{formatMoney(movement.amount)}</td>
+                  <td className="px-3 py-4 font-black">{formattedAmount}</td>
                   <td className="px-3 py-4">{movement.person}</td>
                   <td className="rounded-r-2xl px-3 py-4">
                     <div className="flex gap-2">

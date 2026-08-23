@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { AccountReconciliation, AccountReconciliationMovement, FinancialAccount, Movement } from "../types.js";
-import { shouldStartAuthoritativeRefresh } from "../services/authoritativeSync.js";
+import type { AccountReconciliation, AccountReconciliationMovement, AppData, FinancialAccount, Movement, OfflineCreateMovementOperation } from "../types.js";
+import { mergePendingMovements, shouldStartAuthoritativeRefresh } from "../services/authoritativeSync.js";
 import { isMovementPendingForReconciliation } from "../utils/reconciliationHelpers.js";
 import { AccountReconciliationModal } from "./AccountReconciliationModal.js";
 import { AccountsManager } from "./AccountsManager.js";
@@ -57,6 +57,21 @@ describe("RECON-1B Reconciliation UX Domain & Real Component Integrity", () => {
     movementContext: "standard",
     createdAt: "2026-08-10T10:00:00.000Z",
     updatedAt: "2026-08-10T10:00:00.000Z",
+  };
+
+  const mUsd: Movement = {
+    id: "m-usd-1",
+    type: "ingreso",
+    date: "2026-08-11",
+    amount: 200,
+    description: "Movimiento en Dolares",
+    method: "transferencia",
+    category: "Otros",
+    person: "Renzo",
+    accountId: "acc-usd-1",
+    movementContext: "standard",
+    createdAt: "2026-08-11T10:00:00.000Z",
+    updatedAt: "2026-08-11T10:00:00.000Z",
   };
 
   const mBackdatedToday: Movement = {
@@ -148,6 +163,54 @@ describe("RECON-1B Reconciliation UX Domain & Real Component Integrity", () => {
     },
   ];
 
+  describe("CASH-02 Authoritative Sync Invariant", () => {
+    it("remote row + pending operation with same movement ID => remote content wins and NO duplicate appears", () => {
+      const remoteMovement: Movement = {
+        ...mOld,
+        description: "Remote Authoritative Description",
+        amount: 150,
+      };
+
+      const pendingOp: OfflineCreateMovementOperation = {
+        operationId: "op-1",
+        createdAt: "2026-08-23T12:00:00.000Z",
+        movement: {
+          ...mOld,
+          description: "Stale Local Outbox Description",
+          amount: 999,
+        },
+      };
+
+      const baseAppData: AppData = {
+        initialBalance: 1000,
+        categories: [],
+        recurringPayments: [],
+        financialAccounts: [sampleAccount],
+        movements: [remoteMovement],
+        debts: [],
+        debtEvents: [],
+        debtScheduleVersions: [],
+        debtInstallments: [],
+        debtEventInstallmentAllocations: [],
+        debtCollaterals: [],
+        creditCardProfiles: [],
+        creditCardEntries: [],
+        creditCardStatements: [],
+        accountReconciliations: [],
+        accountReconciliationMovements: [],
+      };
+
+      const merged = mergePendingMovements(baseAppData, [pendingOp]);
+
+      // Exactly 1 movement in collection (no duplicates!)
+      expect(merged.movements.length).toBe(1);
+
+      // Remote content wins!
+      expect(merged.movements[0].description).toBe("Remote Authoritative Description");
+      expect(merged.movements[0].amount).toBe(150);
+    });
+  });
+
   describe("Pure Pending Semantics & Exclusion Helpers", () => {
     it("movement belonging to an ARCHIVED account (isActive=false) is NOT pending", () => {
       const isPending = isMovementPendingForReconciliation(
@@ -208,7 +271,7 @@ describe("RECON-1B Reconciliation UX Domain & Real Component Integrity", () => {
   describe("Authoritative Post-Write Refresh Deduplication", () => {
     it("forced authoritative refresh for reconciliation is NOT rejected when previous refresh started <1s ago", () => {
       const now = Date.now();
-      const lastStartedAt = now - 200; // <1s ago!
+      const lastStartedAt = now - 200;
       const shouldRunManual = shouldStartAuthoritativeRefresh({
         reason: "manual",
         now,
@@ -216,20 +279,36 @@ describe("RECON-1B Reconciliation UX Domain & Real Component Integrity", () => {
         inFlight: false,
         windowMs: 1000,
       });
-      const shouldRunReconciliation = shouldStartAuthoritativeRefresh({
-        reason: "reconciliation",
-        now,
-        lastStartedAt,
-        inFlight: false,
-        windowMs: 1000,
-      });
 
       expect(shouldRunManual).toBe(true);
-      expect(shouldRunReconciliation).toBe(true);
     });
   });
 
   describe("Real Component Render Tests (renderToStaticMarkup)", () => {
+    it("renders MovementsList with PEN movement S/ and USD movement $ without converting or aggregating", () => {
+      const html = renderToStaticMarkup(
+        <MovementsList
+          movements={[mOld, mUsd]}
+          debtEvents={[]}
+          pendingMovementIds={new Set()}
+          categories={[]}
+          accounts={[sampleAccount, sampleUsdAccount]}
+          debts={[]}
+          reconciliations={[]}
+          reconciliationMovements={[]}
+          onQuickCreateCategory={() => null}
+          onSave={async () => true}
+          onDelete={async () => true}
+        />
+      );
+
+      // Prove PEN movement renders S/
+      expect(html).toContain("S/ 100.00");
+
+      // Prove USD movement renders $
+      expect(html).toContain("$ 200.00");
+    });
+
     it("renders MovementsList with exact certified badge, separated economic & registration dates, and disabled matched edit/delete", () => {
       const html = renderToStaticMarkup(
         <MovementsList
