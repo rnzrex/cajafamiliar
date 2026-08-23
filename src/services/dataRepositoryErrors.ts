@@ -93,3 +93,17 @@ export class ReconciliationIdConflictError extends Error {
     this.name = "ReconciliationIdConflictError";
   }
 }
+
+export class MovementCorrectionConflictError extends Error {
+  constructor() {
+    super("El movimiento fue modificado por otra sesión (conflicto de concurrencia). Por favor recarga e intenta de nuevo.");
+    this.name = "MovementCorrectionConflictError";
+  }
+}
+
+export class MovementNotReconciledError extends Error {
+  constructor() {
+    super("El movimiento no forma parte de una conciliación confirmada.");
+    this.name = "MovementNotReconciledError";
+  }
+}

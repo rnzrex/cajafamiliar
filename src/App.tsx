@@ -151,6 +151,7 @@ const EMPTY_APP_DATA: AppData = {
   creditCardStatements: [],
   accountReconciliations: [],
   accountReconciliationMovements: [],
+  movementCorrections: [],
 };
 
 const OFFLINE_WRITE_MESSAGE = "Estás sin conexión. Puedes consultar tu información, pero para registrar o modificar datos necesitas conectarte a internet.";
@@ -1377,12 +1378,14 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               debts={data.debts}
               reconciliations={data.accountReconciliations}
               reconciliationMovements={data.accountReconciliationMovements}
+              movementCorrections={data.movementCorrections}
               creditCardEntries={data.creditCardEntries}
               currentMember={currentMember}
               pendingMovementIds={pendingMovementIds}
               onQuickCreateCategory={saveCategory}
               onSave={saveMovement}
               onDelete={deleteMovement}
+              onReloadAllData={() => void refreshAuthoritativeData("reconciliation")}
             />
           )}
           {view === "conteo" && (

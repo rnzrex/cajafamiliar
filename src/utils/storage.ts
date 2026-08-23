@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardStatement, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories, AccountReconciliation, AccountReconciliationMovement } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardStatement, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories, AccountReconciliation, AccountReconciliationMovement, MovementCorrection } from "../types";
 import { localDateString } from "./date";
 import { isSupabaseConfigured } from "../services/supabaseClient";
 import { normalizeDebtCollaterals, normalizeDebtEventInstallmentAllocations, normalizeDebtEvents, normalizeDebtInstallments, normalizeDebtScheduleVersions, normalizeDebts } from "./debtNormalizers";
@@ -29,6 +29,7 @@ export interface AppDataSnapshotInput {
   creditCardStatements?: CreditCardStatement[];
   accountReconciliations?: AccountReconciliation[];
   accountReconciliationMovements?: AccountReconciliationMovement[];
+  movementCorrections?: MovementCorrection[];
 }
 
 export interface OfflineAccessRecord {
@@ -197,6 +198,7 @@ export const defaultData: AppData = {
   creditCardStatements: [],
   accountReconciliations: [],
   accountReconciliationMovements: [],
+  movementCorrections: [],
 };
 
 export function loadCachedData(): AppData | null {
@@ -395,6 +397,7 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
     creditCardStatements: normalizeCreditCardStatements(data.creditCardStatements ?? []),
     accountReconciliations: data.accountReconciliations ?? [],
     accountReconciliationMovements: data.accountReconciliationMovements ?? [],
+    movementCorrections: data.movementCorrections ?? [],
     movements: data.movements.map((movement) => ({
       ...movement,
       category: movementCategoryMap[movement.category] ?? movement.category,

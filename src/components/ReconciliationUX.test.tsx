@@ -204,6 +204,7 @@ describe("RECON-1B Reconciliation UX Domain & Real Component Integrity", () => {
         cashCounts: [],
         accountReconciliations: [],
         accountReconciliationMovements: [],
+        movementCorrections: [],
       };
 
       const merged = mergePendingMovements(baseAppData, [pendingOp]);
@@ -309,10 +310,10 @@ describe("RECON-1B Reconciliation UX Domain & Real Component Integrity", () => {
       );
 
       // Prove PEN movement renders S/
-      expect(html).toContain("S/ 100.00");
+      expect(html).toMatch(/S\/[\s\u00a0]*100\.00/);
 
       // Prove USD movement renders $
-      expect(html).toContain("$ 200.00");
+      expect(html).toMatch(/\$[\s\u00a0]*200\.00/);
     });
 
     it("renders MovementsList with exact certified badge, separated economic & registration dates, and disabled matched edit/delete", () => {

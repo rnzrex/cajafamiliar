@@ -508,6 +508,19 @@ export interface AppData {
   creditCardStatements: CreditCardStatement[];
   accountReconciliations: AccountReconciliation[];
   accountReconciliationMovements: AccountReconciliationMovement[];
+  movementCorrections: MovementCorrection[];
+}
+
+export interface MovementCorrection {
+  id: string;
+  householdId: string;
+  movementId: string;
+  correctionId?: string | null;
+  beforeSnapshot: Record<string, any>;
+  afterSnapshot: Record<string, any>;
+  reason: string;
+  registeredByUserId: string;
+  createdAt: string;
 }
 
 export const baseCategories: Category[] = [

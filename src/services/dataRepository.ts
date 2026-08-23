@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination";
-import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError } from "./dataRepositoryErrors";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult } from "../types";
+import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError } from "./dataRepositoryErrors";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -63,6 +63,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       creditCardStatementsRows,
       accountReconciliationsRows,
       accountReconciliationMovementsRows,
+      movementCorrectionsRows,
     ] = await Promise.all([
       supabase.from("settings").select("*").eq("household_id", householdId).maybeSingle(),
       fetchAllSupabaseRows({
@@ -217,6 +218,15 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
           { column: "id", ascending: false },
         ],
       }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "movement_corrections",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: false },
+          { column: "id", ascending: false },
+        ],
+      }),
     ]);
 
     if (settingsResult.error) {
@@ -251,6 +261,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       creditCardStatements: creditCardStatementsRows.map(fromCreditCardStatementRow),
       accountReconciliations: (accountReconciliationsRows ?? []).map(fromAccountReconciliationRow),
       accountReconciliationMovements: (accountReconciliationMovementsRows ?? []).map(fromAccountReconciliationMovementRow),
+      movementCorrections: (movementCorrectionsRows ?? []).map(fromMovementCorrectionRow),
     });
 
     const snapshotPersisted = saveData(remoteData);
@@ -1701,5 +1712,99 @@ export async function recordAccountReconciliation(input: RecordAccountReconcilia
     difference: Number(data?.difference),
     movementsCount: Number(data?.movements_count),
     idempotent: Boolean(data?.idempotent),
+  };
+}
+
+export function fromMovementCorrectionRow(row: Record<string, any>): MovementCorrection {
+  return {
+    id: String(row.id),
+    householdId: String(row.household_id),
+    movementId: String(row.movement_id),
+    correctionId: row.correction_id ? String(row.correction_id) : null,
+    beforeSnapshot: row.before_snapshot ?? {},
+    afterSnapshot: row.after_snapshot ?? {},
+    reason: String(row.reason),
+    registeredByUserId: String(row.registered_by_user_id),
+    createdAt: String(row.created_at),
+  };
+}
+
+export interface CorrectReconciledMovementInput {
+  movementId: string;
+  correctionId?: string | null;
+  expectedUpdatedAt: string;
+  date: string;
+  amount: number;
+  description: string;
+  method: string;
+  category: string;
+  person?: string | null;
+  accountId?: string | null;
+  reason: string;
+}
+
+export interface CorrectReconciledMovementResult {
+  movement: Movement;
+  correction: MovementCorrection;
+  idempotent?: boolean;
+}
+
+function mapMovementCorrectionError(error: { message?: string }) {
+  if (error.message?.includes("MOVEMENT_CORRECTION_CONFLICT") || error.message === "MOVEMENT_CORRECTION_CONFLICT") {
+    return new MovementCorrectionConflictError();
+  }
+  if (error.message?.includes("MOVEMENT_NOT_RECONCILED") || error.message === "MOVEMENT_NOT_RECONCILED") {
+    return new MovementNotReconciledError();
+  }
+  if (error.message?.includes("MOVEMENT_RECONCILED") || error.message === "MOVEMENT_RECONCILED") {
+    return new MovementReconciledError();
+  }
+  switch (error.message) {
+    case "DEBT_MOVEMENT_PROTECTED":
+      return new DebtMovementProtectedError();
+    case "CREDIT_CARD_MOVEMENT_PROTECTED":
+      return new DebtMovementProtectedError();
+    case "MOVEMENT_CONTEXT_IMMUTABLE":
+      return new MovementContextImmutableError();
+    default:
+      return null;
+  }
+}
+
+export async function correctReconciledMovementV1(
+  input: CorrectReconciledMovementInput
+): Promise<CorrectReconciledMovementResult> {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new DebtOperationUnavailableError();
+  }
+
+  const { data, error } = await supabase.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: input.movementId,
+    p_correction_id: input.correctionId ?? null,
+    p_expected_updated_at: input.expectedUpdatedAt,
+    p_date: input.date,
+    p_amount: input.amount,
+    p_description: input.description,
+    p_method: input.method,
+    p_category: input.category,
+    p_person: input.person ?? null,
+    p_account_id: input.accountId ?? null,
+    p_reason: input.reason,
+  });
+
+  if (error) {
+    const mapped = mapMovementCorrectionError(error);
+    throw mapped ?? new Error(error.message || "Error al corregir el movimiento conciliado.");
+  }
+
+  if (!data || !data.movement || !data.correction) {
+    throw new Error("Supabase no devolvió la corrección esperada.");
+  }
+
+  return {
+    movement: fromMovementRow(data.movement),
+    correction: fromMovementCorrectionRow(data.correction),
+    idempotent: Boolean(data.idempotent),
   };
 }
