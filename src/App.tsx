@@ -191,7 +191,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const expected = useMemo(() => {
     const cashAccount = getActiveCashAccount(data.financialAccounts);
     return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null, data.creditCardEntries);
-  }, [data.financialAccounts, data.movements, data.initialBalance]);
+  }, [data.financialAccounts, data.movements, data.initialBalance, data.creditCardEntries]);
   const debtPlanningItems = useMemo(
     () =>
       buildDebtPlanningItems(

@@ -44,7 +44,7 @@ export function expectedCash(
   creditCardEntries: CreditCardEntry[] = []
 ) {
   return movements.reduce((total, movement) => {
-    const belongsToCash = cashAccountId == null ? movement.method === "efectivo" : movement.accountId === cashAccountId;
+    const belongsToCash = cashAccountId != null ? (movement.accountId === cashAccountId || (movement.accountId == null && movement.method === "efectivo")) : movement.method === "efectivo";
     if (!belongsToCash) return total;
     if (creditCardEntries.length > 0 && !isCreditCardMovementEffective(movement.id, creditCardEntries)) {
       return total;
