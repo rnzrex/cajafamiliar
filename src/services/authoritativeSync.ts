@@ -1,4 +1,6 @@
-import type { AppData, OfflineCreateMovementOperation } from "../types.js";
+import type { AppData } from "../types.js";
+import type { AppDataLoadSource } from "./dataRepository.js";
+import type { OfflineCreateMovementOperation } from "./offlineOutbox.js";
 
 export type RemoteSyncStatus = "idle" | "refreshing" | "fresh" | "offline" | "error";
 
@@ -68,8 +70,8 @@ export function validateAuthoritativeLoadSource({
   source,
 }: {
   isOnline: boolean;
-  source: "remote" | "trusted_snapshot";
+  source: AppDataLoadSource | "trusted_snapshot";
 }): boolean {
   if (isOnline) return source === "remote";
-  return source === "trusted_snapshot";
+  return source === "trusted_snapshot" || source === "fallback";
 }
