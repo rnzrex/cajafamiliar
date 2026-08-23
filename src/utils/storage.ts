@@ -227,13 +227,13 @@ export function loadData(): AppData {
   }
 }
 
-export function saveData(data: AppData) {
+export function saveData(data: AppData): boolean {
   try {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    }
+    if (typeof localStorage === "undefined") return false;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    return true;
   } catch {
-    // Best effort local storage write
+    return false;
   }
 }
 

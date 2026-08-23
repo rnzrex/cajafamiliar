@@ -1,5 +1,5 @@
 ﻿import type { SupabaseClient } from "@supabase/supabase-js";
-import { RemoteAppDataLoadError } from "./dataRepository";
+import { RemoteAppDataLoadError } from "./dataRepositoryErrors";
 
 export interface OrderSpec {
   column: string;

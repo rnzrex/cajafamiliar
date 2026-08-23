@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { AppData, HouseholdMember } from "../types";
 
 // 1. Mock storage

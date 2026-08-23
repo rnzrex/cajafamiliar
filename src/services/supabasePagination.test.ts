@@ -2,15 +2,18 @@
 import type { AppData, HouseholdMember, Movement } from "../types";
 import { fetchAllSupabaseRows } from "./supabasePagination";
 import { loadAppData, RemoteAppDataLoadError } from "./dataRepository";
+import { saveData } from "../utils/storage";
 import { expectedCash } from "../utils/calculations";
 
 // Mock storage
 const mockLoadTrustedSnapshot = vi.fn();
+const mockMarkTrustedSnapshot = vi.fn();
 vi.mock("../utils/storage", async () => {
   const actual = await vi.importActual<typeof import("../utils/storage")>("../utils/storage");
   return {
     ...actual,
     loadTrustedSnapshot: (...args: any[]) => mockLoadTrustedSnapshot(...args),
+    markTrustedSnapshot: (...args: any[]) => mockMarkTrustedSnapshot(...args),
   };
 });
 
@@ -24,7 +27,25 @@ vi.mock("./supabaseClient", () => ({
   },
 }));
 
-describe("HOTFIX-CASH-03 — Exhaustive Remote Dataset Pagination", () => {
+describe("HOTFIX-CASH-03 — Exhaustive Remote Dataset Pagination & Trusted Snapshot Integrity", () => {
+  const sampleAppData: AppData = {
+    initialBalance: 837.5,
+    movements: [],
+    categories: [],
+    cashCounts: [],
+    recurringPayments: [],
+    financialAccounts: [],
+    debts: [],
+    debtEvents: [],
+    debtScheduleVersions: [],
+    debtInstallments: [],
+    debtEventInstallmentAllocations: [],
+    debtCollaterals: [],
+    creditCardProfiles: [],
+    creditCardEntries: [],
+    creditCardStatements: [],
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -358,13 +379,10 @@ describe("HOTFIX-CASH-03 — Exhaustive Remote Dataset Pagination", () => {
         }),
       }));
 
-      let res;
-      try {
-        res = await loadAppData(member);
-      } catch (err: any) {
-        console.error("SECTION_19_ERROR_DETAILS:", err);
-        throw err;
-      }
+      const storageModule = await import("../utils/storage");
+      const saveDataSpy = vi.spyOn(storageModule, "saveData").mockReturnValue(true);
+
+      const res = await loadAppData(member);
 
       expect(res.source).toBe("remote");
       expect(res.data.movements).toHaveLength(1010);
@@ -372,6 +390,112 @@ describe("HOTFIX-CASH-03 — Exhaustive Remote Dataset Pagination", () => {
       const cashAccount = res.data.financialAccounts.find((a) => a.id === "cash-acc-1");
       const calcCash = expectedCash(res.data.movements, cashAccount?.openingBalance ?? 0, cashAccount?.id ?? null);
       expect(calcCash).toBeCloseTo(1625.1, 2);
+      expect(mockMarkTrustedSnapshot).toHaveBeenCalledWith(member);
+
+      saveDataSpy.mockRestore();
+    });
+  });
+
+  describe("Section 8, 9, 10: Cache Persistence & Trusted Snapshot Integrity Gate", () => {
+    it("Section 8: saveData returns boolean (true on success, false on quota/error)", () => {
+      const result = saveData(sampleAppData);
+      expect(typeof result).toBe("boolean");
+    });
+
+    it("Section 9 & 10: QUOTA / STORAGE FAILURE — remote load succeeds (1010 rows / 1625.10 cash) but markTrustedSnapshot IS NOT CALLED when saveData returns false", async () => {
+      vi.stubGlobal("navigator", { onLine: true });
+
+      const member: HouseholdMember = {
+        householdId: "h-prod-1010",
+        userId: "user-1",
+        displayName: "Renzo",
+        role: "owner",
+      };
+
+      const storageModule = await import("../utils/storage");
+      const saveDataSpy = vi.spyOn(storageModule, "saveData").mockReturnValue(false);
+
+      const page1Rows = Array.from({ length: 1000 }, (_, i) => ({
+        id: `mov-${i}`,
+        household_id: "h-prod-1010",
+        type: "egreso",
+        date: "2026-08-20",
+        amount: 0.6458,
+        description: `Egreso ${i}`,
+        method: "efectivo",
+        category: "Otros",
+        person: "Renzo",
+        account_id: "cash-acc-1",
+        movement_context: "standard",
+        created_at: "2026-08-20T10:00:00Z",
+      }));
+
+      const page2Rows = Array.from({ length: 10 }, (_, i) => ({
+        id: `mov-extra-${i}`,
+        household_id: "h-prod-1010",
+        type: "ingreso",
+        date: "2026-08-21",
+        amount: 71.67,
+        description: `Ingreso extra ${i}`,
+        method: "efectivo",
+        category: "Otros",
+        person: "Renzo",
+        account_id: "cash-acc-1",
+        movement_context: "standard",
+        created_at: "2026-08-21T10:00:00Z",
+      }));
+
+      const makeChainedMock = (table: string) => {
+        const builder: any = {
+          order: () => builder,
+          range: (from: number, to: number) => {
+            if (table === "movements") {
+              if (from === 0 && to === 999) return Promise.resolve({ data: page1Rows, error: null });
+              if (from === 1000) return Promise.resolve({ data: page2Rows, error: null });
+              return Promise.resolve({ data: [], error: null });
+            }
+            if (table === "financial_accounts") {
+              return Promise.resolve({
+                data: [
+                  {
+                    id: "cash-acc-1",
+                    household_id: "h-prod-1010",
+                    name: "Efectivo",
+                    opening_balance: 1554.2,
+                    reconciliation_type: "cash",
+                    is_active: true,
+                    sort_order: 1,
+                    created_at: "2026-08-01T00:00:00Z",
+                  },
+                ],
+                error: null,
+              });
+            }
+            return Promise.resolve({ data: [], error: null });
+          },
+          maybeSingle: () => Promise.resolve({ data: { initial_balance: 1554.2 }, error: null }),
+        };
+        return builder;
+      };
+
+      mockFrom.mockImplementation((table: string) => ({
+        select: () => ({
+          eq: () => makeChainedMock(table),
+        }),
+      }));
+
+      const res = await loadAppData(member);
+
+      // 1. Online remote load succeeds completely
+      expect(res.source).toBe("remote");
+      expect(res.data.movements).toHaveLength(1010);
+      const calcCash = expectedCash(res.data.movements, 1554.2, "cash-acc-1");
+      expect(calcCash).toBeCloseTo(1625.1, 2);
+
+      // 2. markTrustedSnapshot MUST NOT be called because saveData returned false
+      expect(mockMarkTrustedSnapshot).not.toHaveBeenCalled();
+
+      saveDataSpy.mockRestore();
     });
   });
 });

@@ -1,4 +1,5 @@
 import { fetchAllSupabaseRows } from "./supabasePagination";
+import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError } from "./dataRepositoryErrors";
 import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
@@ -10,31 +11,7 @@ export interface AppDataLoadResult {
   source: AppDataLoadSource;
 }
 
-export class HouseholdNotProvisionedError extends Error {
-  constructor() {
-    super("El household no está provisionado en Supabase.");
-    this.name = "HouseholdNotProvisionedError";
-  }
-}
-
-export class RemoteAppDataLoadError extends Error {
-  failedResource: string;
-  causeError?: unknown;
-
-  constructor(failedResource: string, causeError?: unknown) {
-    super(`Error al cargar datos financieros remotos de la tabla: ${failedResource}`);
-    this.name = "RemoteAppDataLoadError";
-    this.failedResource = failedResource;
-    this.causeError = causeError;
-  }
-}
-
-export class TrustedOfflineSnapshotUnavailableError extends Error {
-  constructor() {
-    super("No existe una copia verificada de Caja Familiar para usar sin conexión.");
-    this.name = "TrustedOfflineSnapshotUnavailableError";
-  }
-}
+export * from "./dataRepositoryErrors";
 
 export class MovementNotFoundError extends Error {
   constructor() {
@@ -254,8 +231,10 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       creditCardStatements: creditCardStatementsRows.map(fromCreditCardStatementRow),
     });
 
-    saveData(remoteData);
-    markTrustedSnapshot(member);
+    const snapshotPersisted = saveData(remoteData);
+    if (snapshotPersisted) {
+      markTrustedSnapshot(member);
+    }
     return { data: remoteData, source: "remote" };
   } catch (error) {
     if (error instanceof HouseholdNotProvisionedError || error instanceof RemoteAppDataLoadError) {
