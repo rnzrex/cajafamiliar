@@ -179,7 +179,7 @@ export interface BuildDebtIntelligenceInput {
   debtScheduleVersions: DebtScheduleVersion[];
   debtInstallments: DebtInstallment[];
   debtCollaterals: DebtCollateral[];
-  debtPlanningItems: DebtInstallmentPlanningItem[];
+  debtPlanningItems?: DebtInstallmentPlanningItem[];
   creditCardProfiles?: CreditCardProfile[];
   creditCardEntries?: CreditCardEntry[];
   creditCardStatements?: CreditCardStatement[];
@@ -199,7 +199,7 @@ export function buildDebtIntelligenceItems({
   debtScheduleVersions,
   debtInstallments,
   debtCollaterals,
-  debtPlanningItems,
+  debtPlanningItems = [],
   creditCardProfiles = [],
   creditCardEntries = [],
   creditCardStatements = [],
