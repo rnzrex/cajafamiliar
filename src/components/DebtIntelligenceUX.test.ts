@@ -271,7 +271,7 @@ describe("DEBT-5F-B: Debt Intelligence UX Real Component Tests", () => {
   });
 
   it("renders DebtAttentionPanel displaying 'No se conoce el pago mínimo' when card minimum payment is null instead of statement balance", () => {
-    const card = sampleCardDebt();
+    const card = sampleCardDebt({ openingPrincipalBalance: 800 });
     const profile: CreditCardProfile = {
       debtId: card.id,
       creditLimit: 5000,
