@@ -14,7 +14,7 @@ create table if not exists public.movement_corrections (
   created_at timestamptz not null default now(),
 
   constraint movement_corrections_correction_id_key
-    unique (household_id, correction_id),
+    unique (correction_id),
   constraint movement_corrections_household_fkey
     foreign key (household_id)
     references public.households(id)
@@ -170,10 +170,13 @@ begin
     raise exception 'NOT_HOUSEHOLD_MEMBER';
   end if;
 
-  -- 3. Mandatory correction_id check
+  -- 3. Mandatory correction_id check & concurrency lock
   if p_correction_id is null then
     raise exception 'INVALID_CORRECTION_ID';
   end if;
+
+  -- Transaction-scoped advisory lock for strict concurrency serialization on correction_id
+  perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(p_correction_id::text));
 
   -- Build canonical request snapshot for idempotency verification
   v_request_snapshot := jsonb_build_object(

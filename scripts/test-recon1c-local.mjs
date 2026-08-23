@@ -201,7 +201,7 @@ async function runLocalSmoke() {
     movement_snapshot: insertedMov,
   });
 
-  // Direct UPDATE / DELETE blocked
+  // Direct UPDATE / DELETE on movements blocked
   const { error: directUpdateErr } = await userClient
     .from("movements")
     .update({ amount: 150 })
@@ -222,7 +222,7 @@ async function runLocalSmoke() {
     directDeleteErr
   );
 
-  // Direct INSERT/UPDATE/DELETE on movement_corrections table denied for authenticated
+  // DIRECT TABLE MUTATION CHECKS ON movement_corrections
   const { error: directCorrInsertErr } = await userClient
     .from("movement_corrections")
     .insert({
@@ -239,6 +239,87 @@ async function runLocalSmoke() {
     directCorrInsertErr !== null,
     "Direct INSERT on movement_corrections denied for authenticated user",
     directCorrInsertErr
+  );
+
+  const { error: directCorrUpdateErr } = await userClient
+    .from("movement_corrections")
+    .update({ reason: "Direct update test" })
+    .eq("household_id", householdId);
+  assert(
+    directCorrUpdateErr !== null,
+    "Direct UPDATE on movement_corrections denied for authenticated user",
+    directCorrUpdateErr
+  );
+
+  const { error: directCorrDeleteErr } = await userClient
+    .from("movement_corrections")
+    .delete()
+    .eq("household_id", householdId);
+  assert(
+    directCorrDeleteErr !== null,
+    "Direct DELETE on movement_corrections denied for authenticated user",
+    directCorrDeleteErr
+  );
+
+  // NON-STANDARD DOMAIN PROTECTION CHECKS
+  log("Inserting non-standard movements for domain protection tests via psql...");
+  const nonStandardSql = `
+    INSERT INTO public.movements (id, household_id, type, date, amount, description, method, category, person, registered_by_user_id, account_id, movement_context)
+    VALUES ('mov-recon1c-debt-service', '${householdId}', 'egreso', '2026-08-10', 200.0, 'Pago deuda servicio', 'efectivo', 'Préstamos', 'Juan', '${userId}', '${accountId}', 'debt_service'),
+           ('mov-recon1c-card-purchase', '${householdId}', 'egreso', '2026-08-10', 150.0, 'Tarjeta compra', 'tarjeta', 'Compras personales', 'Juan', '${userId}', '${accountId}', 'credit_card_purchase')
+    ON CONFLICT (id) DO NOTHING;
+
+    INSERT INTO public.account_reconciliation_movements (id, household_id, reconciliation_id, movement_id, balance_contribution, movement_updated_at_snapshot, movement_snapshot)
+    VALUES (gen_random_uuid(), '${householdId}', '${recId}', 'mov-recon1c-debt-service', -200.0, now(), '{}'::jsonb),
+           (gen_random_uuid(), '${householdId}', '${recId}', 'mov-recon1c-card-purchase', -150.0, now(), '{}'::jsonb)
+    ON CONFLICT (reconciliation_id, movement_id) DO NOTHING;
+  `;
+  execSync(`docker exec -i supabase_db_crea-una-aplicaci-n-web-completa psql -U postgres -d postgres`, {
+    cwd: projectRoot,
+    input: nonStandardSql,
+    stdio: ["pipe", "ignore", "inherit"],
+  });
+
+  const debtMovId = "mov-recon1c-debt-service";
+  const cardMovId = "mov-recon1c-card-purchase";
+
+  const { data: debtMovData } = await adminClient.from("movements").select("updated_at").eq("id", debtMovId).single();
+  const { data: cardMovData } = await adminClient.from("movements").select("updated_at").eq("id", cardMovId).single();
+
+  const { error: debtRpcErr } = await userClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: debtMovId,
+    p_correction_id: "00000000-0000-4000-8000-000000000010",
+    p_expected_updated_at: debtMovData?.updated_at || new Date().toISOString(),
+    p_date: "2026-08-11",
+    p_amount: 250.0,
+    p_description: "Debt corr test",
+    p_method: "efectivo",
+    p_category: "Préstamos",
+    p_reason: "Debt corr test",
+  });
+  assert(
+    debtRpcErr && (debtRpcErr.message.includes("DEBT_MOVEMENT_PROTECTED") || debtRpcErr.message.includes("DEBT_SERVICE_MOVEMENT_RPC_ONLY")),
+    "Debt service movement correction blocked with DEBT_MOVEMENT_PROTECTED",
+    debtRpcErr
+  );
+
+  const { error: cardRpcErr } = await userClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: cardMovId,
+    p_correction_id: "00000000-0000-4000-8000-000000000011",
+    p_expected_updated_at: new Date().toISOString(),
+    p_date: "2026-08-11",
+    p_amount: 180.0,
+    p_description: "Card corr test",
+    p_method: "tarjeta",
+    p_category: "Compras personales",
+    p_reason: "Card corr test",
+  });
+  assert(
+    cardRpcErr && (cardRpcErr.message.includes("CREDIT_CARD_MOVEMENT_PROTECTED") || cardRpcErr.message.includes("CREDIT_CARD_MOVEMENT_RPC_ONLY")),
+    "Credit card movement correction blocked with CREDIT_CARD_MOVEMENT_PROTECTED",
+    cardRpcErr
   );
 
   // SECURITY MATRIX CHECKS
@@ -409,6 +490,100 @@ async function runLocalSmoke() {
     "Historical retry returned FIRST stored after_snapshot despite later 2nd correction",
     histErr
   );
+
+  // 10. REAL CONCURRENT IDEMPOTENCY TEST WITH Promise.all
+  log("Running real concurrent RPC execution test with Promise.all...");
+  const concurrentCorrId = "33333333-3333-4000-8000-333333333333";
+  const concurrentPayload = {
+    p_household_id: householdId,
+    p_movement_id: movementId,
+    p_correction_id: concurrentCorrId,
+    p_expected_updated_at: rpcRes2.after_snapshot.updated_at,
+    p_date: "2026-08-13",
+    p_amount: 140.0,
+    p_description: "Almuerzo concurrente",
+    p_method: "efectivo",
+    p_category: "Comida / cenas",
+    p_person: "Papa Carlos",
+    p_account_id: accountId,
+    p_reason: "Test concurrencia simultanea",
+  };
+
+  const [concResA, concResB] = await Promise.all([
+    userClient.rpc("correct_reconciled_movement_v1", concurrentPayload),
+    userClient.rpc("correct_reconciled_movement_v1", concurrentPayload),
+  ]);
+
+  assert(!concResA.error && !concResB.error, "Both simultaneous RPC calls succeeded without throwing error", { errA: concResA.error, errB: concResB.error });
+  assert(
+    (concResA.data?.idempotent === true || concResB.data?.idempotent === true),
+    "At least one concurrent response set idempotent=true",
+    { resA: concResA.data, resB: concResB.data }
+  );
+  assert(
+    concResA.data?.after_snapshot?.amount === 140.0 && concResB.data?.after_snapshot?.amount === 140.0,
+    "Both concurrent calls returned the exact same stored after_snapshot",
+    { resA: concResA.data, resB: concResB.data }
+  );
+  const { data: countCorr } = await adminClient.from("movement_corrections").select("id").eq("correction_id", concurrentCorrId);
+  assert(countCorr?.length === 1, "Exactly ONE correction row persists for concurrent execution", countCorr);
+
+  // 11. ATOMIC ROLLBACK TEST
+  log("Installing temporary failing trigger on movement_corrections for atomicity test...");
+  const installTriggerSql = `
+    CREATE OR REPLACE FUNCTION public.trg_test_fail_fn()
+    RETURNS trigger AS $$
+    BEGIN
+      RAISE EXCEPTION 'TEST_FAIL_TRIGGER';
+    END;
+    $$ LANGUAGE plpgsql;
+
+    DROP TRIGGER IF EXISTS trg_test_fail ON public.movement_corrections;
+    CREATE TRIGGER trg_test_fail
+      BEFORE INSERT ON public.movement_corrections
+      FOR EACH ROW EXECUTE FUNCTION public.trg_test_fail_fn();
+  `;
+  execSync(`docker exec -i supabase_db_crea-una-aplicaci-n-web-completa psql -U postgres -d postgres`, {
+    cwd: projectRoot,
+    input: installTriggerSql,
+    stdio: ["pipe", "ignore", "inherit"],
+  });
+
+  const failCorrId = "44444444-4444-4000-8000-444444444444";
+  const { error: failRpcErr } = await userClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: movementId,
+    p_correction_id: failCorrId,
+    p_expected_updated_at: concResA.data.after_snapshot.updated_at,
+    p_date: "2026-08-14",
+    p_amount: 999.0,
+    p_description: "Debe hacer rollback",
+    p_method: "efectivo",
+    p_category: "Comida / cenas",
+    p_reason: "Rollback test",
+  });
+
+  assert(failRpcErr && failRpcErr.message.includes("TEST_FAIL_TRIGGER"), "RPC failed due to test trigger", failRpcErr);
+
+  // Verify movement is completely unchanged
+  const { data: rollbackMov } = await adminClient.from("movements").select("*").eq("id", movementId).single();
+  assert(rollbackMov.amount === 140.0 && rollbackMov.description === "Almuerzo concurrente", "Movement remained unchanged after failed RPC transaction rollback");
+
+  // Verify no movement_corrections row persists
+  const { data: rollbackCorr } = await adminClient.from("movement_corrections").select("*").eq("correction_id", failCorrId);
+  assert(rollbackCorr?.length === 0, "No movement_corrections row persisted after transaction rollback");
+
+  // Clean up failing trigger
+  const cleanupTriggerSql = `
+    DROP TRIGGER IF EXISTS trg_test_fail ON public.movement_corrections;
+    DROP FUNCTION IF EXISTS public.trg_test_fail_fn();
+  `;
+  execSync(`docker exec -i supabase_db_crea-una-aplicaci-n-web-completa psql -U postgres -d postgres`, {
+    cwd: projectRoot,
+    input: cleanupTriggerSql,
+    stdio: ["pipe", "ignore", "inherit"],
+  });
+  log("Temporary test trigger cleaned up.");
 
   log("ALL RECON-1C LOCAL SMOKE CHECKS & SECURITY MATRIX PASSED PERFECTLY!");
 }

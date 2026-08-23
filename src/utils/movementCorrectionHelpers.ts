@@ -45,16 +45,25 @@ export function getMovementCorrectionFieldChanges(
     });
   }
 
+  // Resolve currencies independently per snapshot's account
+  const beforeAccId = beforeSnapshot.account_id || beforeSnapshot.accountId;
+  const afterAccId = afterSnapshot.account_id || afterSnapshot.accountId;
+
+  const beforeAccount = accounts.find((a) => a.id === beforeAccId);
+  const afterAccount = accounts.find((a) => a.id === afterAccId);
+
+  const beforeCurrency = beforeAccount?.currencyCode || "PEN";
+  const afterCurrency = afterAccount?.currencyCode || "PEN";
+
   // 2. Amount
   const beforeAmount = Number(beforeSnapshot.amount);
   const afterAmount = Number(afterSnapshot.amount);
-  if (beforeAmount !== afterAmount) {
-    const currency = "PEN";
+  if (beforeAmount !== afterAmount || beforeCurrency !== afterCurrency) {
     changes.push({
       fieldKey: "amount",
       label: "Monto",
-      beforeValue: Number.isFinite(beforeAmount) ? formatMoneyByCurrency(beforeAmount, currency) : "-",
-      afterValue: Number.isFinite(afterAmount) ? formatMoneyByCurrency(afterAmount, currency) : "-",
+      beforeValue: Number.isFinite(beforeAmount) ? formatMoneyByCurrency(beforeAmount, beforeCurrency) : "-",
+      afterValue: Number.isFinite(afterAmount) ? formatMoneyByCurrency(afterAmount, afterCurrency) : "-",
     });
   }
 
@@ -107,8 +116,6 @@ export function getMovementCorrectionFieldChanges(
   }
 
   // 7. Account
-  const beforeAccId = beforeSnapshot.account_id || beforeSnapshot.accountId;
-  const afterAccId = afterSnapshot.account_id || afterSnapshot.accountId;
   if (beforeAccId !== afterAccId) {
     const beforeAccName = accountNameForMovement({ accountId: beforeAccId } as any, accounts);
     const afterAccName = accountNameForMovement({ accountId: afterAccId } as any, accounts);

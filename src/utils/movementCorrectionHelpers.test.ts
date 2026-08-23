@@ -133,4 +133,52 @@ describe("movementCorrectionHelpers Pure Production Helper Unit Tests", () => {
     const diff = getMovementCorrectionFieldChanges(snapshot, snapshot, sampleAccounts);
     expect(diff).toHaveLength(0);
   });
+
+  it("5. Multi-currency formatting: USD renders $, PEN renders S/, cross-account formats independently without conversion", () => {
+    const usdAccount: FinancialAccount = {
+      id: "acc-usd-1",
+      name: "BPA Dólares",
+      currencyCode: "USD",
+      reconciliationType: "balance",
+      openingBalance: 500,
+      sortOrder: 3,
+      isActive: true,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    };
+
+    const multiAccounts = [...sampleAccounts, usdAccount];
+
+    // USD account amount change
+    const usdDiff = getMovementCorrectionFieldChanges(
+      { amount: 50, account_id: "acc-usd-1" },
+      { amount: 75, account_id: "acc-usd-1" },
+      multiAccounts
+    );
+    const usdAmountChange = usdDiff.find((c) => c.fieldKey === "amount");
+    expect(usdAmountChange?.beforeValue).toContain("$");
+    expect(usdAmountChange?.afterValue).toContain("$");
+
+    // PEN account amount change
+    const penDiff = getMovementCorrectionFieldChanges(
+      { amount: 50, account_id: "acc-cash-1" },
+      { amount: 75, account_id: "acc-cash-1" },
+      multiAccounts
+    );
+    const penAmountChange = penDiff.find((c) => c.fieldKey === "amount");
+    expect(penAmountChange?.beforeValue).toContain("S/");
+    expect(penAmountChange?.afterValue).toContain("S/");
+
+    // PEN -> USD cross-account correction
+    const crossDiff = getMovementCorrectionFieldChanges(
+      { amount: 100, account_id: "acc-cash-1" },
+      { amount: 100, account_id: "acc-usd-1" },
+      multiAccounts
+    );
+    const crossAmountChange = crossDiff.find((c) => c.fieldKey === "amount");
+    expect(crossAmountChange?.beforeValue).toContain("S/");
+    expect(crossAmountChange?.beforeValue).toContain("100");
+    expect(crossAmountChange?.afterValue).toContain("$");
+    expect(crossAmountChange?.afterValue).toContain("100");
+  });
 });
