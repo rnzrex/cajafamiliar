@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination";
-import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError } from "./dataRepositoryErrors";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
+import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError } from "./dataRepositoryErrors";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -61,6 +61,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       creditCardProfilesRows,
       creditCardEntriesRows,
       creditCardStatementsRows,
+      accountReconciliationsRows,
+      accountReconciliationMovementsRows,
     ] = await Promise.all([
       supabase.from("settings").select("*").eq("household_id", householdId).maybeSingle(),
       fetchAllSupabaseRows({
@@ -197,6 +199,24 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
           { column: "id", ascending: true },
         ],
       }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "account_reconciliations",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: false },
+          { column: "id", ascending: false },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "account_reconciliation_movements",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: false },
+          { column: "id", ascending: false },
+        ],
+      }),
     ]);
 
     if (settingsResult.error) {
@@ -229,6 +249,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       creditCardProfiles: creditCardProfilesRows.map(fromCreditCardProfileRow),
       creditCardEntries: creditCardEntriesRows.map(fromCreditCardEntryRow),
       creditCardStatements: creditCardStatementsRows.map(fromCreditCardStatementRow),
+      accountReconciliations: (accountReconciliationsRows ?? []).map(fromAccountReconciliationRow),
+      accountReconciliationMovements: (accountReconciliationMovementsRows ?? []).map(fromAccountReconciliationMovementRow),
     });
 
     const snapshotPersisted = saveData(remoteData);
@@ -1240,11 +1262,16 @@ export async function setFinancialAccountActive(account: FinancialAccount, isAct
 }
 
 function mapMovementWriteError(error: { message?: string }) {
+  if (error.message?.includes("MOVEMENT_RECONCILED") || error.message === "MOVEMENT_RECONCILED") {
+    return new MovementReconciledError();
+  }
   switch (error.message) {
     case "DEBT_MOVEMENT_PROTECTED":
       return new DebtMovementProtectedError();
     case "MOVEMENT_CONTEXT_IMMUTABLE":
       return new MovementContextImmutableError();
+    case "MOVEMENT_RECONCILED":
+      return new MovementReconciledError();
     default:
       return null;
   }
@@ -1316,6 +1343,7 @@ function fromMovementRow(row: Record<string, any>): Movement {
         ? "credit_card_credit"
         : "standard",
     createdAt: row.created_at,
+    updatedAt: row.updated_at ?? row.created_at,
   };
 }
 
@@ -1610,4 +1638,68 @@ interface RecurringPaymentRow {
   last_paid_month: number | string | null;
   last_paid_year: number | string | null;
   paid_at: string | null;
+}
+
+export function fromAccountReconciliationRow(row: Record<string, any>): AccountReconciliation {
+  return {
+    id: String(row.id),
+    householdId: String(row.household_id),
+    accountId: String(row.account_id),
+    reconciliationType: row.reconciliation_type === "balance" ? "balance" : "cash",
+    currencyCode: String(row.currency_code ?? "PEN"),
+    openingBalanceSnapshot: Number(row.opening_balance_snapshot),
+    expectedBalance: Number(row.expected_balance),
+    actualBalance: Number(row.actual_balance),
+    difference: Number(row.difference),
+    status: row.status === "matched" ? "matched" : "mismatch",
+    denominations: row.denominations ?? null,
+    registeredByUserId: String(row.registered_by_user_id),
+    createdAt: String(row.created_at),
+  };
+}
+
+export function fromAccountReconciliationMovementRow(row: Record<string, any>): AccountReconciliationMovement {
+  return {
+    id: String(row.id),
+    householdId: String(row.household_id),
+    reconciliationId: String(row.reconciliation_id),
+    movementId: String(row.movement_id),
+    balanceContribution: Number(row.balance_contribution),
+    movementUpdatedAtSnapshot: String(row.movement_updated_at_snapshot),
+    movementSnapshot: row.movement_snapshot ?? {},
+    createdAt: String(row.created_at),
+  };
+}
+
+export async function recordAccountReconciliation(input: RecordAccountReconciliationInput): Promise<RecordAccountReconciliationResult> {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new DebtOperationUnavailableError();
+  }
+
+  const { data, error } = await supabase.rpc("record_account_reconciliation_v1", {
+    p_household_id: householdId,
+    p_reconciliation_id: input.reconciliationId,
+    p_account_id: input.accountId,
+    p_actual_balance: input.actualBalance ?? null,
+    p_denominations: input.denominations ?? null,
+  });
+
+  if (error) {
+    if (error.message?.includes("MOVEMENT_RECONCILED")) throw new MovementReconciledError();
+    if (error.message?.includes("RECONCILIATION_ID_CONFLICT")) throw new ReconciliationIdConflictError();
+    if (error.message?.includes("ACCOUNT_NOT_FOUND")) throw new FinancialAccountNotFoundError();
+    throw new Error(error.message || "Error al registrar la conciliación.");
+  }
+
+  return {
+    success: Boolean(data?.success),
+    reconciliationId: String(data?.reconciliation_id),
+    status: data?.status === "matched" ? "matched" : "mismatch",
+    openingBalanceSnapshot: Number(data?.opening_balance_snapshot),
+    expectedBalance: Number(data?.expected_balance),
+    actualBalance: Number(data?.actual_balance),
+    difference: Number(data?.difference),
+    movementsCount: Number(data?.movements_count),
+    idempotent: Boolean(data?.idempotent),
+  };
 }

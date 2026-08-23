@@ -149,6 +149,8 @@ const EMPTY_APP_DATA: AppData = {
   creditCardProfiles: [],
   creditCardEntries: [],
   creditCardStatements: [],
+  accountReconciliations: [],
+  accountReconciliationMovements: [],
 };
 
 const OFFLINE_WRITE_MESSAGE = "Estás sin conexión. Puedes consultar tu información, pero para registrar o modificar datos necesitas conectarte a internet.";

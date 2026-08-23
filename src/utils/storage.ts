@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardStatement, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardStatement, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories, AccountReconciliation, AccountReconciliationMovement } from "../types";
 import { localDateString } from "./date";
 import { isSupabaseConfigured } from "../services/supabaseClient";
 import { normalizeDebtCollaterals, normalizeDebtEventInstallmentAllocations, normalizeDebtEvents, normalizeDebtInstallments, normalizeDebtScheduleVersions, normalizeDebts } from "./debtNormalizers";
@@ -27,6 +27,8 @@ export interface AppDataSnapshotInput {
   creditCardProfiles?: CreditCardProfile[];
   creditCardEntries?: CreditCardEntry[];
   creditCardStatements?: CreditCardStatement[];
+  accountReconciliations?: AccountReconciliation[];
+  accountReconciliationMovements?: AccountReconciliationMovement[];
 }
 
 export interface OfflineAccessRecord {
@@ -193,6 +195,8 @@ export const defaultData: AppData = {
   creditCardProfiles: [],
   creditCardEntries: [],
   creditCardStatements: [],
+  accountReconciliations: [],
+  accountReconciliationMovements: [],
 };
 
 export function loadCachedData(): AppData | null {
@@ -389,10 +393,13 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
     creditCardProfiles: normalizeCreditCardProfiles(data.creditCardProfiles ?? []),
     creditCardEntries: normalizeCreditCardEntries(data.creditCardEntries ?? []),
     creditCardStatements: normalizeCreditCardStatements(data.creditCardStatements ?? []),
+    accountReconciliations: data.accountReconciliations ?? [],
+    accountReconciliationMovements: data.accountReconciliationMovements ?? [],
     movements: data.movements.map((movement) => ({
       ...movement,
       category: movementCategoryMap[movement.category] ?? movement.category,
       accountId: movement.accountId ?? null,
+      updatedAt: movement.updatedAt ?? movement.createdAt ?? new Date().toISOString(),
       movementContext:
         movement.movementContext === "debt_service"
           ? "debt_service"
@@ -579,7 +586,9 @@ function isAppDataSnapshot(value: unknown): value is AppDataSnapshotInput {
             isPresentNumeric(statement.statementBalance) &&
             typeof statement.createdByUserId === "string" &&
             typeof statement.createdAt === "string"
-        )))
+        ))) &&
+    (value.accountReconciliations === undefined || Array.isArray(value.accountReconciliations)) &&
+    (value.accountReconciliationMovements === undefined || Array.isArray(value.accountReconciliationMovements))
   );
 }
 

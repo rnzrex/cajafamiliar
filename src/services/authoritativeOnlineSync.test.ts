@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AppData, HouseholdMember, Movement } from "../types";
 import {
   RemoteAppDataLoadError,
@@ -48,6 +48,8 @@ describe("HOTFIX-CASH-02 — Production Authoritative Sync Contract & Helpers", 
     creditCardProfiles: [],
     creditCardEntries: [],
     creditCardStatements: [],
+    accountReconciliations: [],
+    accountReconciliationMovements: [],
   };
 
   describe("Section 17: Production Helper validateAuthoritativeLoadSource", () => {

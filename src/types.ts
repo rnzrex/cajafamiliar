@@ -46,6 +46,7 @@ export interface Movement {
   accountId: string | null;
   movementContext: MovementContext;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId" | "movementContext"> & { person?: string };
@@ -235,6 +236,54 @@ export interface CreditCardStatementCloseResult {
   statementId: string;
   statementBalance: number;
   minimumPaymentAmount: number | null;
+  idempotent: boolean;
+}
+
+export type ReconciliationStatus = "matched" | "mismatch";
+
+export interface AccountReconciliation {
+  id: string;
+  householdId: string;
+  accountId: string;
+  reconciliationType: AccountReconciliationType;
+  currencyCode: string;
+  openingBalanceSnapshot: number;
+  expectedBalance: number;
+  actualBalance: number;
+  difference: number;
+  status: ReconciliationStatus;
+  denominations: Record<string, number> | Array<{ denomination: number; count: number }> | null;
+  registeredByUserId: string;
+  createdAt: string;
+}
+
+export interface AccountReconciliationMovement {
+  id: string;
+  householdId: string;
+  reconciliationId: string;
+  movementId: string;
+  balanceContribution: number;
+  movementUpdatedAtSnapshot: string;
+  movementSnapshot: Record<string, any>;
+  createdAt: string;
+}
+
+export interface RecordAccountReconciliationInput {
+  reconciliationId: string;
+  accountId: string;
+  actualBalance?: number | null;
+  denominations?: Record<string, number> | Array<{ denomination: number; count: number }> | null;
+}
+
+export interface RecordAccountReconciliationResult {
+  success: boolean;
+  reconciliationId: string;
+  status: ReconciliationStatus;
+  openingBalanceSnapshot: number;
+  expectedBalance: number;
+  actualBalance: number;
+  difference: number;
+  movementsCount: number;
   idempotent: boolean;
 }
 
@@ -457,6 +506,8 @@ export interface AppData {
   creditCardProfiles: CreditCardProfile[];
   creditCardEntries: CreditCardEntry[];
   creditCardStatements: CreditCardStatement[];
+  accountReconciliations: AccountReconciliation[];
+  accountReconciliationMovements: AccountReconciliationMovement[];
 }
 
 export const baseCategories: Category[] = [
