@@ -14,26 +14,27 @@ export interface PaymentStatus {
   dueDate?: string;
 }
 
-export const formatMoney = (value: number) =>
-  new Intl.NumberFormat("es-PE", {
-    style: "currency",
-    currency: "PEN",
-    currencyDisplay: "symbol",
-  })
-    .format(value)
-    .replace("PEN", "S/");
+const penFormatter = new Intl.NumberFormat("es-PE", {
+  style: "currency",
+  currency: "PEN",
+  currencyDisplay: "symbol",
+});
+
+const usdFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  currencyDisplay: "narrowSymbol",
+});
 
 export const formatMoneyByCurrency = (value: number, currencyCode?: string) => {
   const code = (currencyCode || "PEN").toUpperCase();
   if (code === "USD") {
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      currencyDisplay: "narrowSymbol",
-    }).format(value);
+    return usdFormatter.format(value);
   }
-  return formatMoney(value);
+  return penFormatter.format(value).replace("PEN", "S/");
 };
+
+export const formatMoney = (value: number) => formatMoneyByCurrency(value, "PEN");
 
 export const monthKey = (date: string) => date.slice(0, 7);
 

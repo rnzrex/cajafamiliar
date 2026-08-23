@@ -1,4 +1,7 @@
 import type {
+  CreditCardEntry,
+  CreditCardProfile,
+  CreditCardStatement,
   Debt,
   DebtCollateral,
   DebtEvent,
@@ -13,6 +16,11 @@ import {
   effectiveDebtEvents,
   effectiveDebtFundEvents,
 } from "./debtCalculations.js";
+import {
+  classifyCreditCardStatementAttention,
+  currentCreditCardBalance,
+  latestCreditCardStatement,
+} from "./creditCardCalculations.js";
 import type { DebtInstallmentPlanningItem } from "./debtPlanning.js";
 import { dueDateStatus } from "./dueDates.js";
 import type { DueDateKind } from "./dueDates.js";
@@ -172,6 +180,9 @@ export interface BuildDebtIntelligenceInput {
   debtInstallments: DebtInstallment[];
   debtCollaterals: DebtCollateral[];
   debtPlanningItems: DebtInstallmentPlanningItem[];
+  creditCardProfiles?: CreditCardProfile[];
+  creditCardEntries?: CreditCardEntry[];
+  creditCardStatements?: CreditCardStatement[];
   todayKey?: string;
 }
 
@@ -189,11 +200,17 @@ export function buildDebtIntelligenceItems({
   debtInstallments,
   debtCollaterals,
   debtPlanningItems,
+  creditCardProfiles = [],
+  creditCardEntries = [],
+  creditCardStatements = [],
   todayKey = localDateString(),
 }: BuildDebtIntelligenceInput): DebtIntelligenceItem[] {
   return debts.map((debt) => {
     // 1. Current Principal
-    const currentPrincipal = currentDebtPrincipal(debt, debtEvents);
+    const currentPrincipal =
+      debt.debtKind === "credit_card" && creditCardEntries.length > 0
+        ? currentCreditCardBalance(debt, creditCardEntries)
+        : currentDebtPrincipal(debt, debtEvents);
 
     // 2. Fund events vs Non-fund events
     const fundEvents = effectiveDebtFundEvents(debtEvents, debt.id);
@@ -294,18 +311,23 @@ export function buildDebtIntelligenceItems({
     }
 
     // 6. Current Schedule Intelligence
+    const isCard = debt.debtKind === "credit_card";
+    const latestCardStatement = isCard ? latestCreditCardStatement(creditCardStatements, debt.id) : null;
+
     const currentSchedule = currentDebtScheduleVersion(debt.id, debtScheduleVersions);
-    const hasCurrentSchedule = Boolean(currentSchedule);
-    const currentScheduleId = currentSchedule ? currentSchedule.id : null;
+    const hasCurrentSchedule = isCard ? Boolean(latestCardStatement) : Boolean(currentSchedule);
+    const currentScheduleId = isCard ? (latestCardStatement ? latestCardStatement.id : null) : (currentSchedule ? currentSchedule.id : null);
 
     const scheduleInstallments = currentSchedule
       ? debtInstallments.filter((i) => i.scheduleVersionId === currentSchedule.id && i.debtId === debt.id)
       : [];
 
-    const currentScheduleInstallmentCount = scheduleInstallments.length;
+    const currentScheduleInstallmentCount = isCard ? (latestCardStatement ? 1 : 0) : scheduleInstallments.length;
 
     let currentScheduleLastDueDate: string | null = null;
-    if (scheduleInstallments.length > 0) {
+    if (isCard) {
+      currentScheduleLastDueDate = latestCardStatement?.dueDate ?? null;
+    } else if (scheduleInstallments.length > 0) {
       const dates = scheduleInstallments.map((i) => i.dueDate).filter(Boolean);
       if (dates.length > 0) {
         currentScheduleLastDueDate = dates.reduce((max, d) => (d.localeCompare(max) > 0 ? d : max), dates[0]);
@@ -316,10 +338,10 @@ export function buildDebtIntelligenceItems({
     const debtPlanning = debtPlanningItems.filter((item) => item.debtId === debt.id);
     const outstanding = debtPlanning.filter((item) => !item.isCovered);
 
-    const remainingInstallmentCount = outstanding.length;
-    const knownRemainingInstallmentCount = outstanding.filter((item) => item.amountKnown).length;
-    const unknownRemainingInstallmentCount = outstanding.filter((item) => !item.amountKnown).length;
-    const overdueInstallmentCount = outstanding.filter((item) => item.dueStatus === "overdue").length;
+    let remainingInstallmentCount = outstanding.length;
+    let knownRemainingInstallmentCount = outstanding.filter((item) => item.amountKnown).length;
+    let unknownRemainingInstallmentCount = outstanding.filter((item) => !item.amountKnown).length;
+    let overdueInstallmentCount = outstanding.filter((item) => item.dueStatus === "overdue").length;
 
     // Next Outstanding Installment (Sorted by dueDate ASC, then installmentNumber ASC)
     let nextInstallmentId: string | null = null;
@@ -329,7 +351,37 @@ export function buildDebtIntelligenceItems({
     let nextInstallmentRemainingAmount: number | null = null;
     let nextInstallmentAmountKnown = false;
 
-    if (outstanding.length > 0) {
+    let next30InstallmentCount = 0;
+    let next30KnownAmount = 0;
+    let next30UnknownAmountCount = 0;
+
+    if (isCard && latestCardStatement && latestCardStatement.dueDate) {
+      const attention = classifyCreditCardStatementAttention({
+        debt,
+        statement: latestCardStatement,
+        entries: creditCardEntries,
+        currentCardBalance: currentPrincipal,
+      });
+
+      if (attention.actionable) {
+        const ds = dueDateStatus(latestCardStatement.dueDate, todayKey);
+        nextInstallmentId = latestCardStatement.id;
+        nextInstallmentNumber = 1;
+        nextInstallmentDueDate = latestCardStatement.dueDate;
+        nextInstallmentDueStatus = ds.kind;
+        nextInstallmentRemainingAmount = latestCardStatement.minimumPaymentAmount ?? null;
+        nextInstallmentAmountKnown = latestCardStatement.minimumPaymentAmount != null;
+
+        if (ds.days <= 30) {
+          next30InstallmentCount = 1;
+          if (nextInstallmentAmountKnown && latestCardStatement.minimumPaymentAmount != null) {
+            next30KnownAmount = latestCardStatement.minimumPaymentAmount;
+          } else {
+            next30UnknownAmountCount = 1;
+          }
+        }
+      }
+    } else if (outstanding.length > 0) {
       const sortedOutstanding = [...outstanding].sort(
         (a, b) => a.dueDate.localeCompare(b.dueDate) || a.installmentNumber - b.installmentNumber
       );
@@ -340,16 +392,15 @@ export function buildDebtIntelligenceItems({
       nextInstallmentDueStatus = nextItem.dueStatus;
       nextInstallmentRemainingAmount = nextItem.remainingAmount;
       nextInstallmentAmountKnown = nextItem.amountKnown;
-    }
 
-    // Next 30 Days (daysUntilDue >= 0 && daysUntilDue <= 30 && !isCovered)
-    const next30Items = outstanding.filter((item) => item.daysUntilDue >= 0 && item.daysUntilDue <= 30);
-    const next30InstallmentCount = next30Items.length;
-    const next30KnownAmount = next30Items.reduce(
-      (sum, item) => (item.amountKnown && item.remainingAmount != null ? sum + item.remainingAmount : sum),
-      0
-    );
-    const next30UnknownAmountCount = next30Items.filter((item) => !item.amountKnown).length;
+      const next30Items = outstanding.filter((item) => item.daysUntilDue >= 0 && item.daysUntilDue <= 30);
+      next30InstallmentCount = next30Items.length;
+      next30KnownAmount = next30Items.reduce(
+        (sum, item) => (item.amountKnown && item.remainingAmount != null ? sum + item.remainingAmount : sum),
+        0
+      );
+      next30UnknownAmountCount = next30Items.filter((item) => !item.amountKnown).length;
+    }
 
     // 8. Collateral Intelligence
     const activeCollaterals = debtCollaterals.filter((c) => c.debtId === debt.id && c.status === "pledged");

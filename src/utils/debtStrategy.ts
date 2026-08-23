@@ -61,7 +61,11 @@ export interface UrgencyStrategyResult {
 }
 
 // D. Cash-Flow Relief 30d Strategy
-export type CashFlowRelief30dUnrankedReason = "missing_current_schedule" | "unknown_next30_amounts";
+export type CashFlowRelief30dUnrankedReason =
+  | "missing_current_schedule"
+  | "unknown_next30_amounts"
+  | "no_actionable_obligation"
+  | "outside_30_day_horizon";
 
 export interface CashFlowRelief30dCandidate {
   debtId: string;
@@ -99,37 +103,35 @@ export interface DebtStrategyResult {
 }
 
 // ---------------------------------------------------------------------------
-// Base Helper
+// Implementation Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Filter items for active, non-archived debts (status === "active" && !isArchived).
- * Excludes paid_off, refinanced, and archived debts.
- */
 export function activeDebtStrategyItems(items: DebtIntelligenceItem[]): DebtIntelligenceItem[] {
   return items.filter((item) => item.status === "active" && !item.isArchived);
 }
 
 // ---------------------------------------------------------------------------
-// Strategy A: Snowball
+// Strategy A: Snowball Strategy
 // ---------------------------------------------------------------------------
 
 /**
- * Snowball strategy orders active debts per currency by currentPrincipal ASC (smallest principal first).
+ * Snowball Strategy ranks active debts per currency by currentPrincipal ASC.
+ * Filter out debts with currentPrincipal <= 0 (already fully paid).
  * Tie-break: currentPrincipal ASC -> debtName ASC -> debtId ASC.
  */
 export function buildSnowballStrategy(items: DebtIntelligenceItem[]): SnowballStrategyResult {
-  const activeItems = activeDebtStrategyItems(items);
+  const activeItems = activeDebtStrategyItems(items).filter((item) => item.currentPrincipal > 0);
   const byCurrency: Record<string, SnowballCandidate[]> = {};
 
   for (const item of activeItems) {
     const curr = item.currencyCode || "PEN";
-    if (!byCurrency[curr]) byCurrency[curr] = [];
+    if (!byCurrency[curr]) {
+      byCurrency[curr] = [];
+    }
   }
 
   for (const curr of Object.keys(byCurrency)) {
     const currencyItems = activeItems.filter((i) => (i.currencyCode || "PEN") === curr);
-
     const sorted = [...currencyItems].sort(
       (a, b) =>
         a.currentPrincipal - b.currentPrincipal ||
@@ -150,13 +152,17 @@ export function buildSnowballStrategy(items: DebtIntelligenceItem[]): SnowballSt
 }
 
 // ---------------------------------------------------------------------------
-// Strategy B: Avalanche
+// Strategy B: Avalanche Strategy
 // ---------------------------------------------------------------------------
 
 /**
- * Avalanche strategy groups active debts per currency by rate basis (TCEA, TEA, unknown).
- * Within TCEA and TEA cohorts, orders by ratePercent DESC.
- * Tie-break: ratePercent DESC -> debtName ASC -> debtId ASC.
+ * Avalanche Strategy ranks active debts per currency by interest rate DESC.
+ * Segregates by rate basis (tcea vs tea).
+ * Comparison Modes:
+ * - "tcea_full": ALL debts in currency have TCEA
+ * - "tea_full": NO debt has TCEA, and ALL debts have TEA
+ * - "partial": Mix of TCEA/TEA, or some debts missing rate
+ * - "unavailable": ALL debts in currency lack both TCEA and TEA
  */
 export function buildAvalancheStrategy(items: DebtIntelligenceItem[]): AvalancheStrategyResult {
   const activeItems = activeDebtStrategyItems(items);
@@ -184,14 +190,14 @@ export function buildAvalancheStrategy(items: DebtIntelligenceItem[]): Avalanche
 
     const sortedTcea = [...tceaItems].sort(
       (a, b) =>
-        (b.ratePercent ?? 0) - (a.ratePercent ?? 0) ||
+        b.ratePercent! - a.ratePercent! ||
         a.debtName.localeCompare(b.debtName) ||
         a.debtId.localeCompare(b.debtId)
     );
 
     const sortedTea = [...teaItems].sort(
       (a, b) =>
-        (b.ratePercent ?? 0) - (a.ratePercent ?? 0) ||
+        b.ratePercent! - a.ratePercent! ||
         a.debtName.localeCompare(b.debtName) ||
         a.debtId.localeCompare(b.debtId)
     );
@@ -214,20 +220,17 @@ export function buildAvalancheStrategy(items: DebtIntelligenceItem[]): Avalanche
       rankWithinBasis: idx + 1,
     }));
 
-    const unknownRateDebtIds = unknownItems
-      .map((i) => i.debtId)
-      .sort((a, b) => a.localeCompare(b));
+    const unknownRateDebtIds = unknownItems.map((i) => i.debtId).sort((a, b) => a.localeCompare(b));
 
-    // Determine comparisonMode
     let comparisonMode: AvalancheComparisonMode = "unavailable";
-    const totalCount = currencyItems.length;
+    const total = currencyItems.length;
 
-    if (totalCount > 0) {
-      if (tceaItems.length === totalCount) {
+    if (total > 0) {
+      if (tceaItems.length === total) {
         comparisonMode = "tcea_full";
-      } else if (tceaItems.length === 0 && teaItems.length === totalCount) {
+      } else if (tceaItems.length === 0 && teaItems.length === total) {
         comparisonMode = "tea_full";
-      } else if (tceaItems.length === 0 && teaItems.length === 0) {
+      } else if (unknownItems.length === total) {
         comparisonMode = "unavailable";
       } else {
         comparisonMode = "partial";
@@ -247,32 +250,36 @@ export function buildAvalancheStrategy(items: DebtIntelligenceItem[]): Avalanche
 }
 
 // ---------------------------------------------------------------------------
-// Strategy C: Urgency
+// Strategy C: Urgency Strategy
 // ---------------------------------------------------------------------------
 
 /**
- * Urgency strategy ranks active debts globally by nextInstallmentDueDate ASC (earliest due date / oldest overdue first).
+ * Urgency Strategy ranks next installment across ALL active debts globally by urgency.
+ * Priority: overdue > today > tomorrow > upcoming > later.
  * Tie-break: nextInstallmentDueDate ASC -> debtName ASC -> debtId ASC.
  */
 export function buildUrgencyStrategy(items: DebtIntelligenceItem[]): UrgencyStrategyResult {
   const activeItems = activeDebtStrategyItems(items);
 
-  const rankableItems = activeItems.filter(
-    (i) => i.nextInstallmentId != null && i.nextInstallmentDueDate != null && i.nextInstallmentDueStatus != null
-  );
+  const rankedItems: DebtIntelligenceItem[] = [];
+  const unrankedItems: DebtIntelligenceItem[] = [];
 
-  const unrankedItems = activeItems.filter(
-    (i) => i.nextInstallmentId == null || i.nextInstallmentDueDate == null
-  );
+  for (const item of activeItems) {
+    if (item.nextInstallmentId && item.nextInstallmentDueDate && item.nextInstallmentDueStatus) {
+      rankedItems.push(item);
+    } else {
+      unrankedItems.push(item);
+    }
+  }
 
-  const sortedRankable = [...rankableItems].sort(
+  const sortedRanked = [...rankedItems].sort(
     (a, b) =>
       a.nextInstallmentDueDate!.localeCompare(b.nextInstallmentDueDate!) ||
       a.debtName.localeCompare(b.debtName) ||
       a.debtId.localeCompare(b.debtId)
   );
 
-  const rankedCandidates: UrgencyCandidate[] = sortedRankable.map((item, idx) => ({
+  const rankedCandidates: UrgencyCandidate[] = sortedRanked.map((item, idx) => ({
     debtId: item.debtId,
     debtName: item.debtName,
     currencyCode: item.currencyCode || "PEN",
@@ -300,7 +307,7 @@ export function buildUrgencyStrategy(items: DebtIntelligenceItem[]): UrgencyStra
 
 /**
  * Cash-Flow Relief 30d ranks comparable active debts per currency by next30KnownAmount DESC.
- * Comparable: hasCurrentSchedule === true AND next30UnknownAmountCount === 0.
+ * Comparable: hasCurrentSchedule === true AND next30UnknownAmountCount === 0 AND actionable obligation exists.
  * Tie-break: next30KnownAmount DESC -> debtName ASC -> debtId ASC.
  */
 export function buildCashFlowRelief30dStrategy(
@@ -327,7 +334,16 @@ export function buildCashFlowRelief30dStrategy(
     const unrankedItems: CashFlowRelief30dUnrankedItem[] = [];
 
     for (const item of currencyItems) {
-      if (!item.readiness.hasCurrentSchedule) {
+      if (item.currentPrincipal <= 0) {
+        unrankedItems.push({
+          debtId: item.debtId,
+          debtName: item.debtName,
+          currencyCode: curr,
+          knownNext30Amount: 0,
+          unknownNext30AmountCount: 0,
+          unrankedReason: "no_actionable_obligation",
+        });
+      } else if (!item.readiness.hasCurrentSchedule) {
         unrankedItems.push({
           debtId: item.debtId,
           debtName: item.debtName,
@@ -335,6 +351,24 @@ export function buildCashFlowRelief30dStrategy(
           knownNext30Amount: item.next30KnownAmount,
           unknownNext30AmountCount: item.next30UnknownAmountCount,
           unrankedReason: "missing_current_schedule",
+        });
+      } else if (item.debtKind === "credit_card" && item.nextInstallmentId === null) {
+        unrankedItems.push({
+          debtId: item.debtId,
+          debtName: item.debtName,
+          currencyCode: curr,
+          knownNext30Amount: 0,
+          unknownNext30AmountCount: 0,
+          unrankedReason: "no_actionable_obligation",
+        });
+      } else if (item.next30InstallmentCount === 0) {
+        unrankedItems.push({
+          debtId: item.debtId,
+          debtName: item.debtName,
+          currencyCode: curr,
+          knownNext30Amount: item.next30KnownAmount,
+          unknownNext30AmountCount: item.next30UnknownAmountCount,
+          unrankedReason: "outside_30_day_horizon",
         });
       } else if (item.next30UnknownAmountCount > 0) {
         unrankedItems.push({
