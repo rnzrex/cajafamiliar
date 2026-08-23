@@ -173,8 +173,12 @@ describe("RECON-1B Reconciliation UX Domain & Real Component Integrity", () => {
       };
 
       const pendingOp: OfflineCreateMovementOperation = {
+        version: 1,
         operationId: "op-1",
-        createdAt: "2026-08-23T12:00:00.000Z",
+        kind: "create-movement",
+        householdId: "h-1",
+        userId: "u-1",
+        queuedAt: "2026-08-23T12:00:00.000Z",
         movement: {
           ...mOld,
           description: "Stale Local Outbox Description",
