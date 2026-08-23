@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category } from "../types";
+import { isCreditCardDebtKind, DEBT_KIND_OPTIONS } from "../utils/debtFormMode";
 import { createDebt, createCreditCardDebt } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
@@ -61,15 +62,6 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
   }>>([]);
 
   const [submitting, setSubmitting] = useState(false);
-
-  const debtKindOptions: Array<{ value: DebtKind; label: string }> = [
-    { value: "bank_loan", label: "Préstamo bancario" },
-    { value: "family_loan", label: "Préstamo familiar" },
-    { value: "installment_purchase", label: "Compra en cuotas" },
-    { value: "mortgage", label: "Hipoteca" },
-    { value: "pledge", label: "Pignoración / Empeño" },
-    { value: "other", label: "Otro" },
-  ];
 
   const addInstallment = () => {
     const nextNo = installments.length + 1;
@@ -188,7 +180,7 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
     }
   };
 
-  const isCard = debtKind === "credit_card";
+  const isCard = isCreditCardDebtKind(debtKind);
 
   return (
     <section className="mx-auto max-w-4xl rounded-3xl bg-white p-6 shadow-xl lg:p-8">
@@ -235,7 +227,7 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
               onChange={(e) => setDebtKind(e.target.value as DebtKind)}
               className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
             >
-              {debtKindOptions.map((opt) => (
+              {DEBT_KIND_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>

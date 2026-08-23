@@ -196,6 +196,15 @@ function buildCreateCardArgs(hhId, overrides = {}) {
   const { count: stmCount } = await adminClient.from("credit_card_statements").select("*", { count: "exact", head: true }).eq("debt_id", debt1Id);
   assert(stmCount === 0, "Zero statements created during card setup");
 
+  const { count: schedCount } = await adminClient.from("debt_schedule_versions").select("*", { count: "exact", head: true }).eq("debt_id", debt1Id);
+  assert(schedCount === 0, "Zero schedule versions created for card debt");
+
+  const { count: instCount } = await adminClient.from("debt_installments").select("*", { count: "exact", head: true }).eq("debt_id", debt1Id);
+  assert(instCount === 0, "Zero installments created for card debt");
+
+  const { count: colCount } = await adminClient.from("debt_collaterals").select("*", { count: "exact", head: true }).eq("debt_id", debt1Id);
+  assert(colCount === 0, "Zero collaterals created for card debt");
+
   // 5. CREATE RPC — NULL FACTS
   log("Testing create_credit_card_debt_v1 with NULL optional profile facts...");
   const debtNullId = makeUuid();
@@ -278,6 +287,16 @@ function buildCreateCardArgs(hhId, overrides = {}) {
   );
   assert(srvCreateErr, "SERVICE_ROLE call to create_credit_card_debt_v1 DENIED");
 
+  const { error: srvSaveErr } = await adminClient.rpc("save_credit_card_profile_v1", {
+    p_household_id: householdAId,
+    p_debt_id: debt1Id,
+    p_credit_limit: 5000,
+    p_closing_day: null,
+    p_due_day: null,
+    p_last4: null,
+  });
+  assert(srvSaveErr, "SERVICE_ROLE call to save_credit_card_profile_v1 DENIED");
+
   // 9. DIRECT TABLE WRITE RESTRICTIONS
   log("Testing direct table write restrictions for AUTHENTICATED user...");
   const { error: dirInsertProfErr } = await authClient.from("credit_card_profiles").insert({
@@ -302,6 +321,12 @@ function buildCreateCardArgs(hhId, overrides = {}) {
   });
   assert(dirInsertEntErr, "Direct INSERT to credit_card_entries DENIED");
 
+  const { error: dirUpdateEntErr } = await authClient.from("credit_card_entries").update({ description: "Hacked update" }).eq("debt_id", debt1Id);
+  assert(dirUpdateEntErr, "Direct UPDATE to credit_card_entries DENIED");
+
+  const { error: dirDeleteEntErr } = await authClient.from("credit_card_entries").delete().eq("debt_id", debt1Id);
+  assert(dirDeleteEntErr, "Direct DELETE to credit_card_entries DENIED");
+
   const { error: dirInsertStmErr } = await authClient.from("credit_card_statements").insert({
     id: makeUuid(),
     debt_id: debt1Id,
@@ -310,6 +335,12 @@ function buildCreateCardArgs(hhId, overrides = {}) {
     statement_balance: 100,
   });
   assert(dirInsertStmErr, "Direct INSERT to credit_card_statements DENIED");
+
+  const { error: dirUpdateStmErr } = await authClient.from("credit_card_statements").update({ statement_balance: 9999 }).eq("debt_id", debt1Id);
+  assert(dirUpdateStmErr, "Direct UPDATE to credit_card_statements DENIED");
+
+  const { error: dirDeleteStmErr } = await authClient.from("credit_card_statements").delete().eq("debt_id", debt1Id);
+  assert(dirDeleteStmErr, "Direct DELETE to credit_card_statements DENIED");
 
   // 10. PROFILE SAVE — UPDATE
   log("Testing save_credit_card_profile_v1 update...");
@@ -418,6 +449,14 @@ function buildCreateCardArgs(hhId, overrides = {}) {
 
   const { data: loanProfRows } = await adminClient.from("credit_card_profiles").select("*").eq("debt_id", loanDebtId);
   assert(loanProfRows?.length === 0, "Zero profile rows created for non-card debt");
+
+  log(`Cleaning up disposable test user ${testUserId}...`);
+  const { error: delUserErr } = await adminClient.auth.admin.deleteUser(testUserId);
+  if (delUserErr) {
+    log(`Cleanup notice: disposable test user deletion returned: ${delUserErr.message}`);
+  } else {
+    log("Disposable test user deleted cleanly.");
+  }
 
   log("ALL LOCAL SQL SMOKE ASSERTIONS PASSED CLEANLY!");
 }

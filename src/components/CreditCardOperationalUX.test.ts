@@ -1,3 +1,5 @@
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type {
   Debt,
@@ -6,6 +8,7 @@ import type {
   CreditCardStatement,
   FinancialAccount,
   Category,
+  DebtKind,
 } from "../types";
 import {
   currentCreditCardBalance,
@@ -13,6 +16,9 @@ import {
   isCreditCardEntryEligibleForReversal,
   canOperateCreditCard,
 } from "../utils/creditCardCalculations";
+import { DebtDetailModal } from "./DebtDetailModal";
+import { buildDebtIntelligenceItems } from "../utils/debtIntelligence";
+import { isCreditCardDebtKind, DEBT_KIND_OPTIONS } from "../utils/debtFormMode";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -652,97 +658,149 @@ describe("DEBT-5F-A: Profile Edit Policy", () => {
 });
 
 // ---------------------------------------------------------------------------
-// UI contract — card vs normal loan rendering (pure model tests)
-// These test the production data model rather than DOM rendering,
-// avoiding the need for testing-library or a browser environment.
+// Real Production Component Render Tests
 // ---------------------------------------------------------------------------
 
-describe("DEBT-5F-A: UI Contract — Card vs Normal Loan Render Model", () => {
-  // Card panel should expose these named operations
-  const CARD_ACTIONS = [
-    "Registrar compra",
-    "Registrar pago",
-    "Interés / Comisión",
-    "Cerrar estado",
-    "Registrar devolución / reembolso",
-    "Corregir mediante reverso",
-  ];
-
-  // Card panel must NOT expose these normal-loan-only actions
-  const CARD_FORBIDDEN_ACTIONS = ["Prepago", "Liquidar deuda"];
-
-  // Normal loan actions that must remain
-  const NORMAL_LOAN_ACTIONS = [
-    "Registrar pago",
-    "Prepago",
-    "Liquidar deuda",
-    "Cronograma",
-    "Garantías",
-    "Historial",
-  ];
-
-  // The card action labels in the production CreditCardDetailPanel
-  const PRODUCTION_CARD_ACTION_LABELS = [
-    "Registrar compra",
-    "Registrar pago",
-    "Interés / Comisión",
-    "Cerrar estado",
-    "Registrar devolución / reembolso",
-    "Corregir mediante reverso",
-  ];
-
-  it("card panel model exposes exactly the required financial action labels", () => {
-    // These labels are exact strings used in CreditCardDetailPanel.tsx
-    for (const label of CARD_ACTIONS) {
-      expect(PRODUCTION_CARD_ACTION_LABELS).toContain(label);
-    }
+function renderModalMarkup(
+  debt: Debt,
+  overrides: Partial<React.ComponentProps<typeof DebtDetailModal>> = {}
+): string {
+  const isCard = debt.debtKind === "credit_card";
+  const profile = isCard ? sampleCardProfile({ debtId: debt.id }) : null;
+  const intelItems = buildDebtIntelligenceItems({
+    debts: [debt],
+    debtEvents: [],
+    debtScheduleVersions: [],
+    debtInstallments: [],
+    debtCollaterals: [],
+    debtPlanningItems: [],
+    creditCardProfiles: profile ? [profile] : [],
+    creditCardEntries: [],
+    creditCardStatements: [],
   });
+  const defaultProps: React.ComponentProps<typeof DebtDetailModal> = {
+    debt,
+    debtIntelligence: intelItems[0],
+    debtEvents: [],
+    scheduleVersions: [],
+    installments: [],
+    allocations: [],
+    collaterals: [],
+    accounts: [],
+    categories: [],
+    currentMember: {
+      householdId: "hh1",
+      userId: "u1",
+      displayName: "User 1",
+      role: "owner",
+    },
+    creditCardProfiles: profile ? [profile] : [],
+    creditCardEntries: [],
+    cardStatements: [],
+    allDebts: [debt],
+    canWriteDebt: true,
+    onClose: () => {},
+    onOpenOperation: () => {},
+    onRefresh: () => {},
+    setToast: () => {},
+    ...overrides,
+  };
+  return renderToStaticMarkup(React.createElement(DebtDetailModal, defaultProps));
+}
 
-  it("card panel model does not include Prepago or Liquidar deuda", () => {
-    for (const forbidden of CARD_FORBIDDEN_ACTIONS) {
-      expect(PRODUCTION_CARD_ACTION_LABELS).not.toContain(forbidden);
-    }
-  });
-
-  it("normal loan debtKind is not credit_card", () => {
-    const normalLoan = sampleNormalDebt();
-    expect(normalLoan.debtKind).not.toBe("credit_card");
-  });
-
-  it("credit card debtKind is credit_card and isCard mode is true", () => {
+describe("DEBT-5F-A: Real Production Card & Loan Component Render Tests", () => {
+  it("renders real DebtDetailModal for credit card with all required operational actions and NO forbidden loan actions", () => {
     const cardDebt = sampleCardDebt();
-    // This matches the production helper: const isCard = debtKind === "credit_card"
-    const isCard = cardDebt.debtKind === "credit_card";
-    expect(isCard).toBe(true);
+    const html = renderModalMarkup(cardDebt);
+
+    // Required card actions rendered by CreditCardDetailPanel
+    expect(html).toContain("Registrar compra");
+    expect(html).toContain("Registrar pago");
+    expect(html).toContain("Interés / Comisión");
+    expect(html).toContain("Cerrar estado");
+    expect(html).toContain("Registrar devolución / reembolso");
+    expect(html).toContain("Corregir mediante reverso");
+
+    // Forbidden actions MUST NOT be rendered for card
+    expect(html).not.toContain("Prepago");
+    expect(html).not.toContain("Liquidar deuda");
   });
 
-  it("normal loan isCard mode is false — generic installment & collateral controls preserved", () => {
-    const normalLoan = sampleNormalDebt();
-    const isCard = normalLoan.debtKind === "credit_card";
-    expect(isCard).toBe(false);
+  it("renders real DebtDetailModal for normal loan with all required loan controls and NO card operational panel", () => {
+    const loanDebt = sampleNormalDebt();
+    const html = renderModalMarkup(loanDebt);
+
+    // Required loan actions rendered by normal DebtDetailModal
+    expect(html).toContain("Registrar pago");
+    expect(html).toContain("Prepago");
+    expect(html).toContain("Liquidar deuda");
+    expect(html).toContain("Cronograma");
+    expect(html).toContain("Garantías");
+    expect(html).toContain("Historial");
+
+    // Credit card operational panel MUST NOT be used
+    expect(html).not.toContain("Registrar compra");
+    expect(html).not.toContain("Interés / Comisión");
+    expect(html).not.toContain("Cerrar estado");
+    expect(html).not.toContain("Corregir mediante reverso");
+  });
+
+  it("disables card financial operation buttons for archived or paid_off cards while maintaining profile edit policy", () => {
+    function findButtonContaining(html: string, text: string): string | null {
+      const matches = html.match(/<button[^>]*>[\s\S]*?<\/button>/g) || [];
+      return matches.find((b) => b.includes(text)) ?? null;
+    }
+
+    function isButtonDisabled(btnHtml: string): boolean {
+      const openingTag = btnHtml.match(/<button[^>]*>/)?.[0] ?? "";
+      return openingTag.includes('disabled=""') || openingTag.includes(" disabled ") || openingTag.endsWith(" disabled>");
+    }
+
+    const archivedCard = sampleCardDebt({ isArchived: true, status: "active" });
+    const archivedHtml = renderModalMarkup(archivedCard, { canWriteDebt: true });
+
+    // Financial operations must be disabled
+    const archivedPurchaseBtn = findButtonContaining(archivedHtml, "Registrar compra");
+    expect(archivedPurchaseBtn).not.toBeNull();
+    expect(isButtonDisabled(archivedPurchaseBtn!)).toBe(true);
+
+    const archivedPaymentBtn = findButtonContaining(archivedHtml, "Registrar pago");
+    expect(archivedPaymentBtn).not.toBeNull();
+    expect(isButtonDisabled(archivedPaymentBtn!)).toBe(true);
+
+    // Profile edit (Ajustes de tarjeta) remains available when canWriteDebt=true
+    const archivedSettingsBtn = findButtonContaining(archivedHtml, "Ajustes de tarjeta");
+    expect(archivedSettingsBtn).not.toBeNull();
+    expect(isButtonDisabled(archivedSettingsBtn!)).toBe(false);
+
+    const paidOffCard = sampleCardDebt({ isArchived: false, status: "paid_off" });
+    const paidOffHtml = renderModalMarkup(paidOffCard, { canWriteDebt: true });
+
+    // Financial operations must be disabled
+    const paidOffPurchaseBtn = findButtonContaining(paidOffHtml, "Registrar compra");
+    expect(paidOffPurchaseBtn).not.toBeNull();
+    expect(isButtonDisabled(paidOffPurchaseBtn!)).toBe(true);
+
+    const paidOffPaymentBtn = findButtonContaining(paidOffHtml, "Registrar pago");
+    expect(paidOffPaymentBtn).not.toBeNull();
+    expect(isButtonDisabled(paidOffPaymentBtn!)).toBe(true);
+
+    // Profile edit (Ajustes de tarjeta) remains available when canWriteDebt=true
+    const paidOffSettingsBtn = findButtonContaining(paidOffHtml, "Ajustes de tarjeta");
+    expect(paidOffSettingsBtn).not.toBeNull();
+    expect(isButtonDisabled(paidOffSettingsBtn!)).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Debt form contract — card mode vs normal mode (via production isCard helper)
+// Production Debt Form Helper & Model Tests
 // ---------------------------------------------------------------------------
 
-describe("DEBT-5F-A: Debt Form Contract — Card Mode vs Normal Mode", () => {
-  it("credit_card debtKind produces isCard=true — card fields visible, schedule/collateral hidden", () => {
-    // Matches DebtForm.tsx: const isCard = debtKind === "credit_card"
-    const debtKind: string = "credit_card";
-    const isCard = debtKind === "credit_card";
-    expect(isCard).toBe(true);
-  });
+describe("DEBT-5F-A: Production Debt Form Helper Tests", () => {
+  it("isCreditCardDebtKind production helper evaluates credit_card as true and all non-card kinds as false", () => {
+    expect(isCreditCardDebtKind("credit_card")).toBe(true);
 
-  it("bank_loan debtKind produces isCard=false — generic controls preserved", () => {
-    const debtKind: string = "bank_loan";
-    const isCard = debtKind === "credit_card";
-    expect(isCard).toBe(false);
-  });
-
-  it("all standard DebtKind values except credit_card produce isCard=false", () => {
-    const nonCardKinds: string[] = [
+    const nonCardKinds: DebtKind[] = [
       "bank_loan",
       "family_loan",
       "installment_purchase",
@@ -750,21 +808,15 @@ describe("DEBT-5F-A: Debt Form Contract — Card Mode vs Normal Mode", () => {
       "pledge",
       "other",
     ];
+
     for (const kind of nonCardKinds) {
-      expect(kind === "credit_card").toBe(false);
+      expect(isCreditCardDebtKind(kind)).toBe(false);
     }
   });
 
-  it("credit_card is selectable as a DebtKind option", () => {
-    const debtKindOptions = [
-      "bank_loan",
-      "family_loan",
-      "installment_purchase",
-      "mortgage",
-      "pledge",
-      "credit_card",
-      "other",
-    ];
-    expect(debtKindOptions).toContain("credit_card");
+  it("DEBT_KIND_OPTIONS production constant exported from form mode helper contains credit_card as selectable option", () => {
+    const cardOpt = DEBT_KIND_OPTIONS.find((opt) => opt.value === "credit_card");
+    expect(cardOpt).toBeDefined();
+    expect(cardOpt?.label).toBe("Tarjeta de crédito");
   });
 });
