@@ -1,5 +1,8 @@
 import webpush from "web-push";
 import type {
+  CreditCardEntry,
+  CreditCardProfile,
+  CreditCardStatement,
   Debt,
   DebtEvent,
   DebtEventInstallmentAllocation,
@@ -7,13 +10,18 @@ import type {
   DebtScheduleVersion,
   RecurringPayment,
 } from "../../src/types.js";
-import { paymentAlert } from "../../src/utils/calculations.js";
+import { formatMoneyByCurrency, paymentAlert } from "../../src/utils/calculations.js";
 import { localDateString } from "../../src/utils/date.js";
 import type { DebtInstallmentPlanningItem } from "../../src/utils/debtPlanning.js";
 import {
   buildDebtPlanningItems,
   selectDebtPlanningAttentionItems,
 } from "../../src/utils/debtPlanning.js";
+import {
+  buildCreditCardStatementAlerts,
+  selectUrgentCreditCardStatementAlertsForReminder,
+  type CreditCardStatementAlertItem,
+} from "../../src/utils/creditCardCalculations.js";
 import { createSupabaseAdmin, readServerEnvironment } from "./supabaseAdmin.js";
 
 /**
@@ -30,46 +38,34 @@ interface PushSubscriptionRow {
   endpoint: string;
   p256dh: string;
   auth: string;
-  expires_at: string | null;
+  expires_at?: string | null;
 }
 
 interface HouseholdMemberRow {
   household_id: string;
   user_id: string;
-  display_name: string | null;
+  display_name: string;
 }
 
 interface RecurringPaymentRow {
   id: string;
   household_id: string;
   name: string;
-  amount: number | string | null;
-  amount_mode?: string | null;
-  due_day: number | string | null;
+  amount: number | null;
+  amount_mode: string;
+  due_day: number | null;
   due_date: string | null;
   category: string;
   status: string;
-  notes?: string | null;
+  notes: string | null;
   recurrence_type: string;
-  total_installments: number | string | null;
-  paid_installments: number | string | null;
+  total_installments: number | null;
+  paid_installments: number | null;
   is_active: boolean;
-  last_paid_month: number | string | null;
-  last_paid_year: number | string | null;
+  last_paid_month: number | null;
+  last_paid_year: number | null;
   paid_at: string | null;
 }
-
-export interface ReminderSummary {
-  subscriptions: number;
-  sent: number;
-  skipped: number;
-  failed: number;
-  deactivated: number;
-  recurringUrgent?: number;
-  debtUrgent?: number;
-}
-
-import type { CreditCardStatementAlertItem } from "../../src/utils/creditCardCalculations.js";
 
 export interface ObligationReminderPayloadInput {
   urgentRecurringPayments: RecurringPayment[];
@@ -83,6 +79,17 @@ export interface ObligationReminderPayload {
   body: string;
   url: string;
   tag: string;
+}
+
+export interface ReminderSummary {
+  subscriptions: number;
+  sent: number;
+  skipped: number;
+  failed: number;
+  deactivated: number;
+  recurringUrgent: number;
+  debtUrgent: number;
+  cardUrgent?: number;
 }
 
 /**
@@ -132,7 +139,7 @@ export function buildObligationReminderPayload({
     if (total === 1 && numCard === 1) {
       const card = urgentCardAlerts[0];
       const minPayText = card.minimumPaymentKnown
-        ? `. Pago mínimo: ${card.currencyCode} ${card.minimumPaymentAmount}`
+        ? `. Pago mínimo: ${formatMoneyByCurrency(card.minimumPaymentAmount!, card.currencyCode)}`
         : " (pago mínimo no registrado)";
       body = `${card.cardName} — estado de cuenta vence. ${minPayText}`;
       url = "/?view=deudas";
@@ -165,6 +172,7 @@ export async function runPaymentReminderJob(): Promise<ReminderSummary> {
   const subscriptions = await loadSubscriptions(admin, environment.appOrigin);
   const urgentPaymentsByHousehold = await loadUrgentPayments(admin, subscriptions);
   const urgentDebtsByHousehold = await loadUrgentDebtInstallments(admin, subscriptions, today);
+  const urgentCardAlertsByHousehold = await loadUrgentCardStatementAlerts(admin, subscriptions, today);
 
   let totalRecurringUrgent = 0;
   for (const list of urgentPaymentsByHousehold.values()) {
@@ -173,6 +181,10 @@ export async function runPaymentReminderJob(): Promise<ReminderSummary> {
   let totalDebtUrgent = 0;
   for (const list of urgentDebtsByHousehold.values()) {
     totalDebtUrgent += list.length;
+  }
+  let totalCardUrgent = 0;
+  for (const list of urgentCardAlertsByHousehold.values()) {
+    totalCardUrgent += list.length;
   }
 
   const summary: ReminderSummary = {
@@ -183,13 +195,15 @@ export async function runPaymentReminderJob(): Promise<ReminderSummary> {
     deactivated: 0,
     recurringUrgent: totalRecurringUrgent,
     debtUrgent: totalDebtUrgent,
+    cardUrgent: totalCardUrgent,
   };
 
   for (const subscription of subscriptions) {
     const urgentPayments = urgentPaymentsByHousehold.get(subscription.household_id) ?? [];
     const urgentDebts = urgentDebtsByHousehold.get(subscription.household_id) ?? [];
+    const urgentCards = urgentCardAlertsByHousehold.get(subscription.household_id) ?? [];
 
-    if (urgentPayments.length === 0 && urgentDebts.length === 0) {
+    if (urgentPayments.length === 0 && urgentDebts.length === 0 && urgentCards.length === 0) {
       summary.skipped += 1;
       continue;
     }
@@ -203,6 +217,7 @@ export async function runPaymentReminderJob(): Promise<ReminderSummary> {
     const payload = buildObligationReminderPayload({
       urgentRecurringPayments: urgentPayments,
       urgentDebtInstallments: urgentDebts,
+      urgentCardAlerts: urgentCards,
       today,
     });
 
@@ -348,6 +363,53 @@ async function loadUrgentDebtInstallments(
     );
 
     grouped.set(householdId, urgentItems);
+  }
+
+  return grouped;
+}
+
+async function loadUrgentCardStatementAlerts(
+  admin: ReturnType<typeof createSupabaseAdmin>,
+  subscriptions: PushSubscriptionRow[],
+  today: string
+) {
+  const householdIds = [...new Set(subscriptions.map((s) => s.household_id))];
+  const grouped = new Map<string, CreditCardStatementAlertItem[]>();
+  if (householdIds.length === 0) return grouped;
+
+  const [debtsRes, profilesRes, entriesRes, statementsRes] = await Promise.all([
+    admin.from("debts").select("*").in("household_id", householdIds).eq("debt_kind", "credit_card"),
+    admin.from("credit_card_profiles").select("*").in("household_id", householdIds),
+    admin.from("credit_card_entries").select("*").in("household_id", householdIds),
+    admin.from("credit_card_statements").select("*").in("household_id", householdIds),
+  ]);
+
+  if (debtsRes.error) throw debtsRes.error;
+  if (profilesRes.error) throw profilesRes.error;
+  if (entriesRes.error) throw entriesRes.error;
+  if (statementsRes.error) throw statementsRes.error;
+
+  const rawDebts = debtsRes.data ?? [];
+  const rawProfiles = profilesRes.data ?? [];
+  const rawEntries = entriesRes.data ?? [];
+  const rawStatements = statementsRes.data ?? [];
+
+  for (const householdId of householdIds) {
+    const debts = rawDebts.filter((r: any) => r.household_id === householdId).map(fromDebtRow);
+    const profiles = rawProfiles.filter((r: any) => r.household_id === householdId).map(fromCreditCardProfileRow);
+    const entries = rawEntries.filter((r: any) => r.household_id === householdId).map(fromCreditCardEntryRow);
+    const statements = rawStatements.filter((r: any) => r.household_id === householdId).map(fromCreditCardStatementRow);
+
+    const alerts = buildCreditCardStatementAlerts({
+      debts,
+      creditCardProfiles: profiles,
+      creditCardEntries: entries,
+      creditCardStatements: statements,
+      todayKey: today,
+    });
+
+    const urgentAlerts = selectUrgentCreditCardStatementAlertsForReminder(alerts);
+    grouped.set(householdId, urgentAlerts);
   }
 
   return grouped;
@@ -559,4 +621,48 @@ function normalizePushErrorCode(error: unknown) {
 function getPushStatusCode(error: unknown) {
   if (!error || typeof error !== "object" || !("statusCode" in error)) return null;
   return typeof error.statusCode === "number" ? error.statusCode : null;
+}
+
+function fromCreditCardProfileRow(row: Record<string, any>): CreditCardProfile {
+  return {
+    debtId: row.debt_id,
+    creditLimit: row.credit_limit == null ? null : Number(row.credit_limit),
+    closingDay: Number(row.closing_day),
+    dueDay: Number(row.due_day),
+    last4: row.last4 ?? "",
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function fromCreditCardEntryRow(row: Record<string, any>): CreditCardEntry {
+  return {
+    id: row.id,
+    debtId: row.debt_id,
+    entryDate: row.entry_date,
+    entryType: row.entry_type,
+    liabilityDelta: Number(row.liability_delta),
+    movementId: row.movement_id ?? null,
+    reversalOfEntryId: row.reversal_of_entry_id ?? null,
+    creditOfEntryId: row.credit_of_entry_id ?? null,
+    description: row.description ?? "",
+    registeredByUserId: row.registered_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromCreditCardStatementRow(row: Record<string, any>): CreditCardStatement {
+  return {
+    id: row.id,
+    debtId: row.debt_id,
+    statementDate: row.statement_date,
+    dueDate: row.due_date,
+    statementBalance: Number(row.statement_balance),
+    minimumPaymentAmount: row.minimum_payment_amount == null ? null : Number(row.minimum_payment_amount),
+    closingEntryId: row.closing_entry_id ?? null,
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }

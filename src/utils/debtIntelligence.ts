@@ -372,7 +372,7 @@ export function buildDebtIntelligenceItems({
         nextInstallmentRemainingAmount = latestCardStatement.minimumPaymentAmount ?? null;
         nextInstallmentAmountKnown = latestCardStatement.minimumPaymentAmount != null;
 
-        if (ds.days >= 0 && ds.days <= 30) {
+        if (ds.days <= 30) {
           next30InstallmentCount = 1;
           if (nextInstallmentAmountKnown && latestCardStatement.minimumPaymentAmount != null) {
             next30KnownAmount = latestCardStatement.minimumPaymentAmount;

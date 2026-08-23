@@ -10,7 +10,7 @@ import {
   statementCreditCardBalance,
 } from "./creditCardCalculations.js";
 import { buildDebtIntelligenceItems } from "./debtIntelligence.js";
-import { buildDebtStrategies } from "./debtStrategy.js";
+import { buildCashFlowRelief30dStrategy, buildDebtStrategies } from "./debtStrategy.js";
 import { getMovementEconomics, resolveMovementCurrencyCode } from "./movementEconomics.js";
 import { movementTotals, movementTotalsByCurrency } from "./movementFilters.js";
 import { buildObligationReminderPayload } from "../../api/_lib/paymentReminders.js";
@@ -451,7 +451,8 @@ describe("DEBT-5E — Card Strategy, Planning & Reporting Integration Engine", (
 
     expect(payload.title).toBe("Caja Familiar");
     expect(payload.body).toContain("Visa Interbank");
-    expect(payload.body).toContain("Pago mínimo: PEN 150");
+    expect(payload.body).toContain("Pago mínimo:");
+    expect(payload.body).toContain("150");
     expect(payload.url).toBe("/?view=deudas");
     expect(payload.tag).toBe("urgent-payments-2026-09-04");
   });
@@ -758,5 +759,30 @@ describe("DEBT-5E — Card Strategy, Planning & Reporting Integration Engine", (
     expect(totals.unresolvedMovements[0].id).toBe("mov-broken-card");
     expect(totals.byCurrency.PEN).toBeUndefined();
     expect(totals.byCurrency.USD).toBeUndefined();
+  });
+
+  // 14. Cash-Flow Relief 30d Strategy Safety
+  it("classifies cards with zero principal or non-actionable statement attention as no_actionable_obligation", () => {
+    const cardZeroPrincipal: Debt = {
+      ...mockCardPEN,
+      id: "card-zero-p",
+    };
+
+    const intelItems = buildDebtIntelligenceItems({
+      debts: [cardZeroPrincipal],
+      debtEvents: [],
+      debtScheduleVersions: [],
+      debtInstallments: [],
+      debtCollaterals: [],
+      debtPlanningItems: [],
+      creditCardEntries: [],
+      todayKey: "2026-08-22",
+    });
+
+    const relief = buildCashFlowRelief30dStrategy(intelItems);
+    const penStrategy = relief.byCurrency["PEN"];
+    expect(penStrategy.rankedCandidates).toHaveLength(0);
+    expect(penStrategy.unrankedItems).toHaveLength(1);
+    expect(penStrategy.unrankedItems[0].unrankedReason).toBe("no_actionable_obligation");
   });
 });

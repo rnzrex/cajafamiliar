@@ -29,7 +29,7 @@ import { DebtDetailModal } from "./components/DebtDetailModal";
 import { Toast } from "./components/Toast";
 import { translateDebtError } from "./utils/debtViewModel";
 import { AppData, CashCount, Category, Debt, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
-import { expectedCash, formatMoney, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
+import { expectedCash, formatMoney, formatMoneyByCurrency, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
 import { currentDebtPrincipal } from "./utils/debtCalculations";
 import { buildDebtPlanningItems, summarizeDebtPlanningAlerts } from "./utils/debtPlanning";
 import { buildDebtIntelligenceItems, buildDebtPortfolioIntelligence } from "./utils/debtIntelligence";
@@ -191,7 +191,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const expected = useMemo(() => {
     const cashAccount = getActiveCashAccount(data.financialAccounts);
     return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null, data.creditCardEntries);
-  }, [data.financialAccounts, data.movements, data.initialBalance]);
+  }, [data.financialAccounts, data.movements, data.initialBalance, data.creditCardEntries]);
   const debtPlanningItems = useMemo(
     () =>
       buildDebtPlanningItems(
@@ -1161,7 +1161,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
             </div>
             <div>
               <p className="text-xl font-bold text-slate-900">Caja Familiar</p>
-              <p className="text-sm text-slate-500">Finanzas en soles</p>
+              <p className="text-sm text-slate-500">Finanzas familiares</p>
             </div>
           </div>
         </div>
@@ -1186,7 +1186,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               <item.icon className="h-6 w-6 shrink-0" />
               <span className="flex-1">{item.label}</span>
               {item.view === "pagos" && <AttentionBadge total={urgentPaymentSummary.total} className={view === item.view ? "bg-white text-blue-700" : "bg-red-100 text-red-800"} />}
-              {item.view === "deudas" && <AttentionBadge total={debtPlanningAlertSummary.total} className={view === item.view ? "bg-white text-blue-700" : "bg-purple-100 text-purple-800"} />}
+              {item.view === "deudas" && <AttentionBadge total={debtPlanningAlertSummary.total} className={view === item.view ? "bg-white text-purple-100" : "bg-purple-100 text-purple-800"} />}
             </button>
           ))}
         </nav>
@@ -1194,7 +1194,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
         <div className="mt-6 shrink-0">
           <div className="rounded-lg bg-blue-50 p-4 text-blue-900">
             <p className="font-semibold">Saldo esperado</p>
-            <p className="text-2xl font-bold">{formatMoney(expected)}</p>
+            <p className="text-2xl font-bold">{formatMoneyByCurrency(expected, cashAccount?.currencyCode ?? "PEN")}</p>
           </div>
           {onSignOut && (
             <button type="button" onClick={() => void onSignOut()} className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-4 py-2 font-bold text-slate-700 hover:bg-slate-50">

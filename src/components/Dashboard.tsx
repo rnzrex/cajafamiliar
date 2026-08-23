@@ -309,9 +309,9 @@ export function Dashboard({
           {hasCount ? (
             <>
               <p className="text-sm text-slate-600">Último total contado</p>
-              <p className="mt-1 text-3xl font-black text-slate-900">{formatMoney(lastCount?.total ?? 0)}</p>
+              <p className="mt-1 text-3xl font-black text-slate-900">{formatMoneyByCurrency(lastCount?.total ?? 0, cashCurrency)}</p>
               <p className={`mt-3 font-bold ${difference === 0 ? "text-emerald-700" : difference! < 0 ? "text-red-700" : "text-amber-700"}`}>
-                Diferencia: {formatMoney(difference ?? 0)}
+                Diferencia: {formatMoneyByCurrency(difference ?? 0, cashCurrency)}
               </p>
             </>
           ) : (

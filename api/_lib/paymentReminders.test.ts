@@ -416,4 +416,39 @@ describe("DEBT-3C Direct Debt Urgency Integration via selectUrgentDebtInstallmen
     expect(result[0].installmentId).toBe("i-current");
     expect(result[0].scheduleVersionId).toBe("sv-v2");
   });
+
+  it("11. single actionable card alert produces currency-aware push copy", () => {
+    const cardAlert = {
+      debtId: "c1",
+      cardName: "Visa Interbank",
+      creditorName: "Interbank",
+      currencyCode: "USD",
+      statementId: "s1",
+      statementDate: "2026-08-20",
+      dueDate: "2026-09-05",
+      statementBalance: 500,
+      minimumPaymentAmount: 50,
+      minimumPaymentKnown: true,
+      daysUntilDue: 1,
+      dueStatus: "tomorrow" as const,
+      dueLabel: "Vence mañana",
+      dueTone: "yellow" as const,
+      coverageStatus: "known_unsettled" as const,
+      actionable: true,
+      statementOutstandingBalance: null,
+      dedupeKey: "card-alert-c1-s1",
+    };
+
+    const payload = buildObligationReminderPayload({
+      urgentRecurringPayments: [],
+      urgentDebtInstallments: [],
+      urgentCardAlerts: [cardAlert],
+      today: "2026-09-04",
+    });
+
+    expect(payload.title).toBe("Caja Familiar");
+    expect(payload.body).toContain("Visa Interbank");
+    expect(payload.body).toContain("Pago mínimo: $50.00");
+    expect(payload.url).toBe("/?view=deudas");
+  });
 });

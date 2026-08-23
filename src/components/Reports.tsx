@@ -52,7 +52,7 @@ export async function exportReportFromReports(
 
 export function Reports({ movements, debtEvents, creditCardEntries = [], categories, accounts, debts = [], initialBalance }: ReportsProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
-  const [selectedCurrency, setSelectedCurrency] = useState<string>("all");
+  const [selectedCurrency, setSelectedCurrency] = useState<string>("");
 
   const filteredMovements = useMemo(() => filterMovements(movements, filters, accounts), [movements, filters, accounts]);
 
@@ -64,35 +64,19 @@ export function Reports({ movements, debtEvents, creditCardEntries = [], categor
   const availableCurrencies = useMemo(() => Object.keys(currencyTotalsResult.byCurrency), [currencyTotalsResult]);
 
   const activeCurrency = useMemo(() => {
-    if (selectedCurrency !== "all" && availableCurrencies.includes(selectedCurrency)) {
+    if (selectedCurrency && availableCurrencies.includes(selectedCurrency)) {
       return selectedCurrency;
     }
     return availableCurrencies[0] || "PEN";
   }, [selectedCurrency, availableCurrencies]);
 
   const scopedMovements = useMemo(() => {
-    if (availableCurrencies.length <= 1 || selectedCurrency === "all") {
-      return filteredMovements;
-    }
     return filteredMovements.filter(
-      (m) => resolveMovementCurrencyCode(m, accounts, debts, debtEvents, creditCardEntries) === selectedCurrency
+      (m) => resolveMovementCurrencyCode(m, accounts, debts, debtEvents, creditCardEntries) === activeCurrency
     );
-  }, [filteredMovements, availableCurrencies, selectedCurrency, accounts, debts, debtEvents, creditCardEntries]);
+  }, [filteredMovements, activeCurrency, accounts, debts, debtEvents, creditCardEntries]);
 
   const currentTotals = useMemo(() => {
-    if (availableCurrencies.length <= 1) {
-      return currencyTotalsResult.byCurrency[availableCurrencies[0]] || {
-        currencyCode: "PEN",
-        income: 0,
-        cashOutflow: 0,
-        expense: 0,
-        balance: 0,
-        economicBalance: 0,
-      };
-    }
-    if (selectedCurrency !== "all" && currencyTotalsResult.byCurrency[selectedCurrency]) {
-      return currencyTotalsResult.byCurrency[selectedCurrency];
-    }
     return currencyTotalsResult.byCurrency[activeCurrency] || {
       currencyCode: activeCurrency,
       income: 0,
@@ -101,13 +85,14 @@ export function Reports({ movements, debtEvents, creditCardEntries = [], categor
       balance: 0,
       economicBalance: 0,
     };
-  }, [currencyTotalsResult, availableCurrencies, selectedCurrency, activeCurrency]);
+  }, [currencyTotalsResult, activeCurrency]);
 
   const expenses = scopedMovements
     .filter((movement) => movement.type === "egreso")
     .map((movement) => ({ ...movement, amount: getMovementEconomics(movement, debtEvents, creditCardEntries).economicExpense }));
   const incomes = scopedMovements.filter((movement) => movement.type === "ingreso");
   const cashAccount = getActiveCashAccount(accounts);
+  const cashCurrency = cashAccount?.currencyCode ?? "PEN";
 
   const byCategory = groupBy(expenses, "category").filter((item) => item.monto > 0);
   const byAccount = groupBy(expenses, "accountId", accounts).filter((item) => item.monto > 0);
@@ -117,7 +102,7 @@ export function Reports({ movements, debtEvents, creditCardEntries = [], categor
     { name: "Gastos", monto: currentTotals.expense },
   ];
   const topFive = [...byCategory].sort((a, b) => b.monto - a.monto).slice(0, 5);
-  const cashEvolution = buildCashEvolution(scopedMovements, cashAccount?.openingBalance ?? initialBalance, cashAccount?.id ?? null, creditCardEntries);
+  const cashEvolution = buildCashEvolution(filteredMovements, cashAccount?.openingBalance ?? initialBalance, cashAccount?.id ?? null, creditCardEntries);
 
   async function handleExport() {
     if (filteredMovements.length === 0) {
@@ -134,8 +119,32 @@ export function Reports({ movements, debtEvents, creditCardEntries = [], categor
 
   return (
     <section className="space-y-5">
-      <div className="rounded-lg bg-white p-5 soft-shadow">
-        <h2 className="mb-4 text-2xl font-bold text-slate-800">Filtros del reporte</h2>
+      <div className="rounded-lg bg-white p-5 soft-shadow space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-2xl font-bold text-slate-800">Filtros del reporte</h2>
+          {availableCurrencies.length > 1 && (
+            <div className="flex items-center gap-2 rounded-xl bg-slate-100 p-1.5">
+              <span className="text-xs font-bold text-slate-600 pl-2">Moneda del gráfico:</span>
+              {availableCurrencies.map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => setSelectedCurrency(code)}
+                  className={`rounded-lg px-3 py-1 text-xs font-black transition ${activeCurrency === code ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-200"}`}
+                >
+                  {code}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {currencyTotalsResult.unresolvedMovements.length > 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
+            Hay {currencyTotalsResult.unresolvedMovements.length} movimientos cuya moneda no pudo determinarse y no están incluidos en los totales monetarios por moneda.
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
           <label className="space-y-1 font-semibold text-slate-700">
             Periodo
@@ -216,7 +225,7 @@ export function Reports({ movements, debtEvents, creditCardEntries = [], categor
       </div>
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-        <ChartCard title="Gastos por categoria">
+        <ChartCard title={`Gastos por categoria (${activeCurrency})`}>
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie data={byCategory} dataKey="monto" nameKey="name" outerRadius={105} label>
@@ -224,19 +233,19 @@ export function Reports({ movements, debtEvents, creditCardEntries = [], categor
                   <Cell key={index} fill={colors[index % colors.length]} />
                 ))}
               </Pie>
-              <Tooltip formatter={(value) => formatMoney(Number(value))} />
+              <Tooltip formatter={(value) => formatMoneyByCurrency(Number(value), activeCurrency)} />
               <Legend />
             </PieChart>
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Flujo y gasto económico">
+        <ChartCard title={`Flujo y gasto económico (${activeCurrency})`}>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={incomeExpense}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="name" />
               <YAxis />
-              <Tooltip formatter={(value) => formatMoney(Number(value))} />
+              <Tooltip formatter={(value) => formatMoneyByCurrency(Number(value), activeCurrency)} />
               <Bar dataKey="monto" radius={[8, 8, 0, 0]}>
                 <Cell fill="#16a34a" />
                 <Cell fill="#dc2626" />
@@ -246,25 +255,25 @@ export function Reports({ movements, debtEvents, creditCardEntries = [], categor
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Gastos por cuenta">
+        <ChartCard title={`Gastos por cuenta (${activeCurrency})`}>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={byAccount}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="name" />
               <YAxis />
-              <Tooltip formatter={(value) => formatMoney(Number(value))} />
+              <Tooltip formatter={(value) => formatMoneyByCurrency(Number(value), activeCurrency)} />
               <Bar dataKey="monto" fill="#2563eb" radius={[8, 8, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
 
-        <ChartCard title="Top 5 categorias de mayor gasto">
+        <ChartCard title={`Top 5 categorias de mayor gasto (${activeCurrency})`}>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={topFive} layout="vertical" margin={{ left: 40 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis type="number" />
               <YAxis dataKey="name" type="category" width={125} />
-              <Tooltip formatter={(value) => formatMoney(Number(value))} />
+              <Tooltip formatter={(value) => formatMoneyByCurrency(Number(value), activeCurrency)} />
               <Bar dataKey="monto" fill="#f59e0b" radius={[0, 8, 8, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -277,7 +286,7 @@ export function Reports({ movements, debtEvents, creditCardEntries = [], categor
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="date" />
             <YAxis />
-            <Tooltip formatter={(value) => formatMoney(Number(value))} />
+            <Tooltip formatter={(value) => formatMoneyByCurrency(Number(value), cashCurrency)} />
             <Area type="monotone" dataKey="saldo" fill="#bfdbfe" stroke="#2563eb" strokeWidth={3} />
           </AreaChart>
         </ResponsiveContainer>

@@ -2,10 +2,10 @@ import * as XLSX from "xlsx";
 import { CreditCardEntry, Debt, DebtEvent, FinancialAccount, Movement } from "../types";
 import { localDateString } from "./date";
 import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "./accountHelpers";
-import { describeFilters, MovementFilters, movementTotals, movementTotalsByCurrency } from "./movementFilters";
+import { describeFilters, MovementFilters, movementTotalsByCurrency } from "./movementFilters";
 import { getMovementEconomics, movementLabel, resolveMovementCurrencyCode } from "./movementEconomics";
 
-const moneyFormat = '"S/" #,##0.00';
+const moneyFormat = '#,##0.00';
 
 export function exportMovementsExcel(
   movements: Movement[],
@@ -42,24 +42,45 @@ export function exportMovementsExcel(
     };
   });
 
-  const totals = movementTotals(movements, debtEvents, creditCardEntries);
+  const currencyTotalsResult = movementTotalsByCurrency(movements, debtEvents, creditCardEntries, accounts, debts);
+  const currencies = Object.keys(currencyTotalsResult.byCurrency);
+
+  const summaryAoa: unknown[][] = [
+    ["Resumen por moneda", ""],
+    [
+      "Moneda",
+      "Total ingresos",
+      "Salidas de dinero",
+      "Gasto economico",
+      "Reduccion de principal",
+      "Costo Debt sin clasificar",
+      "Salida Debt sin clasificar",
+      "Balance",
+    ],
+  ];
+
+  for (const code of currencies) {
+    const tot = currencyTotalsResult.byCurrency[code];
+    summaryAoa.push([
+      code,
+      tot.income,
+      tot.cashOutflow,
+      tot.expense,
+      tot.principalReduction,
+      tot.unclassifiedDebtCost,
+      tot.unresolvedDebtServiceOutflow,
+      tot.balance,
+    ]);
+  }
+
+  summaryAoa.push(["Cantidad total de movimientos exportados", movements.length]);
+  if (currencyTotalsResult.unresolvedMovements.length > 0) {
+    summaryAoa.push(["Movimientos con moneda sin resolver", currencyTotalsResult.unresolvedMovements.length]);
+  }
+
   const summaryStart = rows.length + 3;
   const worksheet = XLSX.utils.json_to_sheet(rows);
-  XLSX.utils.sheet_add_aoa(
-    worksheet,
-    [
-      ["Resumen", ""],
-      ["Total ingresos", totals.income],
-      ["Salidas de dinero", totals.cashOutflow],
-      ["Gasto economico", totals.expense],
-      ["Reduccion de principal", totals.principalReduction],
-      ["Costo Debt sin clasificar", totals.unclassifiedDebtCost],
-      ["Salida Debt sin clasificar", totals.unresolvedDebtServiceOutflow],
-      ["Balance", totals.balance],
-      ["Cantidad de movimientos exportados", movements.length],
-    ],
-    { origin: `A${summaryStart}` }
-  );
+  XLSX.utils.sheet_add_aoa(worksheet, summaryAoa, { origin: `A${summaryStart}` });
 
   styleWorksheet(worksheet, [7, 8, 9, 10, 11, 12]);
   worksheet["!cols"] = [14, 10, 12, 16, 30, 22, 20, 14, 18, 20, 16, 22, 22, 24, 22].map((wch) => ({ wch }));
@@ -82,45 +103,65 @@ export function exportReportExcel(
     return;
   }
 
-  const expenses = movements
-    .filter((movement) => movement.type === "egreso")
-    .map((movement) => ({ ...movement, amount: getMovementEconomics(movement, debtEvents, creditCardEntries).economicExpense }));
-  const totals = movementTotals(movements, debtEvents, creditCardEntries);
-  const byCategory = groupBy(expenses, "category", accounts).filter((item) => item.total > 0).sort((a, b) => b.total - a.total);
-  const byAccount = groupBy(expenses, "accountId", accounts).filter((item) => item.total > 0).sort((a, b) => b.total - a.total);
-  const topFive = byCategory.slice(0, 5);
-  const totalExpense = totals.expense || 1;
+  const currencyTotalsResult = movementTotalsByCurrency(movements, debtEvents, creditCardEntries, accounts, debts);
+  const currencies = Object.keys(currencyTotalsResult.byCurrency);
   const accountFilterName = filters.accountId ? (accounts.find((account) => account.id === filters.accountId)?.name ?? undefined) : undefined;
 
   const workbook = XLSX.utils.book_new();
-  appendSheet(
-    workbook,
-    "Resumen",
-    [
-      ["Periodo seleccionado", describeFilters(filters, accountFilterName)],
-      ["Total ingresos", totals.income],
-      ["Salidas de dinero", totals.cashOutflow],
-      ["Gasto economico", totals.expense],
-      ["Reduccion de principal", totals.principalReduction],
-      ["Costo Debt sin clasificar", totals.unclassifiedDebtCost],
-      ["Salida Debt sin clasificar", totals.unresolvedDebtServiceOutflow],
-      ["Balance", totals.balance],
-      ["Total movimientos", movements.length],
-      ["Categoria con mayor gasto", byCategory[0]?.name ?? "Sin gastos"],
-      ["Cuenta con mayor gasto", byAccount[0]?.name ?? "Sin gastos"],
-    ],
-    [1, 2, 3]
-  );
 
-  appendSheet(
-    workbook,
-    "Gastos por categoria",
-    [["Categoria", "Total gastado", "Porcentaje del gasto total"], ...byCategory.map((item) => [item.name, item.total, item.total / totalExpense])],
-    [1]
-  );
-  appendSheet(workbook, "Flujo y gasto", [["Tipo", "Total"], ["Ingresos", totals.income], ["Salidas de dinero", totals.cashOutflow], ["Gastos", totals.expense]], [1]);
-  appendSheet(workbook, "Gastos por cuenta", [["Cuenta", "Total"], ...byAccount.map((item) => [item.name, item.total])], [1]);
-  appendSheet(workbook, "Top 5 categorias", [["Categoria", "Total"], ...topFive.map((item) => [item.name, item.total])], [1]);
+  // 1. Resumen
+  const summaryRows: unknown[][] = [
+    ["Periodo seleccionado", describeFilters(filters, accountFilterName)],
+    ["Resumen por moneda", ""],
+    ["Moneda", "Total ingresos", "Salidas de dinero", "Gasto economico", "Balance"],
+  ];
+
+  for (const code of currencies) {
+    const tot = currencyTotalsResult.byCurrency[code];
+    summaryRows.push([code, tot.income, tot.cashOutflow, tot.expense, tot.balance]);
+  }
+
+  summaryRows.push(["Total movimientos", movements.length]);
+  if (currencyTotalsResult.unresolvedMovements.length > 0) {
+    summaryRows.push(["Movimientos con moneda sin resolver", currencyTotalsResult.unresolvedMovements.length]);
+  }
+
+  appendSheet(workbook, "Resumen", summaryRows, [1, 2, 3, 4]);
+
+  // 2. Gastos por categoría por moneda
+  const categoryRows: unknown[][] = [["Moneda", "Categoria", "Total gastado", "Porcentaje del gasto de la moneda"]];
+  const accountRows: unknown[][] = [["Moneda", "Cuenta", "Total gastado"]];
+  const topFiveRows: unknown[][] = [["Moneda", "Categoria", "Total gastado"]];
+
+  for (const code of currencies) {
+    const currMovements = movements.filter(
+      (m) => resolveMovementCurrencyCode(m, accounts, debts, debtEvents, creditCardEntries) === code
+    );
+    const expenses = currMovements
+      .filter((m) => m.type === "egreso")
+      .map((m) => ({ ...m, amount: getMovementEconomics(m, debtEvents, creditCardEntries).economicExpense }));
+
+    const byCat = groupBy(expenses, "category", accounts).filter((item) => item.total > 0).sort((a, b) => b.total - a.total);
+    const byAcc = groupBy(expenses, "accountId", accounts).filter((item) => item.total > 0).sort((a, b) => b.total - a.total);
+
+    const totalCurrExpense = currencyTotalsResult.byCurrency[code].expense || 1;
+
+    for (const cat of byCat) {
+      categoryRows.push([code, cat.name, cat.total, cat.total / totalCurrExpense]);
+    }
+    for (const acc of byAcc) {
+      accountRows.push([code, acc.name, acc.total]);
+    }
+    for (const top of byCat.slice(0, 5)) {
+      topFiveRows.push([code, top.name, top.total]);
+    }
+  }
+
+  appendSheet(workbook, "Gastos por categoria", categoryRows, [2]);
+  appendSheet(workbook, "Gastos por cuenta", accountRows, [2]);
+  appendSheet(workbook, "Top 5 categorias", topFiveRows, [2]);
+
+  // 3. Movimientos incluidos
   appendSheet(
     workbook,
     "Movimientos incluidos",
