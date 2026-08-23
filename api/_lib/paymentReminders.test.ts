@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
+  CreditCardEntry,
+  CreditCardProfile,
+  CreditCardStatement,
   Debt,
   DebtEvent,
   DebtEventInstallmentAllocation,
@@ -7,13 +10,58 @@ import type {
   DebtScheduleVersion,
   RecurringPayment,
 } from "../../src/types.js";
+import { localDateString } from "../../src/utils/date.js";
 import type { DebtInstallmentPlanningItem } from "../../src/utils/debtPlanning.js";
 import {
   buildObligationReminderPayload,
   fromCreditCardProfileRow,
   NOTIFICATION_TYPE,
+  runPaymentReminderJob,
   selectUrgentDebtInstallmentsForReminder,
 } from "./paymentReminders.js";
+
+const mockSendNotification = vi.fn().mockResolvedValue({});
+const mockSetVapidDetails = vi.fn();
+
+vi.mock("web-push", () => ({
+  default: {
+    setVapidDetails: (...args: any[]) => mockSetVapidDetails(...args),
+    sendNotification: (...args: any[]) => mockSendNotification(...args),
+  },
+}));
+
+let mockTables: Record<string, any[]> = {};
+let mockInsertDeliveryResult: any = { data: { id: "del-1" }, error: null };
+
+vi.mock("./supabaseAdmin.js", () => ({
+  readServerEnvironment: () => ({
+    appOrigin: "https://test.cajafamiliar.app",
+    vapidSubject: "mailto:admin@test.com",
+    vapidPublicKey: "test-pub-key",
+    vapidPrivateKey: "test-priv-key",
+  }),
+  createSupabaseAdmin: () => ({
+    from: (table: string) => {
+      let filtered = [...(mockTables[table] ?? [])];
+      const chain: any = {
+        select: () => chain,
+        in: (col: string, values: any[]) => {
+          filtered = filtered.filter((r) => values.includes(r[col]));
+          return chain;
+        },
+        eq: (col: string, val: any) => {
+          filtered = filtered.filter((r) => r[col] === val);
+          return chain;
+        },
+        insert: () => chain,
+        maybeSingle: async () => mockInsertDeliveryResult,
+        update: () => chain,
+        then: (resolve: any) => resolve({ data: filtered, error: null }),
+      };
+      return chain;
+    },
+  }),
+}));
 
 function debt(overrides: Partial<Debt> = {}): Debt {
   return {
@@ -470,5 +518,212 @@ describe("DEBT-3C Direct Debt Urgency Integration via selectUrgentDebtInstallmen
     expect(profile.closingDay).toBeNull();
     expect(profile.dueDay).toBeNull();
     expect(profile.last4).toBeNull();
+  });
+
+  it("13. runPaymentReminderJob executes real production job logic for card-only actionable household without real network", async () => {
+    const today = localDateString();
+    mockSendNotification.mockClear();
+    mockTables = {
+      push_subscriptions: [
+        {
+          id: "sub-card-1",
+          household_id: "h-card-1",
+          user_id: "u1",
+          endpoint: "https://push.example.com/sub-card-1",
+          p256dh: "p256key",
+          auth: "authkey",
+          expires_at: null,
+          is_active: true,
+          app_origin: "https://test.cajafamiliar.app",
+        },
+      ],
+      household_members: [
+        {
+          household_id: "h-card-1",
+          user_id: "u1",
+          display_name: "Renzo",
+        },
+      ],
+      recurring_payments: [],
+      debts: [
+        {
+          id: "card-debt-1",
+          household_id: "h-card-1",
+          name: "Visa Interbank USD",
+          creditor_name: "Interbank",
+          debt_kind: "credit_card",
+          currency_code: "USD",
+          origin_date: "2026-01-01",
+          tracking_start_date: "2026-01-01",
+          opening_principal_balance: 0,
+          status: "active",
+          is_archived: false,
+          created_by_user_id: "u1",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      debt_schedule_versions: [],
+      debt_installments: [],
+      debt_events: [],
+      debt_event_installment_allocations: [],
+      credit_card_profiles: [
+        {
+          debt_id: "card-debt-1",
+          household_id: "h-card-1",
+          credit_limit: 5000,
+          closing_day: 20,
+          due_day: 5,
+          last4: "4321",
+          created_by_user_id: "u1",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      credit_card_entries: [
+        {
+          id: "entry-card-1",
+          debt_id: "card-debt-1",
+          household_id: "h-card-1",
+          entry_date: "2026-08-15",
+          entry_type: "purchase",
+          liability_delta: 300,
+          description: "Compra Laptop",
+          registered_by_user_id: "u1",
+          created_at: "2026-08-15T00:00:00Z",
+        },
+      ],
+      credit_card_statements: [
+        {
+          id: "stmt-card-1",
+          debt_id: "card-debt-1",
+          household_id: "h-card-1",
+          statement_date: "2026-08-20",
+          due_date: today,
+          statement_balance: 300,
+          minimum_payment_amount: 50,
+          created_by_user_id: "u1",
+          created_at: "2026-08-20T00:00:00Z",
+          updated_at: "2026-08-20T00:00:00Z",
+        },
+      ],
+    };
+
+    mockInsertDeliveryResult = { data: { id: "delivery-card-1" }, error: null };
+
+    const summary = await runPaymentReminderJob();
+
+    expect(summary.subscriptions).toBe(1);
+    expect(summary.cardUrgent).toBe(1);
+    expect(summary.recurringUrgent).toBe(0);
+    expect(summary.debtUrgent).toBe(0);
+    expect(summary.sent).toBe(1);
+    expect(summary.skipped).toBe(0);
+
+    expect(mockSendNotification).toHaveBeenCalledTimes(1);
+    const sentBody = JSON.parse(mockSendNotification.mock.calls[0][1]);
+    expect(sentBody.title).toBe("Caja Familiar");
+    expect(sentBody.body).toContain("Visa Interbank USD");
+    expect(sentBody.body).toContain("Pago mínimo: $50.00");
+  });
+
+  it("14. runPaymentReminderJob skips non-actionable card statement without dispatching push notification", async () => {
+    const today = localDateString();
+    mockSendNotification.mockClear();
+    mockTables = {
+      push_subscriptions: [
+        {
+          id: "sub-card-2",
+          household_id: "h-card-2",
+          user_id: "u2",
+          endpoint: "https://push.example.com/sub-card-2",
+          p256dh: "p256key",
+          auth: "authkey",
+          expires_at: null,
+          is_active: true,
+          app_origin: "https://test.cajafamiliar.app",
+        },
+      ],
+      household_members: [
+        {
+          household_id: "h-card-2",
+          user_id: "u2",
+          display_name: "Renzo",
+        },
+      ],
+      recurring_payments: [],
+      debts: [
+        {
+          id: "card-debt-2",
+          household_id: "h-card-2",
+          name: "Visa Interbank PEN",
+          creditor_name: "Interbank",
+          debt_kind: "credit_card",
+          currency_code: "PEN",
+          origin_date: "2026-01-01",
+          tracking_start_date: "2026-01-01",
+          opening_principal_balance: 0,
+          status: "active",
+          is_archived: false,
+          created_by_user_id: "u2",
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:00:00Z",
+        },
+      ],
+      debt_schedule_versions: [],
+      debt_installments: [],
+      debt_events: [],
+      debt_event_installment_allocations: [],
+      credit_card_profiles: [],
+      credit_card_entries: [
+        {
+          id: "entry-pre-close",
+          debt_id: "card-debt-2",
+          household_id: "h-card-2",
+          entry_date: "2026-08-01",
+          entry_type: "purchase",
+          liability_delta: 500,
+          description: "Compra previa",
+          registered_by_user_id: "u2",
+          created_at: "2026-08-01T00:00:00Z",
+        },
+        {
+          id: "entry-post-reversal",
+          debt_id: "card-debt-2",
+          household_id: "h-card-2",
+          entry_date: "2026-08-25",
+          entry_type: "reversal",
+          liability_delta: -500,
+          reversal_of_entry_id: "entry-pre-close",
+          description: "Anulacion post-cierre",
+          registered_by_user_id: "u2",
+          created_at: "2026-08-25T00:00:00Z",
+        },
+      ],
+      credit_card_statements: [
+        {
+          id: "stmt-closed",
+          debt_id: "card-debt-2",
+          household_id: "h-card-2",
+          statement_date: "2026-08-20",
+          due_date: today,
+          statement_balance: 500,
+          minimum_payment_amount: 100,
+          created_by_user_id: "u2",
+          created_at: "2026-08-20T00:00:00Z",
+          updated_at: "2026-08-20T00:00:00Z",
+        },
+      ],
+    };
+
+    mockInsertDeliveryResult = { data: { id: "delivery-card-2" }, error: null };
+
+    const summary = await runPaymentReminderJob();
+
+    expect(summary.subscriptions).toBe(1);
+    expect(summary.cardUrgent).toBe(0);
+    expect(summary.sent).toBe(0);
+    expect(summary.skipped).toBe(1);
+    expect(mockSendNotification).not.toHaveBeenCalled();
   });
 });
