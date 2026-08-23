@@ -1,4 +1,4 @@
--- Base initial schema for Caja Familiar
+-- Base initial schema fixture for local test setup (NOT a production migration)
 create extension if not exists pgcrypto;
 
 create table if not exists public.households (
@@ -82,3 +82,7 @@ alter table public.categories enable row level security;
 alter table public.movements enable row level security;
 alter table public.cash_counts enable row level security;
 alter table public.recurring_payments enable row level security;
+
+grant all privileges on all tables in schema public to postgres, service_role;
+grant select, insert, update, delete on public.households, public.household_members, public.settings, public.categories, public.movements, public.cash_counts, public.recurring_payments to authenticated;
+grant select on public.households, public.household_members, public.settings, public.categories, public.movements, public.cash_counts, public.recurring_payments to anon;

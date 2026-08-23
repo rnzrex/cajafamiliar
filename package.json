@@ -10,6 +10,7 @@
     "test": "vitest run",
     "typecheck:api": "tsc -p tsconfig.api.json",
     "test:debt2b2": "node scripts/test-debt2b2.mjs",
+    "test:debt5fa:local": "node scripts/test-debt5fa-local.mjs",
     "test:supabase": "node scripts/test-supabase.mjs"
   },
   "keywords": [],

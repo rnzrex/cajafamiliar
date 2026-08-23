@@ -15,6 +15,7 @@ import { translateDebtError } from "../utils/debtViewModel";
 import {
   calculateCreditCardRefundCapacity,
   isCreditCardEntryEligibleForReversal,
+  canOperateCreditCard,
 } from "../utils/creditCardCalculations";
 import { executeCreditCardOperation } from "../services/creditCardOperationalActions";
 
@@ -80,7 +81,9 @@ export function CreditCardOperationModal({
   const [dueDay, setDueDay] = useState(profile?.dueDay != null ? String(profile.dueDay) : "");
   const [last4, setLast4] = useState(profile?.last4 ?? "");
 
-  const canOperateCard = canWriteDebt && debt.status === "active" && !debt.isArchived;
+  // Financial operations require active non-archived card with write permission.
+  // Profile editing (configuration metadata) requires only write permission.
+  const canOperateCard = canOperateCreditCard(debt, canWriteDebt);
 
   // Eligible accounts for card payment (Must be active & match card currency)
   const eligibleAccounts = accounts.filter(
@@ -107,9 +110,19 @@ export function CreditCardOperationModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canOperateCard) {
+
+    // Profile save is configuration metadata — allowed when canWriteDebt even if archived/non-active.
+    // All financial operations require canOperateCard (active, non-archived, canWriteDebt).
+    if (opType !== "profile" && !canOperateCard) {
       setToast({
         message: "No se pueden realizar operaciones en una tarjeta inactiva o archivada.",
+        type: "error",
+      });
+      return;
+    }
+    if (opType === "profile" && !canWriteDebt) {
+      setToast({
+        message: "No tiene permisos para editar los datos de la tarjeta.",
         type: "error",
       });
       return;

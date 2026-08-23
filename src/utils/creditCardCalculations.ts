@@ -438,6 +438,15 @@ export function calculateCreditCardRefundCapacity(
       .map((e) => e.reversalOfEntryId!)
   );
 
+  if (reversedIds.has(targetEntry.id)) {
+    return {
+      originalAmount,
+      effectiveRefundedAmount: 0,
+      remainingRefundableAmount: 0,
+      isRefundable: false,
+    };
+  }
+
   const effectiveCredits = scopedEntries.filter(
     (e) =>
       e.entryType === "credit" &&
@@ -459,6 +468,19 @@ export function calculateCreditCardRefundCapacity(
     remainingRefundableAmount,
     isRefundable,
   };
+}
+
+export function canOperateCreditCard(
+  debt: { debtKind?: string; status?: string; isArchived?: boolean } | null | undefined,
+  canWriteDebt: boolean = true
+): boolean {
+  if (!debt) return false;
+  return (
+    canWriteDebt &&
+    debt.debtKind === "credit_card" &&
+    debt.status === "active" &&
+    !debt.isArchived
+  );
 }
 
 export function isCreditCardEntryEligibleForReversal(
