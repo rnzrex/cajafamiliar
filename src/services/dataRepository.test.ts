@@ -208,4 +208,91 @@ describe("serializers de dataRepository", () => {
       });
     });
   });
+
+  describe("loadAppData >1000 rows pagination for both reconciliation collections", () => {
+    it("fetches page 1 (0..999) and page 2 (1000..1999) for both account_reconciliations and account_reconciliation_movements without truncation", async () => {
+      const { loadAppData } = await import("./dataRepository");
+      const { fetchAllSupabaseRows } = await import("./supabasePagination");
+
+      // Generate 1050 mock rows for account_reconciliations
+      const recRows = Array.from({ length: 1050 }, (_, i) => ({
+        id: `rec-pg-${i}`,
+        household_id: "00000000-0000-4000-8000-000000000001",
+        account_id: "acc-1",
+        reconciliation_type: "balance",
+        currency_code: "PEN",
+        opening_balance_snapshot: 1000,
+        expected_balance: 1000,
+        actual_balance: 1000,
+        difference: 0,
+        status: "matched",
+        registered_by_user_id: "u-1",
+        created_at: `2026-08-23T${String(Math.floor(i / 60) % 24).padStart(2, "0")}:00:00.000Z`,
+      }));
+
+      // Generate 1050 mock rows for account_reconciliation_movements
+      const recMovRows = Array.from({ length: 1050 }, (_, i) => ({
+        id: `rm-pg-${i}`,
+        household_id: "00000000-0000-4000-8000-000000000001",
+        reconciliation_id: `rec-pg-${i}`,
+        movement_id: `mov-${i}`,
+        balance_contribution: 10,
+        movement_updated_at_snapshot: "2026-08-23T00:00:00.000Z",
+        movement_snapshot: { id: `mov-${i}` },
+        created_at: `2026-08-23T${String(Math.floor(i / 60) % 24).padStart(2, "0")}:00:00.000Z`,
+      }));
+
+      const rangesQueried: Record<string, string[]> = {
+        account_reconciliations: [],
+        account_reconciliation_movements: [],
+      };
+
+      const mockSupabase = {
+        from: (table: string) => ({
+          select: () => ({
+            eq: () => ({
+              order: () => ({
+                order: () => ({
+                  range: (from: number, to: number) => {
+                    if (table === "account_reconciliations" || table === "account_reconciliation_movements") {
+                      rangesQueried[table].push(`${from}..${to}`);
+                    }
+                    const rows = table === "account_reconciliations" ? recRows : table === "account_reconciliation_movements" ? recMovRows : [];
+                    const page = rows.slice(from, to + 1);
+                    return Promise.resolve({ data: page, error: null });
+                  },
+                }),
+              }),
+            }),
+          }),
+        }),
+      } as any;
+
+      const fetchedRecs = await fetchAllSupabaseRows({
+        supabase: mockSupabase,
+        table: "account_reconciliations",
+        householdId: "00000000-0000-4000-8000-000000000001",
+        orders: [
+          { column: "created_at", ascending: false },
+          { column: "id", ascending: false },
+        ],
+      });
+
+      const fetchedRecMovs = await fetchAllSupabaseRows({
+        supabase: mockSupabase,
+        table: "account_reconciliation_movements",
+        householdId: "00000000-0000-4000-8000-000000000001",
+        orders: [
+          { column: "created_at", ascending: false },
+          { column: "id", ascending: false },
+        ],
+      });
+
+      expect(fetchedRecs.length).toBe(1050);
+      expect(fetchedRecMovs.length).toBe(1050);
+
+      expect(rangesQueried.account_reconciliations).toEqual(["0..999", "1000..1999"]);
+      expect(rangesQueried.account_reconciliation_movements).toEqual(["0..999", "1000..1999"]);
+    });
+  });
 });

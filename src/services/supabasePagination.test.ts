@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { AppData, HouseholdMember, Movement } from "../types";
 import { fetchAllSupabaseRows } from "./supabasePagination";
 import { loadAppData, RemoteAppDataLoadError } from "./dataRepository";
@@ -44,6 +44,8 @@ describe("HOTFIX-CASH-03 — Exhaustive Remote Dataset Pagination & Trusted Snap
     creditCardProfiles: [],
     creditCardEntries: [],
     creditCardStatements: [],
+    accountReconciliations: [],
+    accountReconciliationMovements: [],
   };
 
   beforeEach(() => {

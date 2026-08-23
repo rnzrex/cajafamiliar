@@ -1,4 +1,4 @@
-﻿export class HouseholdNotProvisionedError extends Error {
+export class HouseholdNotProvisionedError extends Error {
   constructor() {
     super("El household no está provisionado en Supabase.");
     this.name = "HouseholdNotProvisionedError";
@@ -77,5 +77,19 @@ export class DebtOperationUnavailableError extends Error {
   constructor(message = "La operación de deuda no está disponible en Supabase.") {
     super(message);
     this.name = "DebtOperationUnavailableError";
+  }
+}
+
+export class MovementReconciledError extends Error {
+  constructor() {
+    super("Este movimiento ya fue conciliado en una conciliación confirmada y no puede modificarse o eliminarse.");
+    this.name = "MovementReconciledError";
+  }
+}
+
+export class ReconciliationIdConflictError extends Error {
+  constructor() {
+    super("El ID de conciliación ya existe con datos distintos (conflicto de idempotencia).");
+    this.name = "ReconciliationIdConflictError";
   }
 }
