@@ -623,20 +623,20 @@ function getPushStatusCode(error: unknown) {
   return typeof error.statusCode === "number" ? error.statusCode : null;
 }
 
-function fromCreditCardProfileRow(row: Record<string, any>): CreditCardProfile {
+export function fromCreditCardProfileRow(row: Record<string, any>): CreditCardProfile {
   return {
     debtId: row.debt_id,
     creditLimit: row.credit_limit == null ? null : Number(row.credit_limit),
-    closingDay: Number(row.closing_day),
-    dueDay: Number(row.due_day),
-    last4: row.last4 ?? "",
+    closingDay: row.closing_day == null ? null : Number(row.closing_day),
+    dueDay: row.due_day == null ? null : Number(row.due_day),
+    last4: row.last4 ?? null,
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
-function fromCreditCardEntryRow(row: Record<string, any>): CreditCardEntry {
+export function fromCreditCardEntryRow(row: Record<string, any>): CreditCardEntry {
   return {
     id: row.id,
     debtId: row.debt_id,
@@ -652,7 +652,7 @@ function fromCreditCardEntryRow(row: Record<string, any>): CreditCardEntry {
   };
 }
 
-function fromCreditCardStatementRow(row: Record<string, any>): CreditCardStatement {
+export function fromCreditCardStatementRow(row: Record<string, any>): CreditCardStatement {
   return {
     id: row.id,
     debtId: row.debt_id,

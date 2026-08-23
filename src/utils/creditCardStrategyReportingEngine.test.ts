@@ -14,6 +14,7 @@ import { buildCashFlowRelief30dStrategy, buildDebtStrategies } from "./debtStrat
 import { getMovementEconomics, resolveMovementCurrencyCode } from "./movementEconomics.js";
 import { movementTotals, movementTotalsByCurrency } from "./movementFilters.js";
 import { buildObligationReminderPayload } from "../../api/_lib/paymentReminders.js";
+import { buildReportCategoryRowsByCurrency } from "./excelExport.js";
 
 describe("DEBT-5E — Card Strategy, Planning & Reporting Integration Engine", () => {
   const mockCardPEN: Debt = {
@@ -784,5 +785,92 @@ describe("DEBT-5E — Card Strategy, Planning & Reporting Integration Engine", (
     expect(penStrategy.rankedCandidates).toHaveLength(0);
     expect(penStrategy.unrankedItems).toHaveLength(1);
     expect(penStrategy.unrankedItems[0].unrankedReason).toBe("no_actionable_obligation");
+  });
+
+  // 15. Cash-Flow Relief 30d Outside Horizon Test
+  it("classifies card with actionable statement due beyond 30 days as outside_30_day_horizon", () => {
+    const card: Debt = {
+      ...mockCardPEN,
+      id: "card-horizon-1",
+    };
+
+    const entry: CreditCardEntry = {
+      id: "entry-h1",
+      debtId: "card-horizon-1",
+      entryDate: "2026-08-01",
+      entryType: "purchase",
+      liabilityDelta: 300,
+      movementId: null,
+      reversalOfEntryId: null,
+      description: "Compra",
+      registeredByUserId: "u1",
+      createdAt: "2026-08-01T00:00:00Z",
+    };
+
+    const statement: CreditCardStatement = {
+      id: "stmt-h1",
+      debtId: "card-horizon-1",
+      statementDate: "2026-08-10",
+      dueDate: "2026-10-10", // 49 days away from 2026-08-22
+      statementBalance: 300,
+      minimumPaymentAmount: 50,
+      closingEntryId: null,
+      createdByUserId: "u1",
+      createdAt: "2026-08-10T00:00:00Z",
+      updatedAt: "2026-08-10T00:00:00Z",
+    };
+
+    const intelItems = buildDebtIntelligenceItems({
+      debts: [card],
+      debtEvents: [],
+      debtScheduleVersions: [],
+      debtInstallments: [],
+      debtCollaterals: [],
+      debtPlanningItems: [],
+      creditCardEntries: [entry],
+      creditCardStatements: [statement],
+      todayKey: "2026-08-22",
+    });
+
+    const relief = buildCashFlowRelief30dStrategy(intelItems);
+    const penStrategy = relief.byCurrency["PEN"];
+    expect(penStrategy.rankedCandidates).toHaveLength(0);
+    expect(penStrategy.unrankedItems).toHaveLength(1);
+    expect(penStrategy.unrankedItems[0].unrankedReason).toBe("outside_30_day_horizon");
+  });
+
+  // 16. Excel Category Percentage Denominator Safety Tests
+  it("calculates category percentage denominator using positiveCategoryExpenseTotal without NaN or 10000%", () => {
+    const accPEN: FinancialAccount = {
+      id: "acc-pen",
+      name: "Cuenta PEN",
+      reconciliationType: "cash",
+      currencyCode: "PEN",
+      openingBalance: 0,
+      isActive: true,
+      sortOrder: 1,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+
+    // Case A: Mercado +100, Mercado refund -40 -> net 60 -> 100%
+    const movA1: Movement = { id: "m1", date: "2026-08-01", type: "egreso", amount: 100, description: "Super", category: "Mercado", person: "Renzo", method: "efectivo", accountId: "acc-pen", movementContext: "standard" };
+    const movA2: Movement = { id: "m2", date: "2026-08-02", type: "egreso", amount: -40, description: "Devolucion Super", category: "Mercado", person: "Renzo", method: "efectivo", accountId: "acc-pen", movementContext: "standard" };
+
+    const rowsA = buildReportCategoryRowsByCurrency([movA1, movA2], [accPEN]);
+    expect(rowsA).toHaveLength(1);
+    expect(rowsA[0][1]).toBe("Mercado");
+    expect(rowsA[0][2]).toBe(60);
+    expect(rowsA[0][3]).toBe(1.0); // 100%
+
+    // Case C: Mercado +100, Viajes -100 -> overall expense 0, positive total 100 -> Mercado 100% (not 10000%)
+    const movC1: Movement = { id: "mc1", date: "2026-08-01", type: "egreso", amount: 100, description: "Super", category: "Mercado", person: "Renzo", method: "efectivo", accountId: "acc-pen", movementContext: "standard" };
+    const movC2: Movement = { id: "mc2", date: "2026-08-02", type: "egreso", amount: -100, description: "Reembolso Viaje", category: "Viajes", person: "Renzo", method: "efectivo", accountId: "acc-pen", movementContext: "standard" };
+
+    const rowsC = buildReportCategoryRowsByCurrency([movC1, movC2], [accPEN]);
+    expect(rowsC).toHaveLength(1);
+    expect(rowsC[0][1]).toBe("Mercado");
+    expect(rowsC[0][2]).toBe(100);
+    expect(rowsC[0][3]).toBe(1.0); // 100%, NOT 10000%
   });
 });

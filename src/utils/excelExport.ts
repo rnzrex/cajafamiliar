@@ -144,10 +144,11 @@ export function exportReportExcel(
     const byCat = groupBy(expenses, "category", accounts).filter((item) => item.total > 0).sort((a, b) => b.total - a.total);
     const byAcc = groupBy(expenses, "accountId", accounts).filter((item) => item.total > 0).sort((a, b) => b.total - a.total);
 
-    const totalCurrExpense = currencyTotalsResult.byCurrency[code].expense || 1;
+    const positiveCategoryExpenseTotal = byCat.reduce((sum, item) => sum + item.total, 0);
 
     for (const cat of byCat) {
-      categoryRows.push([code, cat.name, cat.total, cat.total / totalCurrExpense]);
+      const percentage = positiveCategoryExpenseTotal > 0 ? cat.total / positiveCategoryExpenseTotal : 0;
+      categoryRows.push([code, cat.name, cat.total, percentage]);
     }
     for (const acc of byAcc) {
       accountRows.push([code, acc.name, acc.total]);
@@ -221,4 +222,35 @@ function todayFileName() {
 
 function formatDateTime(value: string) {
   return value.includes("T") ? new Date(value).toLocaleString("es-PE") : value;
+}
+
+export function buildReportCategoryRowsByCurrency(
+  movements: Movement[],
+  accounts: FinancialAccount[] = [],
+  debtEvents: DebtEvent[] = [],
+  creditCardEntries: CreditCardEntry[] = [],
+  debts: Debt[] = []
+) {
+  const currencyTotalsResult = movementTotalsByCurrency(movements, debtEvents, creditCardEntries, accounts, debts);
+  const currencies = Object.keys(currencyTotalsResult.byCurrency);
+  const categoryRows: Array<[string, string, number, number]> = [];
+
+  for (const code of currencies) {
+    const currMovements = movements.filter(
+      (m) => resolveMovementCurrencyCode(m, accounts, debts, debtEvents, creditCardEntries) === code
+    );
+    const expenses = currMovements
+      .filter((m) => m.type === "egreso")
+      .map((m) => ({ ...m, amount: getMovementEconomics(m, debtEvents, creditCardEntries).economicExpense }));
+
+    const byCat = groupBy(expenses, "category", accounts).filter((item) => item.total > 0).sort((a, b) => b.total - a.total);
+    const positiveCategoryExpenseTotal = byCat.reduce((sum, item) => sum + item.total, 0);
+
+    for (const cat of byCat) {
+      const percentage = positiveCategoryExpenseTotal > 0 ? cat.total / positiveCategoryExpenseTotal : 0;
+      categoryRows.push([code, cat.name, cat.total, percentage]);
+    }
+  }
+
+  return categoryRows;
 }

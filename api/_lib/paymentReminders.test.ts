@@ -10,6 +10,7 @@ import type {
 import type { DebtInstallmentPlanningItem } from "../../src/utils/debtPlanning.js";
 import {
   buildObligationReminderPayload,
+  fromCreditCardProfileRow,
   NOTIFICATION_TYPE,
   selectUrgentDebtInstallmentsForReminder,
 } from "./paymentReminders.js";
@@ -450,5 +451,24 @@ describe("DEBT-3C Direct Debt Urgency Integration via selectUrgentDebtInstallmen
     expect(payload.body).toContain("Visa Interbank");
     expect(payload.body).toContain("Pago mínimo: $50.00");
     expect(payload.url).toBe("/?view=deudas");
+  });
+
+  it("12. fromCreditCardProfileRow preserves null for nullable fields without inventing zeros or empty strings", () => {
+    const row = {
+      debt_id: "card-1",
+      credit_limit: null,
+      closing_day: null,
+      due_day: null,
+      last4: null,
+      created_by_user_id: "u1",
+      created_at: "2026-08-20T00:00:00Z",
+      updated_at: "2026-08-20T00:00:00Z",
+    };
+
+    const profile = fromCreditCardProfileRow(row);
+    expect(profile.creditLimit).toBeNull();
+    expect(profile.closingDay).toBeNull();
+    expect(profile.dueDay).toBeNull();
+    expect(profile.last4).toBeNull();
   });
 });

@@ -66,6 +66,8 @@ export function cashFlowUnrankedReasonLabel(reason: CashFlowRelief30dUnrankedRea
       return "Hay montos por confirmar en los próximos 30 días.";
     case "no_actionable_obligation":
       return "Sin obligación exigible en los próximos 30 días.";
+    case "outside_30_day_horizon":
+      return "Sin obligaciones dentro de los próximos 30 días.";
   }
 }
 

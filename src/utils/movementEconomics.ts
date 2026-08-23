@@ -33,7 +33,7 @@ export function getMovementEconomics(
 
   if (movement.type !== "egreso") return empty;
 
-  if (movement.movementContext === "standard") {
+  if (!movement.movementContext || movement.movementContext === "standard") {
     return { ...empty, cashOutflow: movement.amount, economicExpense: movement.amount };
   }
 

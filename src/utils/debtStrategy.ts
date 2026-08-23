@@ -61,7 +61,11 @@ export interface UrgencyStrategyResult {
 }
 
 // D. Cash-Flow Relief 30d Strategy
-export type CashFlowRelief30dUnrankedReason = "missing_current_schedule" | "unknown_next30_amounts" | "no_actionable_obligation";
+export type CashFlowRelief30dUnrankedReason =
+  | "missing_current_schedule"
+  | "unknown_next30_amounts"
+  | "no_actionable_obligation"
+  | "outside_30_day_horizon";
 
 export interface CashFlowRelief30dCandidate {
   debtId: string;
@@ -356,6 +360,15 @@ export function buildCashFlowRelief30dStrategy(
           knownNext30Amount: 0,
           unknownNext30AmountCount: 0,
           unrankedReason: "no_actionable_obligation",
+        });
+      } else if (item.next30InstallmentCount === 0) {
+        unrankedItems.push({
+          debtId: item.debtId,
+          debtName: item.debtName,
+          currencyCode: curr,
+          knownNext30Amount: item.next30KnownAmount,
+          unknownNext30AmountCount: item.next30UnknownAmountCount,
+          unrankedReason: "outside_30_day_horizon",
         });
       } else if (item.next30UnknownAmountCount > 0) {
         unrankedItems.push({
