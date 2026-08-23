@@ -84,6 +84,7 @@ function sampleIntelligence(overrides: Partial<DebtIntelligenceItem> = {}): Debt
     openingPrincipalBalance: 10000,
     recordedFundPrincipalReduction: 5000,
     nonFundPrincipalDelta: 0,
+    balanceReductionFromOriginal: 5000,
     balanceReductionPercentFromOriginal: 50,
     historicalEconomics: {
       cashOutflow: 6000,
