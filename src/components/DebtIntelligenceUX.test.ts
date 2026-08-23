@@ -270,6 +270,49 @@ describe("DEBT-5F-B: Debt Intelligence UX Real Component Tests", () => {
     expect(html).not.toContain("S/ 0.00");
   });
 
+  it("renders DebtAttentionPanel displaying 'No se conoce el pago mínimo' when card minimum payment is null instead of statement balance", () => {
+    const card = sampleCardDebt();
+    const profile: CreditCardProfile = {
+      debtId: card.id,
+      creditLimit: 5000,
+      closingDay: 20,
+      dueDay: 28,
+      last4: "1234",
+      createdByUserId: "u1",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const stm: CreditCardStatement = {
+      id: "stm-1",
+      debtId: card.id,
+      statementDate: "2026-08-10",
+      dueDate: "2026-08-28",
+      statementBalance: 800,
+      minimumPaymentAmount: null,
+      closingEntryId: null,
+      createdByUserId: "u1",
+      createdAt: "2026-08-10T00:00:00Z",
+      updatedAt: "2026-08-10T00:00:00Z",
+    };
+
+    const actions = buildAllDebtNextActions({
+      debts: [card],
+      creditCardProfiles: [profile],
+      cardStatements: [stm],
+      todayKey: "2026-08-23",
+    });
+
+    const html = renderToStaticMarkup(
+      React.createElement(DebtAttentionPanel, {
+        actions,
+        onSelectDebtId: () => {},
+      })
+    );
+
+    expect(html).toContain("No se conoce el pago mínimo");
+    expect(html).not.toContain("PEN 800.00");
+  });
+
   it("preserves DebtDetailModal loan experience with Registrar pago, Prepago, Liquidar deuda, Cronograma, Garantías, Historial", () => {
     const loan = sampleLoanDebt();
     const intel = sampleLoanIntelligence(loan, [defaultScheduleVersion], [defaultInstallment], "2026-08-23");

@@ -218,7 +218,7 @@ export function getDebtNextAction({
 
       if (cardIntel.actionable) {
         const isMinUnknown = minPayment == null;
-        const targetAmount = minPayment ?? stm.statementBalance;
+        const targetAmount = minPayment;
 
         if (ds.kind === "overdue") {
           return {

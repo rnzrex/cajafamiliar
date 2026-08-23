@@ -467,7 +467,7 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
       expect(action.kind).toBe("pay_card_statement_upcoming");
       expect(action.priority).toBe("due_soon");
       expect(action.isAmountUnknown).toBe(true);
-      expect(action.resolvedAmount).toBe(800); // Falls back to statementBalance when minimum is null
+      expect(action.resolvedAmount).toBeNull();
       expect(action.reason).toBe("No se conoce el pago mínimo");
     });
 
