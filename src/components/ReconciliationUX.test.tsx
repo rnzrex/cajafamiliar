@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { AccountReconciliation, AccountReconciliationMovement, AppData, FinancialAccount, Movement, OfflineCreateMovementOperation } from "../types.js";
+import type { AccountReconciliation, AccountReconciliationMovement, AppData, FinancialAccount, Movement } from "../types.js";
+import type { OfflineCreateMovementOperation } from "../services/offlineOutbox.js";
 import { mergePendingMovements, shouldStartAuthoritativeRefresh } from "../services/authoritativeSync.js";
 import { isMovementPendingForReconciliation } from "../utils/reconciliationHelpers.js";
 import { AccountReconciliationModal } from "./AccountReconciliationModal.js";
@@ -196,6 +197,7 @@ describe("RECON-1B Reconciliation UX Domain & Real Component Integrity", () => {
         creditCardProfiles: [],
         creditCardEntries: [],
         creditCardStatements: [],
+        cashCounts: [],
         accountReconciliations: [],
         accountReconciliationMovements: [],
       };
