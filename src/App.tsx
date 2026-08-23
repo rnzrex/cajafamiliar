@@ -1581,7 +1581,7 @@ function SyncStatus({
     dotClass = "bg-amber-400";
     textClass = "text-slate-600";
   } else if (!isOnline || remoteSyncStatus === "offline" || status === "offline") {
-    label = pendingCount > 0 ? `Sin conexión ? ${pendingLabel}` : "Sin conexión · datos guardados";
+    label = pendingCount > 0 ? `Sin conexión · ${pendingLabel}` : "Sin conexión · datos guardados";
     dotClass = "bg-red-500";
     textClass = "text-red-700";
   } else if (remoteSyncStatus === "refreshing" || status === "syncing") {
@@ -1593,7 +1593,7 @@ function SyncStatus({
     dotClass = "bg-red-500";
     textClass = "text-red-700";
   } else if (timeStr) {
-    label = `Sincronizado ${timeStr}${pendingCount > 0 ? ` ? ${pendingLabel}` : ""}`;
+    label = `Sincronizado ${timeStr}${pendingCount > 0 ? ` · ${pendingLabel}` : ""}`;
   }
 
   return (

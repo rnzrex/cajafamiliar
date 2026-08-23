@@ -117,7 +117,9 @@ export function PwaUpdatePrompt() {
       if (!waitingWorker) {
         setUpdating(false);
         return;
-      }      let refreshing = false;
+      }
+
+      let refreshing = false;
       const triggerReload = () => {
         if (!refreshing) {
           refreshing = true;
