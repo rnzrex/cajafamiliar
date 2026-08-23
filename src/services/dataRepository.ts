@@ -1,3 +1,5 @@
+import { fetchAllSupabaseRows } from "./supabasePagination";
+import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError } from "./dataRepositoryErrors";
 import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
@@ -9,31 +11,7 @@ export interface AppDataLoadResult {
   source: AppDataLoadSource;
 }
 
-export class HouseholdNotProvisionedError extends Error {
-  constructor() {
-    super("El household no está provisionado en Supabase.");
-    this.name = "HouseholdNotProvisionedError";
-  }
-}
-
-export class RemoteAppDataLoadError extends Error {
-  failedResource: string;
-  causeError?: unknown;
-
-  constructor(failedResource: string, causeError?: unknown) {
-    super(`Error al cargar datos financieros remotos de la tabla: ${failedResource}`);
-    this.name = "RemoteAppDataLoadError";
-    this.failedResource = failedResource;
-    this.causeError = causeError;
-  }
-}
-
-export class TrustedOfflineSnapshotUnavailableError extends Error {
-  constructor() {
-    super("No existe una copia verificada de Caja Familiar para usar sin conexión.");
-    this.name = "TrustedOfflineSnapshotUnavailableError";
-  }
-}
+export * from "./dataRepositoryErrors";
 
 export class MovementNotFoundError extends Error {
   constructor() {
@@ -69,89 +47,194 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
   try {
     const [
       settingsResult,
-      movementsResult,
-      categoriesResult,
-      countsResult,
-      paymentsResult,
-      accountsResult,
-      debtsResult,
-      debtEventsResult,
-      debtScheduleVersionsResult,
-      debtInstallmentsResult,
-      debtAllocationsResult,
-      debtCollateralsResult,
-      creditCardProfilesResult,
-      creditCardEntriesResult,
-      creditCardStatementsResult,
+      movementsRows,
+      categoriesRows,
+      countsRows,
+      paymentsRows,
+      accountsRows,
+      debtsRows,
+      debtEventsRows,
+      debtScheduleVersionsRows,
+      debtInstallmentsRows,
+      debtAllocationsRows,
+      debtCollateralsRows,
+      creditCardProfilesRows,
+      creditCardEntriesRows,
+      creditCardStatementsRows,
     ] = await Promise.all([
       supabase.from("settings").select("*").eq("household_id", householdId).maybeSingle(),
-      supabase.from("movements").select("*").eq("household_id", householdId).order("date", { ascending: false }),
-      supabase.from("categories").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
-      supabase.from("cash_counts").select("*").eq("household_id", householdId).order("created_at", { ascending: false }),
-      supabase.from("recurring_payments").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
-      supabase.from("financial_accounts").select("*").eq("household_id", householdId).order("sort_order", { ascending: true }),
-      supabase.from("debts").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
-      supabase.from("debt_events").select("*").eq("household_id", householdId).order("event_date", { ascending: true }).order("created_at", { ascending: true }),
-      supabase.from("debt_schedule_versions").select("*").eq("household_id", householdId).order("version_number", { ascending: true }),
-      supabase.from("debt_installments").select("*").eq("household_id", householdId).order("due_date", { ascending: true }).order("installment_number", { ascending: true }),
-      supabase.from("debt_event_installment_allocations").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
-      supabase.from("debt_collaterals").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
-      supabase.from("credit_card_profiles").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
-      supabase.from("credit_card_entries").select("*").eq("household_id", householdId).order("entry_date", { ascending: true }).order("created_at", { ascending: true }),
-      supabase.from("credit_card_statements").select("*").eq("household_id", householdId).order("statement_date", { ascending: true }),
-    ]);    const queries = [
-      { resource: "settings", result: settingsResult },
-      { resource: "movements", result: movementsResult },
-      { resource: "categories", result: categoriesResult },
-      { resource: "cash_counts", result: countsResult },
-      { resource: "recurring_payments", result: paymentsResult },
-      { resource: "financial_accounts", result: accountsResult },
-      { resource: "debts", result: debtsResult },
-      { resource: "debt_events", result: debtEventsResult },
-      { resource: "debt_schedule_versions", result: debtScheduleVersionsResult },
-      { resource: "debt_installments", result: debtInstallmentsResult },
-      { resource: "debt_event_installment_allocations", result: debtAllocationsResult },
-      { resource: "debt_collaterals", result: debtCollateralsResult },
-      { resource: "credit_card_profiles", result: creditCardProfilesResult },
-      { resource: "credit_card_entries", result: creditCardEntriesResult },
-      { resource: "credit_card_statements", result: creditCardStatementsResult },
-    ];
+      fetchAllSupabaseRows({
+        supabase,
+        table: "movements",
+        householdId,
+        orders: [
+          { column: "date", ascending: false },
+          { column: "created_at", ascending: false },
+          { column: "id", ascending: false },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "categories",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "cash_counts",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: false },
+          { column: "id", ascending: false },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "recurring_payments",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "financial_accounts",
+        householdId,
+        orders: [
+          { column: "sort_order", ascending: true },
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "debts",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "debt_events",
+        householdId,
+        orders: [
+          { column: "event_date", ascending: true },
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "debt_schedule_versions",
+        householdId,
+        orders: [
+          { column: "version_number", ascending: true },
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "debt_installments",
+        householdId,
+        orders: [
+          { column: "due_date", ascending: true },
+          { column: "installment_number", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "debt_event_installment_allocations",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "debt_collaterals",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "credit_card_profiles",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: true },
+          { column: "debt_id", ascending: true },
+        ],
+        pkField: "debt_id",
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "credit_card_entries",
+        householdId,
+        orders: [
+          { column: "entry_date", ascending: true },
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "credit_card_statements",
+        householdId,
+        orders: [
+          { column: "statement_date", ascending: true },
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+    ]);
 
-    const failedQuery = queries.find((q) => q.result.error);
-    if (failedQuery) {
-      throw new RemoteAppDataLoadError(failedQuery.resource, failedQuery.result.error);
+    if (settingsResult.error) {
+      throw new RemoteAppDataLoadError("settings", settingsResult.error);
     }
 
     const hasRemoteData =
-      (movementsResult.data?.length ?? 0) > 0 ||
-      (categoriesResult.data?.length ?? 0) > 0 ||
-      (countsResult.data?.length ?? 0) > 0 ||
-      (paymentsResult.data?.length ?? 0) > 0 ||
-      (accountsResult.data?.length ?? 0) > 0 ||
+      movementsRows.length > 0 ||
+      categoriesRows.length > 0 ||
+      countsRows.length > 0 ||
+      paymentsRows.length > 0 ||
+      accountsRows.length > 0 ||
       Boolean(settingsResult.data);
 
     if (!hasRemoteData) throw new HouseholdNotProvisionedError();
 
     const remoteData = normalizeData({
       initialBalance: Number(settingsResult.data?.initial_balance ?? 0),
-      movements: (movementsResult.data ?? []).map(fromMovementRow),
-      categories: (categoriesResult.data ?? []).map(fromCategoryRow),
-      cashCounts: (countsResult.data ?? []).map(fromCashCountRow),
-      recurringPayments: (paymentsResult.data ?? []).map(fromRecurringPaymentRow),
-      financialAccounts: (accountsResult.data ?? []).map(fromFinancialAccountRow),
-      debts: (debtsResult.data ?? []).map(fromDebtRow),
-      debtEvents: (debtEventsResult.data ?? []).map(fromDebtEventRow),
-      debtScheduleVersions: (debtScheduleVersionsResult.data ?? []).map(fromDebtScheduleVersionRow),
-      debtInstallments: (debtInstallmentsResult.data ?? []).map(fromDebtInstallmentRow),
-      debtEventInstallmentAllocations: (debtAllocationsResult.data ?? []).map(fromDebtEventInstallmentAllocationRow),
-      debtCollaterals: (debtCollateralsResult.data ?? []).map(fromDebtCollateralRow),
-      creditCardProfiles: (creditCardProfilesResult.data ?? []).map(fromCreditCardProfileRow),
-      creditCardEntries: (creditCardEntriesResult.data ?? []).map(fromCreditCardEntryRow),
-      creditCardStatements: (creditCardStatementsResult.data ?? []).map(fromCreditCardStatementRow),
+      movements: movementsRows.map(fromMovementRow),
+      categories: categoriesRows.map(fromCategoryRow),
+      cashCounts: countsRows.map(fromCashCountRow),
+      recurringPayments: paymentsRows.map(fromRecurringPaymentRow),
+      financialAccounts: accountsRows.map(fromFinancialAccountRow),
+      debts: debtsRows.map(fromDebtRow),
+      debtEvents: debtEventsRows.map(fromDebtEventRow),
+      debtScheduleVersions: debtScheduleVersionsRows.map(fromDebtScheduleVersionRow),
+      debtInstallments: debtInstallmentsRows.map(fromDebtInstallmentRow),
+      debtEventInstallmentAllocations: debtAllocationsRows.map(fromDebtEventInstallmentAllocationRow),
+      debtCollaterals: debtCollateralsRows.map(fromDebtCollateralRow),
+      creditCardProfiles: creditCardProfilesRows.map(fromCreditCardProfileRow),
+      creditCardEntries: creditCardEntriesRows.map(fromCreditCardEntryRow),
+      creditCardStatements: creditCardStatementsRows.map(fromCreditCardStatementRow),
     });
 
-    saveData(remoteData);
-    markTrustedSnapshot(member);
+    const snapshotPersisted = saveData(remoteData);
+    if (snapshotPersisted) {
+      markTrustedSnapshot(member);
+    }
     return { data: remoteData, source: "remote" };
   } catch (error) {
     if (error instanceof HouseholdNotProvisionedError || error instanceof RemoteAppDataLoadError) {

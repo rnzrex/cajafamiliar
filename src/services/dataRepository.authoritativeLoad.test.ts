@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { AppData, HouseholdMember } from "../types";
 
 // 1. Mock storage
@@ -58,28 +58,25 @@ describe("Real loadAppData Execution Tests (Section 4, 5, 6, 7)", () => {
     vi.stubGlobal("navigator", { onLine: true });
     mockLoadTrustedSnapshot.mockReturnValue(sampleSnapshot);
 
-    mockFrom.mockImplementation((table: string) => {
-      if (table === "movements") {
-        return {
-          select: () => ({
-            eq: () => ({
-              order: () => Promise.resolve({ data: null, error: { message: "Table query error for movements" } }),
-            }),
-          }),
-        };
-      }
-      return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: () => Promise.resolve({ data: { initial_balance: 1554.2 }, error: null }),
-            order: () => ({
-              order: () => Promise.resolve({ data: [], error: null }),
-              ascending: () => Promise.resolve({ data: [], error: null }),
-            }),
-          }),
-        }),
+    const makeChainedMock = (table: string) => {
+      const builder: any = {
+        order: () => builder,
+        range: () => {
+          if (table === "movements") {
+            return Promise.resolve({ data: null, error: { message: "Table query error for movements" } });
+          }
+          return Promise.resolve({ data: [], error: null });
+        },
+        maybeSingle: () => Promise.resolve({ data: { initial_balance: 1554.2 }, error: null }),
       };
-    });
+      return builder;
+    };
+
+    mockFrom.mockImplementation((table: string) => ({
+      select: () => ({
+        eq: () => makeChainedMock(table),
+      }),
+    }));
 
     try {
       await loadAppData(member);
