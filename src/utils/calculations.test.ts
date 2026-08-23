@@ -110,10 +110,18 @@ describe("expectedCash", () => {
     expect(expectedCash(movements, 2000, "cash-1")).toBe(1000);
   });
 
-  it("no incluye efectivo legacy sin cuenta cuando existe una cuenta cash", () => {
+  it("incluye efectivo unassigned/legacy sin cuenta aunque exista una cuenta cash", () => {
     const movements = [
       movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
       movement({ type: "ingreso", amount: 500, method: "efectivo", accountId: null }),
+    ];
+    expect(expectedCash(movements, 0, "cash-1")).toBe(600);
+  });
+
+  it("ignora movimientos en efectivo asignados a otra cuenta (banco) aunque tengan método efectivo", () => {
+    const movements = [
+      movement({ type: "ingreso", amount: 100, method: "efectivo", accountId: "cash-1" }),
+      movement({ type: "ingreso", amount: 500, method: "efectivo", accountId: "bank-1" }),
     ];
     expect(expectedCash(movements, 0, "cash-1")).toBe(100);
   });

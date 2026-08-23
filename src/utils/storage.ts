@@ -227,8 +227,14 @@ export function loadData(): AppData {
   }
 }
 
-export function saveData(data: AppData) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+export function saveData(data: AppData): boolean {
+  try {
+    if (typeof localStorage === "undefined") return false;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function clearLocalAppData() {
