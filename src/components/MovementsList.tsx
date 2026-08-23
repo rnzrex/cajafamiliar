@@ -462,6 +462,7 @@ export function MovementsList({
           categories={categories}
           accounts={accounts}
           corrections={movementCorrections}
+          currentMember={currentMember}
           onClose={() => setCorrectingMovement(null)}
           onSuccess={async () => {
             if (onReloadAllData) {

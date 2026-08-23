@@ -1,5 +1,5 @@
 import { fetchAllSupabaseRows } from "./supabasePagination";
-import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError } from "./dataRepositoryErrors";
+import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors";
 import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
@@ -1720,7 +1720,8 @@ export function fromMovementCorrectionRow(row: Record<string, any>): MovementCor
     id: String(row.id),
     householdId: String(row.household_id),
     movementId: String(row.movement_id),
-    correctionId: row.correction_id ? String(row.correction_id) : null,
+    correctionId: String(row.correction_id),
+    requestSnapshot: row.request_snapshot ?? {},
     beforeSnapshot: row.before_snapshot ?? {},
     afterSnapshot: row.after_snapshot ?? {},
     reason: String(row.reason),
@@ -1731,7 +1732,7 @@ export function fromMovementCorrectionRow(row: Record<string, any>): MovementCor
 
 export interface CorrectReconciledMovementInput {
   movementId: string;
-  correctionId?: string | null;
+  correctionId: string;
   expectedUpdatedAt: string;
   date: string;
   amount: number;
@@ -1750,6 +1751,9 @@ export interface CorrectReconciledMovementResult {
 }
 
 function mapMovementCorrectionError(error: { message?: string }) {
+  if (error.message?.includes("MOVEMENT_CORRECTION_ID_CONFLICT") || error.message === "MOVEMENT_CORRECTION_ID_CONFLICT") {
+    return new MovementCorrectionIdConflictError();
+  }
   if (error.message?.includes("MOVEMENT_CORRECTION_CONFLICT") || error.message === "MOVEMENT_CORRECTION_CONFLICT") {
     return new MovementCorrectionConflictError();
   }
@@ -1778,10 +1782,14 @@ export async function correctReconciledMovementV1(
     throw new DebtOperationUnavailableError();
   }
 
+  if (!input.correctionId) {
+    throw new Error("El ID de corrección es obligatorio.");
+  }
+
   const { data, error } = await supabase.rpc("correct_reconciled_movement_v1", {
     p_household_id: householdId,
     p_movement_id: input.movementId,
-    p_correction_id: input.correctionId ?? null,
+    p_correction_id: input.correctionId,
     p_expected_updated_at: input.expectedUpdatedAt,
     p_date: input.date,
     p_amount: input.amount,
@@ -1798,12 +1806,14 @@ export async function correctReconciledMovementV1(
     throw mapped ?? new Error(error.message || "Error al corregir el movimiento conciliado.");
   }
 
-  if (!data || !data.movement || !data.correction) {
+  if (!data || (!data.after_snapshot && !data.movement) || !data.correction) {
     throw new Error("Supabase no devolvió la corrección esperada.");
   }
 
+  const movementRow = data.after_snapshot ?? data.movement;
+
   return {
-    movement: fromMovementRow(data.movement),
+    movement: fromMovementRow(movementRow),
     correction: fromMovementCorrectionRow(data.correction),
     idempotent: Boolean(data.idempotent),
   };

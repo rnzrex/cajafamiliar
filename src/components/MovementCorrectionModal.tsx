@@ -1,15 +1,17 @@
 import React, { useState } from "react";
 import { AlertTriangle, History, ShieldAlert, X } from "lucide-react";
-import type { Category, FinancialAccount, Movement, MovementCorrection } from "../types.js";
+import type { Category, FinancialAccount, HouseholdMember, Movement, MovementCorrection } from "../types.js";
 import { correctReconciledMovementV1 } from "../services/dataRepository.js";
 import { isSupabaseConfigured } from "../services/supabaseClient.js";
 import { UNASSIGNED_ACCOUNT_ID } from "../utils/accountHelpers.js";
+import { formatMovementCorrectionUser, getMovementCorrectionFieldChanges } from "../utils/movementCorrectionHelpers.js";
 
 interface MovementCorrectionModalProps {
   movement: Movement;
   categories: Category[];
   accounts: FinancialAccount[];
   corrections?: MovementCorrection[];
+  currentMember?: HouseholdMember;
   onClose: () => void;
   onSuccess: () => void | Promise<void>;
 }
@@ -19,9 +21,11 @@ export function MovementCorrectionModal({
   categories,
   accounts,
   corrections = [],
+  currentMember,
   onClose,
   onSuccess,
 }: MovementCorrectionModalProps) {
+  const [correctionId] = useState(() => crypto.randomUUID());
   const [date, setDate] = useState(movement.date);
   const [amount, setAmount] = useState<string>(String(movement.amount));
   const [description, setDescription] = useState(movement.description);
@@ -61,6 +65,7 @@ export function MovementCorrectionModal({
     try {
       await correctReconciledMovementV1({
         movementId: movement.id,
+        correctionId,
         expectedUpdatedAt: movement.updatedAt || movement.createdAt || new Date().toISOString(),
         date: date.trim(),
         amount: parsedAmount,
@@ -265,17 +270,34 @@ export function MovementCorrectionModal({
                 <History className="h-4 w-4 text-slate-500" />
                 Historial de correcciones previas ({movementCorrections.length})
               </h4>
-              <div className="mt-2 max-h-36 overflow-y-auto space-y-2 text-xs">
-                {movementCorrections.map((c) => (
-                  <div key={c.id} className="rounded-xl bg-white p-2.5 shadow-sm border border-slate-100">
-                    <p className="font-semibold text-slate-800">
-                      Motivo: <span className="font-normal">{c.reason}</span>
-                    </p>
-                    <p className="text-slate-500 text-[11px] mt-0.5">
-                      Fecha: {new Date(c.createdAt).toLocaleString()}
-                    </p>
-                  </div>
-                ))}
+              <div className="mt-2 max-h-48 overflow-y-auto space-y-2.5 text-xs">
+                {movementCorrections.map((c) => {
+                  const fieldChanges = getMovementCorrectionFieldChanges(c.beforeSnapshot, c.afterSnapshot, accounts);
+                  const userName = formatMovementCorrectionUser(c.registeredByUserId, currentMember);
+                  return (
+                    <div key={c.id} className="rounded-xl bg-white p-3 shadow-sm border border-slate-200">
+                      <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500 font-medium">
+                        <span>Fecha: {new Date(c.createdAt).toLocaleString()}</span>
+                        <span className="font-semibold text-slate-700">Registrado por: {userName}</span>
+                      </div>
+                      <p className="mt-1 font-semibold text-slate-800">
+                        Motivo: <span className="font-normal text-slate-700">{c.reason}</span>
+                      </p>
+                      {fieldChanges.length > 0 && (
+                        <div className="mt-2 space-y-1 rounded-lg bg-amber-50/50 p-2 border border-amber-100 text-[11px]">
+                          <p className="font-bold text-amber-900">Cambios realizados:</p>
+                          {fieldChanges.map((change) => (
+                            <p key={change.fieldKey} className="text-slate-700">
+                              <span className="font-semibold">{change.label}:</span>{" "}
+                              <span className="line-through text-slate-400">{change.beforeValue}</span>{" "}
+                              &rarr; <span className="font-bold text-slate-900">{change.afterValue}</span>
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

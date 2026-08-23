@@ -107,3 +107,10 @@ export class MovementNotReconciledError extends Error {
     this.name = "MovementNotReconciledError";
   }
 }
+
+export class MovementCorrectionIdConflictError extends Error {
+  constructor() {
+    super("El ID de corrección ya fue utilizado con un payload o movimiento distinto (conflicto de idempotencia).");
+    this.name = "MovementCorrectionIdConflictError";
+  }
+}

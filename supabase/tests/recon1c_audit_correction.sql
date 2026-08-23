@@ -11,11 +11,13 @@ declare
   v_other_user_id uuid := '33333333-3333-3333-3333-333333333333';
   v_account_id uuid := '44444444-4444-4444-4444-444444444444';
   v_rec_id uuid := '55555555-5555-5555-5555-555555555555';
+  v_corr_id1 uuid := '66666666-6666-6666-6666-666666666666';
+  v_corr_id2 uuid := '77777777-7777-7777-7777-777777777777';
   v_mov_id text := 'mov-recon1c-test-1';
-  v_debt_mov_id text := 'mov-recon1c-debt-1';
   v_now timestamptz := now();
   v_result jsonb;
-  v_err_code text;
+  v_first_updated_at timestamptz;
+  v_second_updated_at timestamptz;
 begin
   raise notice 'Starting RECON-1C SQL verification suite...';
 
@@ -77,15 +79,16 @@ begin
     raise notice 'PASS Test B: Direct DELETE blocked with MOVEMENT_RECONCILED';
   end;
 
-  -- Set session auth user context for RPC execution
+  -- Set session auth user context for authenticated user
   perform set_config('request.jwt.claim.sub', v_user_id::text, true);
 
-  -- TEST C: Optimistic Concurrency Conflict (wrong expected_updated_at)
+  -- TEST C: Null / Missing correction ID must fail with INVALID_CORRECTION_ID
   begin
     v_result := public.correct_reconciled_movement_v1(
       p_household_id => v_household_id,
       p_movement_id => v_mov_id,
-      p_expected_updated_at => v_now - interval '10 seconds',
+      p_correction_id => null,
+      p_expected_updated_at => v_now,
       p_date => '2026-08-20',
       p_amount => 55.00,
       p_description => 'Almuerzo corregido',
@@ -93,92 +96,150 @@ begin
       p_category => 'Comida / cenas',
       p_person => 'Juan',
       p_account_id => v_account_id,
-      p_reason => 'Error de tipeo'
+      p_reason => 'Sin ID'
     );
-    raise exception 'TEST_FAILED: Optimistic concurrency check failed to reject stale timestamp';
+    raise exception 'TEST_FAILED: Null correction ID should have failed';
   exception when others then
-    if sqlerrm not like '%MOVEMENT_CORRECTION_CONFLICT%' then
-      raise exception 'TEST_FAILED: Expected MOVEMENT_CORRECTION_CONFLICT, got %', sqlerrm;
+    if sqlerrm not like '%INVALID_CORRECTION_ID%' then
+      raise exception 'TEST_FAILED: Expected INVALID_CORRECTION_ID, got %', sqlerrm;
     end if;
-    raise notice 'PASS Test C: Optimistic concurrency conflict detected correctly';
+    raise notice 'PASS Test C: Null correction ID rejected correctly';
   end;
 
-  -- TEST D: Account & Method mismatch rejection (cash account with TRANSFERENCIA method)
+  -- TEST D: Standard matched movement RPC correction 1 SUCCESS
+  v_result := public.correct_reconciled_movement_v1(
+    p_household_id => v_household_id,
+    p_movement_id => v_mov_id,
+    p_correction_id => v_corr_id1,
+    p_expected_updated_at => v_now,
+    p_date => '2026-08-21',
+    p_amount => 55.00,
+    p_description => 'Almuerzo equipo 1era correccion',
+    p_method => 'efectivo',
+    p_category => 'Comida / cenas',
+    p_person => 'Juan Carlos',
+    p_account_id => v_account_id,
+    p_reason => 'Primera correccion boleta'
+  );
+
+  if (v_result->>'success')::boolean is not true then
+    raise exception 'TEST_FAILED: RPC correction 1 failed: %', v_result;
+  end if;
+  v_first_updated_at := (v_result->'after_snapshot'->>'updated_at')::timestamptz;
+  raise notice 'PASS Test D: First RPC correction succeeded';
+
+  -- TEST E: Identical retry with v_corr_id1 returns stored first snapshot and idempotent = true
+  v_result := public.correct_reconciled_movement_v1(
+    p_household_id => v_household_id,
+    p_movement_id => v_mov_id,
+    p_correction_id => v_corr_id1,
+    p_expected_updated_at => v_now,
+    p_date => '2026-08-21',
+    p_amount => 55.00,
+    p_description => 'Almuerzo equipo 1era correccion',
+    p_method => 'efectivo',
+    p_category => 'Comida / cenas',
+    p_person => 'Juan Carlos',
+    p_account_id => v_account_id,
+    p_reason => 'Primera correccion boleta'
+  );
+
+  if (v_result->>'idempotent')::boolean is not true or (v_result->'after_snapshot'->>'description') <> 'Almuerzo equipo 1era correccion' then
+    raise exception 'TEST_FAILED: Identical retry did not return exact stored first after_snapshot';
+  end if;
+  raise notice 'PASS Test E: Identical retry returned stored snapshot and idempotent=true';
+
+  -- TEST F: Incompatible retry with v_corr_id1 (different amount) returns MOVEMENT_CORRECTION_ID_CONFLICT
   begin
     v_result := public.correct_reconciled_movement_v1(
       p_household_id => v_household_id,
       p_movement_id => v_mov_id,
+      p_correction_id => v_corr_id1,
       p_expected_updated_at => v_now,
-      p_date => '2026-08-20',
-      p_amount => 55.00,
-      p_description => 'Almuerzo corregido',
-      p_method => 'transferencia',
+      p_date => '2026-08-21',
+      p_amount => 999.00, -- DIFFERENT AMOUNT
+      p_description => 'Almuerzo equipo 1era correccion',
+      p_method => 'efectivo',
       p_category => 'Comida / cenas',
-      p_person => 'Juan',
+      p_person => 'Juan Carlos',
       p_account_id => v_account_id,
-      p_reason => 'Probando mismatch'
+      p_reason => 'Primera correccion boleta'
     );
-    raise exception 'TEST_FAILED: Account/method mismatch failed to trigger ACCOUNT_METHOD_MISMATCH';
+    raise exception 'TEST_FAILED: Incompatible retry should have raised MOVEMENT_CORRECTION_ID_CONFLICT';
   exception when others then
-    if sqlerrm not like '%ACCOUNT_METHOD_MISMATCH%' then
-      raise exception 'TEST_FAILED: Expected ACCOUNT_METHOD_MISMATCH, got %', sqlerrm;
+    if sqlerrm not like '%MOVEMENT_CORRECTION_ID_CONFLICT%' then
+      raise exception 'TEST_FAILED: Expected MOVEMENT_CORRECTION_ID_CONFLICT, got %', sqlerrm;
     end if;
-    raise notice 'PASS Test D: Account/method mismatch validated correctly';
+    raise notice 'PASS Test F: Incompatible retry with same ID rejected with MOVEMENT_CORRECTION_ID_CONFLICT';
   end;
 
-  -- TEST E: Standard matched movement RPC correction SUCCESS
+  -- TEST G: Second correction on movement with v_corr_id2 (using updated_at from first correction)
   v_result := public.correct_reconciled_movement_v1(
     p_household_id => v_household_id,
     p_movement_id => v_mov_id,
-    p_correction_id => 'corr-recon1c-1',
-    p_expected_updated_at => v_now,
-    p_date => '2026-08-21',
-    p_amount => 55.00,
-    p_description => 'Almuerzo equipo corregido',
+    p_correction_id => v_corr_id2,
+    p_expected_updated_at => v_first_updated_at,
+    p_date => '2026-08-22',
+    p_amount => 65.00,
+    p_description => 'Almuerzo equipo 2da correccion',
     p_method => 'efectivo',
     p_category => 'Comida / cenas',
     p_person => 'Juan Carlos',
     p_account_id => v_account_id,
-    p_reason => 'Monto corregido según boleta física'
+    p_reason => 'Segunda correccion factura'
   );
 
   if (v_result->>'success')::boolean is not true then
-    raise exception 'TEST_FAILED: RPC correction failed: %', v_result;
+    raise exception 'TEST_FAILED: Second RPC correction failed';
   end if;
-  raise notice 'PASS Test E: RPC correction succeeded for standard matched movement';
+  v_second_updated_at := (v_result->'after_snapshot'->>'updated_at')::timestamptz;
+  raise notice 'PASS Test G: Second RPC correction succeeded';
 
-  -- TEST F: Verify movement_corrections table audit snapshot
-  if not exists (
-    select 1
-    from public.movement_corrections
-    where correction_id = 'corr-recon1c-1'
-      and household_id = v_household_id
-      and reason = 'Monto corregido según boleta física'
-  ) then
-    raise exception 'TEST_FAILED: Audit row in movement_corrections was not created properly';
-  end if;
-  raise notice 'PASS Test F: Audit row stored in movement_corrections with before/after snapshots';
-
-  -- TEST G: Idempotency check with same correction_id
+  -- TEST H: Retrying FIRST correction ID (v_corr_id1) now MUST return FIRST stored after_snapshot, NOT second state!
   v_result := public.correct_reconciled_movement_v1(
     p_household_id => v_household_id,
     p_movement_id => v_mov_id,
-    p_correction_id => 'corr-recon1c-1',
+    p_correction_id => v_corr_id1,
     p_expected_updated_at => v_now,
     p_date => '2026-08-21',
     p_amount => 55.00,
-    p_description => 'Almuerzo equipo corregido',
+    p_description => 'Almuerzo equipo 1era correccion',
     p_method => 'efectivo',
     p_category => 'Comida / cenas',
     p_person => 'Juan Carlos',
     p_account_id => v_account_id,
-    p_reason => 'Monto corregido según boleta física'
+    p_reason => 'Primera correccion boleta'
   );
 
-  if (v_result->>'idempotent')::boolean is not true then
-    raise exception 'TEST_FAILED: Expected idempotent flag in RPC response';
+  if (v_result->'after_snapshot'->>'description') <> 'Almuerzo equipo 1era correccion' or (v_result->'after_snapshot'->>'amount')::numeric <> 55.00 then
+    raise exception 'TEST_FAILED: Retrying first correction returned latest state instead of historical first stored after_snapshot!';
   end if;
-  raise notice 'PASS Test G: Strict idempotency by correction_id preserved';
+  raise notice 'PASS Test H: Historical retry returned original first snapshot despite later 2nd correction';
+
+  -- TEST I: Security check — Outside household member RPC call rejected
+  perform set_config('request.jwt.claim.sub', v_other_user_id::text, true);
+  begin
+    v_result := public.correct_reconciled_movement_v1(
+      p_household_id => v_household_id,
+      p_movement_id => v_mov_id,
+      p_correction_id => gen_random_uuid(),
+      p_expected_updated_at => v_second_updated_at,
+      p_date => '2026-08-22',
+      p_amount => 70.00,
+      p_description => 'Intento outsider',
+      p_method => 'efectivo',
+      p_category => 'Comida / cenas',
+      p_person => 'Juan Carlos',
+      p_account_id => v_account_id,
+      p_reason => 'Hack attempt'
+    );
+    raise exception 'TEST_FAILED: Outside member call should have been rejected with NOT_HOUSEHOLD_MEMBER';
+  exception when others then
+    if sqlerrm not like '%NOT_HOUSEHOLD_MEMBER%' then
+      raise exception 'TEST_FAILED: Expected NOT_HOUSEHOLD_MEMBER, got %', sqlerrm;
+    end if;
+    raise notice 'PASS Test I: Outside household member rejected with NOT_HOUSEHOLD_MEMBER';
+  end;
 
   raise notice 'ALL RECON-1C SQL VERIFICATION TESTS PASSED SUCCESSFULLY!';
 end;

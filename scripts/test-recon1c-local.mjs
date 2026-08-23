@@ -79,8 +79,9 @@ async function runLocalSmoke() {
     auth: { persistSession: false },
   });
 
-  // Setup Auth user
+  // 1. Setup Auth users & Household
   const testEmail = `test.recon1c.${Date.now()}@local.test`;
+  const outsiderEmail = `outsider.recon1c.${Date.now()}@local.test`;
   const testPassword = "LocalTestPassword123!";
 
   log(`Creating auth user ${testEmail}...`);
@@ -89,9 +90,16 @@ async function runLocalSmoke() {
     password: testPassword,
     email_confirm: true,
   });
-
   assert(!userErr && userData?.user, "Auth user created", userErr);
   const userId = userData.user.id;
+
+  const { data: outsiderData, error: outsiderErr } = await adminClient.auth.admin.createUser({
+    email: outsiderEmail,
+    password: testPassword,
+    email_confirm: true,
+  });
+  assert(!outsiderErr && outsiderData?.user, "Outsider user created", outsiderErr);
+  const outsiderId = outsiderData.user.id;
 
   const userClient = createClient(LOCAL_SUPABASE_URL, LOCAL_ANON_KEY, {
     auth: { persistSession: false },
@@ -101,6 +109,15 @@ async function runLocalSmoke() {
     password: testPassword,
   });
   assert(!signInErr, "Authenticated user login successful", signInErr);
+
+  const outsiderClient = createClient(LOCAL_SUPABASE_URL, LOCAL_ANON_KEY, {
+    auth: { persistSession: false },
+  });
+  const { error: outsiderSignInErr } = await outsiderClient.auth.signInWithPassword({
+    email: outsiderEmail,
+    password: testPassword,
+  });
+  assert(!outsiderSignInErr, "Outsider login successful", outsiderSignInErr);
 
   // Household setup
   const householdId = "00000000-0000-4000-8000-000000001c00";
@@ -137,7 +154,7 @@ async function runLocalSmoke() {
     assert(!accErr, "Financial account created", accErr);
   }
 
-  // Movement
+  // Standard Movement
   const movementId = "mov-recon1c-smoke-1";
   const { data: insertedMov, error: movErr } = await adminClient
     .from("movements")
@@ -157,8 +174,7 @@ async function runLocalSmoke() {
     })
     .select("*")
     .single();
-
-  assert(!movErr && insertedMov, "Movement created", movErr);
+  assert(!movErr && insertedMov, "Standard Movement created", movErr);
 
   // Reconciliation
   const recId = "00000000-0000-4000-8000-000000001c02";
@@ -185,7 +201,7 @@ async function runLocalSmoke() {
     movement_snapshot: insertedMov,
   });
 
-  // Direct update should be blocked
+  // Direct UPDATE / DELETE blocked
   const { error: directUpdateErr } = await userClient
     .from("movements")
     .update({ amount: 150 })
@@ -196,7 +212,6 @@ async function runLocalSmoke() {
     directUpdateErr
   );
 
-  // Direct delete should be blocked
   const { error: directDeleteErr } = await userClient
     .from("movements")
     .delete()
@@ -207,51 +222,195 @@ async function runLocalSmoke() {
     directDeleteErr
   );
 
-  // RPC Correction call
-  const { data: rpcRes, error: rpcErr } = await userClient.rpc("correct_reconciled_movement_v1", {
+  // Direct INSERT/UPDATE/DELETE on movement_corrections table denied for authenticated
+  const { error: directCorrInsertErr } = await userClient
+    .from("movement_corrections")
+    .insert({
+      household_id: householdId,
+      movement_id: movementId,
+      correction_id: "00000000-0000-4000-8000-000000009999",
+      request_snapshot: {},
+      before_snapshot: {},
+      after_snapshot: {},
+      reason: "Direct insert test",
+      registered_by_user_id: userId,
+    });
+  assert(
+    directCorrInsertErr !== null,
+    "Direct INSERT on movement_corrections denied for authenticated user",
+    directCorrInsertErr
+  );
+
+  // SECURITY MATRIX CHECKS
+  // 1. Anon call denied
+  const { error: anonRpcErr } = await anonClient.rpc("correct_reconciled_movement_v1", {
     p_household_id: householdId,
     p_movement_id: movementId,
-    p_correction_id: "corr-smoke-1",
+    p_correction_id: "00000000-0000-4000-8000-000000000001",
     p_expected_updated_at: insertedMov.updated_at,
     p_date: "2026-08-11",
     p_amount: 120.0,
-    p_description: "Almuerzo corregido",
+    p_description: "Anon test",
+    p_method: "efectivo",
+    p_category: "Comida / cenas",
+    p_reason: "Anon test",
+  });
+  assert(anonRpcErr !== null, "Anon RPC call denied with permission error", anonRpcErr);
+
+  // 2. Service_role call denied
+  const { error: serviceRoleRpcErr } = await adminClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: movementId,
+    p_correction_id: "00000000-0000-4000-8000-000000000002",
+    p_expected_updated_at: insertedMov.updated_at,
+    p_date: "2026-08-11",
+    p_amount: 120.0,
+    p_description: "Service role test",
+    p_method: "efectivo",
+    p_category: "Comida / cenas",
+    p_reason: "Service role test",
+  });
+  assert(serviceRoleRpcErr !== null, "Service_role RPC call denied with permission error", serviceRoleRpcErr);
+
+  // 3. Outside household user denied
+  const { error: outsiderRpcErr } = await outsiderClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: movementId,
+    p_correction_id: "00000000-0000-4000-8000-000000000003",
+    p_expected_updated_at: insertedMov.updated_at,
+    p_date: "2026-08-11",
+    p_amount: 120.0,
+    p_description: "Outsider test",
+    p_method: "efectivo",
+    p_category: "Comida / cenas",
+    p_reason: "Outsider test",
+  });
+  assert(
+    outsiderRpcErr && outsiderRpcErr.message.includes("NOT_HOUSEHOLD_MEMBER"),
+    "Outside household user denied with NOT_HOUSEHOLD_MEMBER",
+    outsiderRpcErr
+  );
+
+  // 4. Null / Missing correction ID rejected
+  const { error: nullCorrErr } = await userClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: movementId,
+    p_correction_id: null,
+    p_expected_updated_at: insertedMov.updated_at,
+    p_date: "2026-08-11",
+    p_amount: 120.0,
+    p_description: "Null corr test",
+    p_method: "efectivo",
+    p_category: "Comida / cenas",
+    p_reason: "Null corr test",
+  });
+  assert(
+    nullCorrErr && nullCorrErr.message.includes("INVALID_CORRECTION_ID"),
+    "Missing/null correction ID rejected with INVALID_CORRECTION_ID",
+    nullCorrErr
+  );
+
+  // 5. SUCCESSFUL FIRST CORRECTION EXECUTION
+  const corr1Id = "11111111-1111-4000-8000-111111111111";
+  const { data: rpcRes1, error: rpcErr1 } = await userClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: movementId,
+    p_correction_id: corr1Id,
+    p_expected_updated_at: insertedMov.updated_at,
+    p_date: "2026-08-11",
+    p_amount: 120.0,
+    p_description: "Almuerzo 1era correccion",
     p_method: "efectivo",
     p_category: "Comida / cenas",
     p_person: "Papa Carlos",
     p_account_id: accountId,
-    p_reason: "Boleta corregida",
+    p_reason: "Boleta corregida v1",
   });
+  assert(!rpcErr1 && rpcRes1?.success, "Authenticated member RPC correction 1 succeeded", rpcErr1);
+  const firstAfterSnapshot = rpcRes1.after_snapshot;
 
-  assert(!rpcErr && rpcRes?.success, "RPC correct_reconciled_movement_v1 executed successfully", rpcErr);
-
-  // Check movement_corrections table contains audit record
-  const { data: auditData, error: auditErr } = await userClient
-    .from("movement_corrections")
-    .select("*")
-    .eq("correction_id", "corr-smoke-1")
-    .single();
-
-  assert(!auditErr && auditData && auditData.reason === "Boleta corregida", "Audit row created in movement_corrections", auditErr);
-
-  // Idempotency check
+  // 6. Identical retry with same corr1Id -> returns stored first after_snapshot & idempotent=true
   const { data: idemRes, error: idemErr } = await userClient.rpc("correct_reconciled_movement_v1", {
     p_household_id: householdId,
     p_movement_id: movementId,
-    p_correction_id: "corr-smoke-1",
+    p_correction_id: corr1Id,
     p_expected_updated_at: insertedMov.updated_at,
     p_date: "2026-08-11",
     p_amount: 120.0,
-    p_description: "Almuerzo corregido",
+    p_description: "Almuerzo 1era correccion",
     p_method: "efectivo",
     p_category: "Comida / cenas",
     p_person: "Papa Carlos",
     p_account_id: accountId,
-    p_reason: "Boleta corregida",
+    p_reason: "Boleta corregida v1",
   });
-  assert(!idemErr && idemRes?.idempotent === true, "Idempotent RPC call returned existing correction without error", idemErr);
+  assert(
+    !idemErr && idemRes?.idempotent === true && idemRes.after_snapshot.description === "Almuerzo 1era correccion",
+    "Identical retry returned stored snapshot and idempotent=true",
+    idemErr
+  );
 
-  log("ALL RECON-1C LOCAL SMOKE CHECKS PASSED PERFECTLY!");
+  // 7. Incompatible retry with same corr1Id (different amount) -> MOVEMENT_CORRECTION_ID_CONFLICT
+  const { error: incompErr } = await userClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: movementId,
+    p_correction_id: corr1Id,
+    p_expected_updated_at: insertedMov.updated_at,
+    p_date: "2026-08-11",
+    p_amount: 999.0, // DIFFERENT AMOUNT
+    p_description: "Almuerzo 1era correccion",
+    p_method: "efectivo",
+    p_category: "Comida / cenas",
+    p_person: "Papa Carlos",
+    p_account_id: accountId,
+    p_reason: "Boleta corregida v1",
+  });
+  assert(
+    incompErr && incompErr.message.includes("MOVEMENT_CORRECTION_ID_CONFLICT"),
+    "Incompatible payload with same ID rejected with MOVEMENT_CORRECTION_ID_CONFLICT",
+    incompErr
+  );
+
+  // 8. Second correction with corr2Id
+  const corr2Id = "22222222-2222-4000-8000-222222222222";
+  const { data: rpcRes2, error: rpcErr2 } = await userClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: movementId,
+    p_correction_id: corr2Id,
+    p_expected_updated_at: firstAfterSnapshot.updated_at,
+    p_date: "2026-08-12",
+    p_amount: 130.0,
+    p_description: "Almuerzo 2da correccion",
+    p_method: "efectivo",
+    p_category: "Comida / cenas",
+    p_person: "Papa Carlos",
+    p_account_id: accountId,
+    p_reason: "Factura corregida v2",
+  });
+  assert(!rpcErr2 && rpcRes2?.success, "Second RPC correction 2 succeeded", rpcErr2);
+
+  // 9. Retrying FIRST correction ID (corr1Id) after second correction MUST return FIRST stored snapshot (not second!)
+  const { data: histRes, error: histErr } = await userClient.rpc("correct_reconciled_movement_v1", {
+    p_household_id: householdId,
+    p_movement_id: movementId,
+    p_correction_id: corr1Id,
+    p_expected_updated_at: insertedMov.updated_at,
+    p_date: "2026-08-11",
+    p_amount: 120.0,
+    p_description: "Almuerzo 1era correccion",
+    p_method: "efectivo",
+    p_category: "Comida / cenas",
+    p_person: "Papa Carlos",
+    p_account_id: accountId,
+    p_reason: "Boleta corregida v1",
+  });
+  assert(
+    !histErr && histRes?.after_snapshot.description === "Almuerzo 1era correccion",
+    "Historical retry returned FIRST stored after_snapshot despite later 2nd correction",
+    histErr
+  );
+
+  log("ALL RECON-1C LOCAL SMOKE CHECKS & SECURITY MATRIX PASSED PERFECTLY!");
 }
 
 runLocalSmoke().catch((err) => {

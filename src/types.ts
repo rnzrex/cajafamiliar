@@ -515,7 +515,8 @@ export interface MovementCorrection {
   id: string;
   householdId: string;
   movementId: string;
-  correctionId?: string | null;
+  correctionId: string;
+  requestSnapshot?: Record<string, any>;
   beforeSnapshot: Record<string, any>;
   afterSnapshot: Record<string, any>;
   reason: string;

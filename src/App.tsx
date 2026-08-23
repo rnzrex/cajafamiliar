@@ -1385,7 +1385,9 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               onQuickCreateCategory={saveCategory}
               onSave={saveMovement}
               onDelete={deleteMovement}
-              onReloadAllData={() => void refreshAuthoritativeData("reconciliation")}
+              onReloadAllData={async () => {
+                await refreshAuthoritativeData("manual");
+              }}
             />
           )}
           {view === "conteo" && (

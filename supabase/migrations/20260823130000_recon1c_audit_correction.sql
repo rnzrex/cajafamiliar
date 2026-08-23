@@ -5,7 +5,8 @@ create table if not exists public.movement_corrections (
   id uuid not null default gen_random_uuid() primary key,
   household_id uuid not null,
   movement_id text not null,
-  correction_id text null,
+  correction_id uuid not null,
+  request_snapshot jsonb not null,
   before_snapshot jsonb not null,
   after_snapshot jsonb not null,
   reason text not null,
@@ -13,7 +14,7 @@ create table if not exists public.movement_corrections (
   created_at timestamptz not null default now(),
 
   constraint movement_corrections_correction_id_key
-    unique (correction_id),
+    unique (household_id, correction_id),
   constraint movement_corrections_household_fkey
     foreign key (household_id)
     references public.households(id)
@@ -126,7 +127,7 @@ $function$;
 create or replace function public.correct_reconciled_movement_v1(
   p_household_id uuid,
   p_movement_id text,
-  p_correction_id text default null,
+  p_correction_id uuid,
   p_expected_updated_at timestamptz default null,
   p_date text default null,
   p_amount numeric default null,
@@ -149,7 +150,7 @@ declare
   v_updated_movement public.movements%rowtype;
   v_account public.financial_accounts%rowtype;
   v_before_snapshot jsonb;
-  v_after_snapshot jsonb;
+  v_request_snapshot jsonb;
   v_now timestamptz;
   v_correction_row public.movement_corrections%rowtype;
 begin
@@ -169,28 +170,45 @@ begin
     raise exception 'NOT_HOUSEHOLD_MEMBER';
   end if;
 
-  -- 3. Strict Idempotency check by correction_id
-  if p_correction_id is not null and trim(p_correction_id) <> '' then
-    select *
-      into v_existing_corr
-      from public.movement_corrections
-     where correction_id = trim(p_correction_id)
-       and household_id = p_household_id;
+  -- 3. Mandatory correction_id check
+  if p_correction_id is null then
+    raise exception 'INVALID_CORRECTION_ID';
+  end if;
 
-    if found then
-      select *
-        into v_updated_movement
-        from public.movements
-       where id = p_movement_id
-         and household_id = p_household_id;
+  -- Build canonical request snapshot for idempotency verification
+  v_request_snapshot := jsonb_build_object(
+    'movement_id', p_movement_id,
+    'expected_updated_at', p_expected_updated_at,
+    'date', p_date,
+    'amount', p_amount,
+    'description', trim(p_description),
+    'method', trim(p_method),
+    'category', trim(p_category),
+    'person', trim(p_person),
+    'account_id', p_account_id,
+    'reason', trim(p_reason)
+  );
 
-      return jsonb_build_object(
-        'success', true,
-        'movement', to_jsonb(v_updated_movement),
-        'correction', to_jsonb(v_existing_corr),
-        'idempotent', true
-      );
+  -- Strict Idempotency & Conflict check by correction_id
+  select *
+    into v_existing_corr
+    from public.movement_corrections
+   where correction_id = p_correction_id;
+
+  if found then
+    if v_existing_corr.household_id <> p_household_id
+       or v_existing_corr.movement_id <> p_movement_id
+       or v_existing_corr.request_snapshot <> v_request_snapshot then
+      raise exception 'MOVEMENT_CORRECTION_ID_CONFLICT';
     end if;
+
+    return jsonb_build_object(
+      'success', true,
+      'idempotent', true,
+      'correction_id', v_existing_corr.correction_id,
+      'after_snapshot', v_existing_corr.after_snapshot,
+      'correction', to_jsonb(v_existing_corr)
+    );
   end if;
 
   -- 4. Lock movement
@@ -303,6 +321,7 @@ begin
     household_id,
     movement_id,
     correction_id,
+    request_snapshot,
     before_snapshot,
     after_snapshot,
     reason,
@@ -311,7 +330,8 @@ begin
   ) values (
     p_household_id,
     p_movement_id,
-    trim(p_correction_id),
+    p_correction_id,
+    v_request_snapshot,
     v_before_snapshot,
     to_jsonb(v_updated_movement),
     trim(p_reason),
@@ -323,11 +343,12 @@ begin
   return jsonb_build_object(
     'success', true,
     'movement', to_jsonb(v_updated_movement),
+    'after_snapshot', to_jsonb(v_updated_movement),
     'correction', to_jsonb(v_correction_row)
   );
 end;
 $function$;
 
 -- Revoke default public execution privileges and grant to authenticated only
-revoke all on function public.correct_reconciled_movement_v1(uuid, text, text, timestamptz, text, numeric, text, text, text, text, uuid, text) from public, anon, service_role;
-grant execute on function public.correct_reconciled_movement_v1(uuid, text, text, timestamptz, text, numeric, text, text, text, text, uuid, text) to authenticated;
+revoke all on function public.correct_reconciled_movement_v1(uuid, text, uuid, timestamptz, text, numeric, text, text, text, text, uuid, text) from public, anon, service_role;
+grant execute on function public.correct_reconciled_movement_v1(uuid, text, uuid, timestamptz, text, numeric, text, text, text, text, uuid, text) to authenticated;
