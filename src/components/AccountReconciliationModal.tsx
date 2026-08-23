@@ -1,8 +1,8 @@
 import { AlertTriangle, CheckCircle2, History, Scale, X } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import type { AccountReconciliation, AccountReconciliationMovement, CreditCardEntry, FinancialAccount, Movement, RecordAccountReconciliationResult } from "../types.js";
-import { expectedAccountBalance } from "../utils/accountHelpers.js";
-import { expectedCash, formatMoneyByCurrency } from "../utils/calculations.js";
+import { expectedAccountBalance, expectedCashBalance } from "../utils/accountHelpers.js";
+import { formatMoneyByCurrency } from "../utils/calculations.js";
 import { isReconciliationStale } from "../utils/reconciliationHelpers.js";
 
 const CASH_DENOMINATIONS = [
@@ -55,7 +55,7 @@ export function AccountReconciliationModal({
 
   const expectedBalance = useMemo(() => {
     if (isCash) {
-      return expectedCash(movements, account.openingBalance, creditCardEntries);
+      return expectedCashBalance(movements, account.openingBalance, creditCardEntries, account.id);
     }
     return expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries);
   }, [account, movements, creditCardEntries, isCash]);

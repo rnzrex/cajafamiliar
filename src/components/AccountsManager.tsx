@@ -1,8 +1,8 @@
 import { ArchiveRestore, Archive, Pencil, Plus, Save, Wallet, X, Scale, CheckCircle2, AlertTriangle, HelpCircle } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
 import type { AccountReconciliation, AccountReconciliationMovement, CreditCardEntry, FinancialAccount, Movement, RecordAccountReconciliationResult } from "../types.js";
-import { expectedCash, formatMoneyByCurrency } from "../utils/calculations.js";
-import { accountDisplayName, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers.js";
+import { formatMoneyByCurrency } from "../utils/calculations.js";
+import { accountDisplayName, expectedAccountBalance, expectedCashBalance, getActiveCashAccount } from "../utils/accountHelpers.js";
 import { isReconciliationStale } from "../utils/reconciliationHelpers.js";
 import { AccountReconciliationModal } from "./AccountReconciliationModal.js";
 
@@ -131,7 +131,7 @@ export function AccountsManager({
           <div className="mt-3 space-y-3">
             {activeAccounts.map((account) => {
               const expectedBal = account.reconciliationType === "cash"
-                ? expectedCash(movements, account.openingBalance, creditCardEntries)
+                ? expectedCashBalance(movements, account.openingBalance, creditCardEntries, account.id)
                 : expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries);
 
               const accountRecs = reconciliations.filter((r) => r.accountId === account.id);
@@ -161,7 +161,7 @@ export function AccountsManager({
           <div className="mt-3 space-y-3">
             {archivedAccounts.map((account) => {
               const expectedBal = account.reconciliationType === "cash"
-                ? expectedCash(movements, account.openingBalance, creditCardEntries)
+                ? expectedCashBalance(movements, account.openingBalance, creditCardEntries, account.id)
                 : expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries);
 
               const accountRecs = reconciliations.filter((r) => r.accountId === account.id);
