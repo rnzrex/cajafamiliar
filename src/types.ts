@@ -287,6 +287,43 @@ export interface CreditCardReversalResult {
   idempotent: boolean;
 }
 
+export interface CreditCardDebtCreateInput {
+  debtId: string;
+  name: string;
+  creditorName: string;
+  currencyCode: string;
+  originDate?: string | null;
+  trackingStartDate: string;
+  openingBalance: number;
+  creditLimit?: number | null;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  last4?: string | null;
+  teaPercent?: number | null;
+  tceaPercent?: number | null;
+  notes?: string | null;
+}
+
+export interface CreditCardDebtCreateResult {
+  success: boolean;
+  debtId: string;
+  debt: Debt;
+  profile: CreditCardProfile;
+}
+
+export interface CreditCardProfileSaveInput {
+  debtId: string;
+  creditLimit?: number | null;
+  closingDay?: number | null;
+  dueDay?: number | null;
+  last4?: string | null;
+}
+
+export interface CreditCardProfileSaveResult {
+  success: boolean;
+  profile: CreditCardProfile;
+}
+
 export interface DebtScheduleInstallmentInput {
   installmentNumber: number;
   dueDate: string;
