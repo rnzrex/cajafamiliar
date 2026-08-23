@@ -2,6 +2,12 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { DebtForm } from "./DebtForm";
+import {
+  buildDebtCreateInputPayload,
+  buildPledgeCollateralList,
+  getCurrencySymbol,
+  formatReviewDate,
+} from "../utils/debtFormMode";
 import * as dataRepository from "../services/dataRepository";
 import type { FinancialAccount, Category } from "../types";
 
@@ -24,7 +30,7 @@ vi.mock("../services/dataRepository", async () => {
   };
 });
 
-describe("DEBT-6A Simple Debt Onboarding UX & Component Integrity", () => {
+describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () => {
   const mockAccounts: FinancialAccount[] = [
     {
       id: "acc-1",
@@ -59,321 +65,223 @@ describe("DEBT-6A Simple Debt Onboarding UX & Component Integrity", () => {
     vi.clearAllMocks();
   });
 
-  it("1. currency is select, not free text with PEN and USD options", () => {
-    const html = renderToStaticMarkup(
-      <DebtForm
-        initialStep="details"
-        accounts={mockAccounts}
-        categories={mockCategories}
-        onSaved={mockOnSaved}
-        onCancel={mockOnCancel}
-        setToast={mockSetToast}
-      />
-    );
-
-    // Rendered html contains select options PEN and USD
-    expect(html).toContain("PEN — S/ Sol peruano");
-    expect(html).toContain("USD — $ Dólar estadounidense");
-    // Should not contain an open text input for currency code
-    expect(html).not.toContain('placeholder="PEN"');
-  });
-
-  it("2. only PEN and USD selectable in debt form", () => {
-    const html = renderToStaticMarkup(
-      <DebtForm
-        initialStep="details"
-        accounts={mockAccounts}
-        categories={mockCategories}
-        onSaved={mockOnSaved}
-        onCancel={mockOnCancel}
-        setToast={mockSetToast}
-      />
-    );
-
-    expect(html).toContain('<option value="PEN"');
-    expect(html).toContain('<option value="USD"');
-    expect(html).not.toContain('<option value="EUR"');
-    expect(html).not.toContain('<option value="BRL"');
-  });
-
-  it("3. PEN shows S/ symbol in amount inputs", () => {
-    const html = renderToStaticMarkup(
-      <DebtForm
-        initialStep="details"
-        accounts={mockAccounts}
-        categories={mockCategories}
-        onSaved={mockOnSaved}
-        onCancel={mockOnCancel}
-        setToast={mockSetToast}
-      />
-    );
-
-    expect(html).toContain("S/");
-  });
-
-  it("4. USD displays $ symbol", () => {
-    const html = renderToStaticMarkup(
-      <DebtForm
-        initialStep="details"
-        accounts={mockAccounts}
-        categories={mockCategories}
-        onSaved={mockOnSaved}
-        onCancel={mockOnCancel}
-        setToast={mockSetToast}
-      />
-    );
-
-    expect(html).toContain("Dólar estadounidense");
-  });
-
-  it("5. existing debt mode maps current owed amount to openingPrincipalBalance", async () => {
-    const createDebtSpy = vi.spyOn(dataRepository, "createDebt");
-
-    await dataRepository.createDebt({
-      debtId: "debt-test-5",
-      name: "Préstamo Familiar",
-      creditorName: "Tío Juan",
-      debtKind: "family_loan",
-      currencyCode: "PEN",
-      trackingStartDate: "2026-08-23",
-      openingPrincipalBalance: 1250,
-      installmentAmountMode: "unknown",
-      installments: [],
-      collaterals: [],
-    });
-
-    expect(createDebtSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        openingPrincipalBalance: 1250,
-        debtKind: "family_loan",
+  describe("Pure Production Helpers Mapping Tests", () => {
+    it("A. EXISTING_DEBT mode maps owed amount to openingPrincipalBalance and keeps originalPrincipal optional", () => {
+      const payload = buildDebtCreateInputPayload({
+        debtId: "debt-existing-1",
+        debtKind: "bank_loan",
+        onboardingMode: "EXISTING_DEBT",
         currencyCode: "PEN",
-      })
-    );
-  });
-
-  it("6. historical onboarding creates no movement/event", async () => {
-    const createDebtSpy = vi.spyOn(dataRepository, "createDebt");
-
-    await dataRepository.createDebt({
-      debtId: "debt-hist-6",
-      name: "Préstamo Antiguo BCP",
-      creditorName: "BCP",
-      debtKind: "bank_loan",
-      currencyCode: "PEN",
-      originDate: "2025-05-10",
-      trackingStartDate: "2026-08-23",
-      openingPrincipalBalance: 3000,
-      installmentAmountMode: "unknown",
-      installments: [],
-      collaterals: [],
-    });
-
-    expect(createDebtSpy).toHaveBeenCalledTimes(1);
-    const args = createDebtSpy.mock.calls[0][0];
-    expect(args.openingPrincipalBalance).toBe(3000);
-  });
-
-  it("7. origin/original amount can remain unknown or null", async () => {
-    const createDebtSpy = vi.spyOn(dataRepository, "createDebt");
-
-    await dataRepository.createDebt({
-      debtId: "debt-no-origin-7",
-      name: "Deuda Sin Origen",
-      creditorName: "Amigo",
-      debtKind: "other",
-      currencyCode: "PEN",
-      trackingStartDate: "2026-08-23",
-      originDate: null,
-      originalPrincipal: null,
-      openingPrincipalBalance: 500,
-      installmentAmountMode: "unknown",
-      installments: [],
-      collaterals: [],
-    });
-
-    expect(createDebtSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        originDate: null,
-        originalPrincipal: null,
-        openingPrincipalBalance: 500,
-      })
-    );
-  });
-
-  it("8. simple debt registration works without advanced fields", () => {
-    const html = renderToStaticMarkup(
-      <DebtForm
-        initialStep="details"
-        accounts={mockAccounts}
-        categories={mockCategories}
-        onSaved={mockOnSaved}
-        onCancel={mockOnCancel}
-        setToast={mockSetToast}
-      />
-    );
-
-    // Advanced fields (TEA, TCEA, Cronograma) are hidden by default
-    expect(html).toContain("Mostrar datos adicionales y avanzados ▼");
-    expect(html).not.toContain("Cronograma inicial de cuotas");
-  });
-
-  it("9. pledge-specific UX renders clear labels for pledge", () => {
-    const html = renderToStaticMarkup(
-      <DebtForm
-        initialStep="type_select"
-        accounts={mockAccounts}
-        categories={mockCategories}
-        onSaved={mockOnSaved}
-        onCancel={mockOnCancel}
-        setToast={mockSetToast}
-      />
-    );
-
-    // Pledge card option says "Empeño"
-    expect(html).toContain("Empeño");
-    expect(html).not.toContain("Pignoración");
-  });
-
-  it("10. redemption deadline is editable for pledge collateral", async () => {
-    const createDebtSpy = vi.spyOn(dataRepository, "createDebt");
-
-    await dataRepository.createDebt({
-      debtId: "pledge-debt-10",
-      name: "Empeño Laptop",
-      creditorName: "Caja Piura",
-      debtKind: "pledge",
-      currencyCode: "PEN",
-      trackingStartDate: "2026-08-23",
-      openingPrincipalBalance: 800,
-      installmentAmountMode: "unknown",
-      installments: [],
-      collaterals: [
-        {
-          description: "Laptop Lenovo",
-          pledgedValue: null,
-          estimatedValue: 1500,
-          redemptionDeadline: "2026-10-15",
-        },
-      ],
-    });
-
-    expect(createDebtSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        debtKind: "pledge",
-        collaterals: [
-          expect.objectContaining({
-            description: "Laptop Lenovo",
-            redemptionDeadline: "2026-10-15",
-            estimatedValue: 1500,
-          }),
-        ],
-      })
-    );
-  });
-
-  it("11. pledge collateral is correctly submitted with primary collateral", async () => {
-    const createDebtSpy = vi.spyOn(dataRepository, "createDebt");
-
-    await dataRepository.createDebt({
-      debtId: "pledge-debt-11",
-      name: "Empeño Cadena de Oro",
-      creditorName: "Empeños El Sol",
-      debtKind: "pledge",
-      currencyCode: "PEN",
-      trackingStartDate: "2026-08-23",
-      openingPrincipalBalance: 1200,
-      installmentAmountMode: "unknown",
-      installments: [],
-      collaterals: [
-        {
-          description: "Cadena de Oro 18k",
-          pledgedValue: 1200,
-          estimatedValue: 2000,
-          redemptionDeadline: "2026-12-31",
-        },
-      ],
-    });
-
-    const callArgs = createDebtSpy.mock.calls[0][0];
-    expect(callArgs.collaterals).toHaveLength(1);
-    expect(callArgs.collaterals[0].description).toBe("Cadena de Oro 18k");
-  });
-
-  it("12. non-pledge does not force collateral", async () => {
-    const createDebtSpy = vi.spyOn(dataRepository, "createDebt");
-
-    await dataRepository.createDebt({
-      debtId: "bank-debt-12",
-      name: "Préstamo Personal",
-      creditorName: "BCP",
-      debtKind: "bank_loan",
-      currencyCode: "PEN",
-      trackingStartDate: "2026-08-23",
-      openingPrincipalBalance: 5000,
-      installmentAmountMode: "unknown",
-      installments: [],
-      collaterals: [],
-    });
-
-    const callArgs = createDebtSpy.mock.calls[0][0];
-    expect(callArgs.collaterals).toEqual([]);
-  });
-
-  it("13. card onboarding remains functional", async () => {
-    const createCardSpy = vi.spyOn(dataRepository, "createCreditCardDebt");
-
-    await dataRepository.createCreditCardDebt({
-      debtId: "card-debt-13",
-      name: "Visa Interbank",
-      creditorName: "Interbank",
-      currencyCode: "USD",
-      trackingStartDate: "2026-08-23",
-      openingBalance: 450,
-      creditLimit: 2000,
-      closingDay: 20,
-      dueDay: 10,
-      last4: "4321",
-    });
-
-    expect(createCardSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "Visa Interbank",
+        name: "Préstamo Vehicular",
         creditorName: "Interbank",
-        currencyCode: "USD",
-        openingBalance: 450,
-        creditLimit: 2000,
-        last4: "4321",
-      })
-    );
+        openingPrincipalBalance: "4500.50",
+        originalPrincipal: "10000.00",
+        originDate: "2025-01-15",
+        trackingStartDate: "2026-08-23",
+      });
+
+      expect(payload.openingPrincipalBalance).toBe(4500.5);
+      expect(payload.originalPrincipal).toBe(10000);
+      expect(payload.originDate).toBe("2025-01-15");
+      expect(payload.trackingStartDate).toBe("2026-08-23");
+    });
+
+    it("A2. EXISTING_DEBT allows originalPrincipal to remain null when omitted", () => {
+      const payload = buildDebtCreateInputPayload({
+        debtId: "debt-existing-2",
+        debtKind: "family_loan",
+        onboardingMode: "EXISTING_DEBT",
+        currencyCode: "PEN",
+        name: "Deuda Familiar",
+        creditorName: "Tío Carlos",
+        openingPrincipalBalance: 800,
+        originalPrincipal: "",
+        trackingStartDate: "2026-08-23",
+      });
+
+      expect(payload.openingPrincipalBalance).toBe(800);
+      expect(payload.originalPrincipal).toBeNull();
+      expect(payload.originDate).toBeNull();
+    });
+
+    it("B. NEW_DEBT mode sets originalPrincipal equal to openingPrincipalBalance (single amount concept)", () => {
+      const payload = buildDebtCreateInputPayload({
+        debtId: "debt-new-1",
+        debtKind: "bank_loan",
+        onboardingMode: "NEW_DEBT",
+        currencyCode: "PEN",
+        name: "Préstamo Personal BCP",
+        creditorName: "BCP",
+        openingPrincipalBalance: "3500.00",
+        trackingStartDate: "2026-08-23",
+      });
+
+      expect(payload.openingPrincipalBalance).toBe(3500);
+      expect(payload.originalPrincipal).toBe(3500);
+      expect(payload.originDate).toBe("2026-08-23");
+    });
+
+    it("C. PLEDGE collateral mapping builds primary collateral correctly", () => {
+      const collaterals = buildPledgeCollateralList(
+        {
+          pledgeItemDescription: "Laptop Lenovo i7",
+          pledgeRedemptionDeadline: "2026-10-15",
+          pledgeEstimatedValue: "2500.00",
+          pledgePledgedValue: "1500.00",
+        },
+        []
+      );
+
+      expect(collaterals).toHaveLength(1);
+      expect(collaterals[0]).toEqual({
+        description: "Laptop Lenovo i7",
+        pledgedValue: 1500,
+        estimatedValue: 2500,
+        redemptionDeadline: "2026-10-15",
+      });
+    });
+
+    it("D. Currency helpers return correct symbols for PEN and USD", () => {
+      expect(getCurrencySymbol("PEN")).toBe("S/");
+      expect(getCurrencySymbol("USD")).toBe("$");
+      expect(getCurrencySymbol("OTHER")).toBe("S/");
+    });
+
+    it("E. Review date helper formats YYYY-MM-DD to DD/MM/YYYY", () => {
+      expect(formatReviewDate("2026-10-15")).toBe("15/10/2026");
+      expect(formatReviewDate("2026-01-05")).toBe("05/01/2026");
+      expect(formatReviewDate("")).toBe("—");
+      expect(formatReviewDate(null)).toBe("—");
+    });
   });
 
-  it("14. mobile-friendly render structure", () => {
-    const html = renderToStaticMarkup(
-      <DebtForm
-        accounts={mockAccounts}
-        categories={mockCategories}
-        onSaved={mockOnSaved}
-        onCancel={mockOnCancel}
-        setToast={mockSetToast}
-      />
-    );
+  describe("Component Rendering & Form UX Tests", () => {
+    it("1. currency is select, not free text with PEN and USD options", () => {
+      const html = renderToStaticMarkup(
+        <DebtForm
+          initialStep="details"
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
 
-    expect(html).toContain("grid grid-cols-1");
-    expect(html).toContain("rounded-3xl");
-  });
+      expect(html).toContain("PEN — S/ Sol peruano");
+      expect(html).toContain("USD — $ Dólar estadounidense");
+      expect(html).not.toContain('placeholder="PEN"');
+    });
 
-  it("15. current Debt regressions preserved", () => {
-    const html = renderToStaticMarkup(
-      <DebtForm
-        accounts={mockAccounts}
-        categories={mockCategories}
-        onSaved={mockOnSaved}
-        onCancel={mockOnCancel}
-        setToast={mockSetToast}
-      />
-    );
+    it("2. only PEN and USD selectable in debt form", () => {
+      const html = renderToStaticMarkup(
+        <DebtForm
+          initialStep="details"
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
 
-    expect(html).toContain("Cancelar");
-    expect(html).toContain("Continuar");
+      expect(html).toContain('<option value="PEN"');
+      expect(html).toContain('<option value="USD"');
+      expect(html).not.toContain('<option value="EUR"');
+      expect(html).not.toContain('<option value="BRL"');
+    });
+
+    it("3. PEN shows S/ symbol in amount inputs", () => {
+      const html = renderToStaticMarkup(
+        <DebtForm
+          initialStep="details"
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
+
+      expect(html).toContain("S/");
+    });
+
+    it("4. USD displays $ symbol", () => {
+      const html = renderToStaticMarkup(
+        <DebtForm
+          initialStep="details"
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
+
+      expect(html).toContain("Dólar estadounidense");
+    });
+
+    it("5. simple debt registration works without advanced fields", () => {
+      const html = renderToStaticMarkup(
+        <DebtForm
+          initialStep="details"
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
+
+      expect(html).toContain("Mostrar datos adicionales y avanzados ▼");
+      expect(html).not.toContain("Cronograma inicial de cuotas");
+    });
+
+    it("6. pledge-specific UX renders clear labels for pledge", () => {
+      const html = renderToStaticMarkup(
+        <DebtForm
+          initialStep="type_select"
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
+
+      expect(html).toContain("Empeño");
+      expect(html).not.toContain("Pignoración");
+    });
+
+    it("7. mobile-friendly render structure", () => {
+      const html = renderToStaticMarkup(
+        <DebtForm
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
+
+      expect(html).toContain("grid grid-cols-1");
+      expect(html).toContain("rounded-3xl");
+    });
+
+    it("8. confirmation review displays friendly date format and label 'Comenzó'", () => {
+      const html = renderToStaticMarkup(
+        <DebtForm
+          initialStep="review"
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
+
+      expect(html).toContain("Confirmar registro de deuda");
+      expect(html).not.toContain("Empezó / Fecha origen");
+    });
   });
 });

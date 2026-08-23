@@ -1,7 +1,13 @@
 import { useState } from "react";
 import { ArrowLeft, Check, Plus, Trash2, Shield, CreditCard, Banknote, Building2, Home, PackageCheck, HelpCircle } from "lucide-react";
 import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category } from "../types";
-import { isCreditCardDebtKind, DEBT_KIND_OPTIONS } from "../utils/debtFormMode";
+import {
+  isCreditCardDebtKind,
+  DEBT_KIND_OPTIONS,
+  getCurrencySymbol,
+  formatReviewDate,
+  buildDebtCreateInputPayload,
+} from "../utils/debtFormMode";
 import { createDebt, createCreditCardDebt } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
@@ -39,7 +45,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [name, setName] = useState("");
   const [creditorName, setCreditorName] = useState("");
   const [originDate, setOriginDate] = useState("");
-  const [trackingStartDate, setTrackingStartDate] = useState(localDateString(new Date()));
+  const [trackingStartDate] = useState(localDateString(new Date()));
   const [originalPrincipal, setOriginalPrincipal] = useState("");
   const [openingPrincipalBalance, setOpeningPrincipalBalance] = useState("");
 
@@ -64,7 +70,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [pledgeItemDescription, setPledgeItemDescription] = useState("");
   const [pledgeRedemptionDeadline, setPledgeRedemptionDeadline] = useState("");
   const [pledgeEstimatedValue, setPledgeEstimatedValue] = useState("");
-  const [pledgePledgedValue, setPledgePledgedValue] = useState("");
+  const [pledgePledgedValue] = useState("");
 
   const [installments, setInstallments] = useState<Array<{
     installmentNumber: number;
@@ -86,7 +92,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [submitting, setSubmitting] = useState(false);
   const [step, setStep] = useState<"type_select" | "details" | "review">(initialStep);
 
-  const currencySymbol = currencyCode === "USD" ? "$" : "S/";
+  const currencySymbol = getCurrencySymbol(currencyCode);
   const isCard = isCreditCardDebtKind(debtKind);
   const isPledge = debtKind === "pledge";
 
@@ -188,66 +194,35 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         });
         setToast({ message: "Tarjeta de crédito registrada exitosamente.", type: "success" });
       } else {
-        const finalName = isPledge
-          ? name.trim() || `Empeño: ${pledgeItemDescription.trim()}`
-          : name.trim();
-
-        const submitCollaterals = isPledge
-          ? [
-              {
-                description: pledgeItemDescription.trim(),
-                pledgedValue: pledgePledgedValue ? Number(pledgePledgedValue) : null,
-                estimatedValue: pledgeEstimatedValue ? Number(pledgeEstimatedValue) : null,
-                redemptionDeadline: pledgeRedemptionDeadline || null,
-              },
-              ...collaterals.map((c) => ({
-                description: c.description.trim(),
-                pledgedValue: c.pledgedValue ? Number(c.pledgedValue) : null,
-                estimatedValue: c.estimatedValue ? Number(c.estimatedValue) : null,
-                redemptionDeadline: c.redemptionDeadline || null,
-              })),
-            ]
-          : collaterals.map((c) => ({
-              description: c.description.trim(),
-              pledgedValue: c.pledgedValue ? Number(c.pledgedValue) : null,
-              estimatedValue: c.estimatedValue ? Number(c.estimatedValue) : null,
-              redemptionDeadline: c.redemptionDeadline || null,
-            }));
-
-        const finalOriginDate = onboardingMode === "NEW_DEBT" && !originDate
-          ? localDateString(new Date())
-          : originDate || null;
-
-        await createDebt({
+        const payload = buildDebtCreateInputPayload({
           debtId,
-          name: finalName,
-          creditorName: creditorName.trim(),
           debtKind,
+          onboardingMode,
           currencyCode,
-          originDate: finalOriginDate,
-          trackingStartDate: trackingStartDate || localDateString(new Date()),
-          originalPrincipal: originalPrincipal ? Number(originalPrincipal) : null,
-          openingPrincipalBalance: Number(openingPrincipalBalance),
-          plannedInstallmentCount: plannedInstallmentCount ? Number(plannedInstallmentCount) : null,
-          plannedInstallmentAmount: plannedInstallmentAmount ? Number(plannedInstallmentAmount) : null,
+          name,
+          creditorName,
+          openingPrincipalBalance,
+          originalPrincipal,
+          originDate,
+          trackingStartDate,
+          paymentFrequency,
+          customFrequencyDays,
+          firstDueDate,
+          plannedInstallmentCount,
+          plannedInstallmentAmount,
           installmentAmountMode,
-          paymentFrequency: paymentFrequency || null,
-          customFrequencyDays: customFrequencyDays ? Number(customFrequencyDays) : null,
-          firstDueDate: firstDueDate || null,
-          teaPercent: teaPercent ? Number(teaPercent) : null,
-          tceaPercent: tceaPercent ? Number(tceaPercent) : null,
+          teaPercent,
+          tceaPercent,
           notes,
-          installments: installments.map((i) => ({
-            installmentNumber: i.installmentNumber,
-            dueDate: i.dueDate,
-            expectedAmount: i.expectedAmount ? Number(i.expectedAmount) : null,
-            expectedPrincipal: i.expectedPrincipal ? Number(i.expectedPrincipal) : null,
-            expectedInterest: i.expectedInterest ? Number(i.expectedInterest) : null,
-            expectedFees: i.expectedFees ? Number(i.expectedFees) : null,
-            expectedInsurance: i.expectedInsurance ? Number(i.expectedInsurance) : null,
-          })),
-          collaterals: submitCollaterals,
+          pledgeItemDescription,
+          pledgeRedemptionDeadline,
+          pledgeEstimatedValue,
+          pledgePledgedValue,
+          installments,
+          extraCollaterals: collaterals,
         });
+
+        await createDebt(payload);
         setToast({ message: "Deuda registrada exitosamente.", type: "success" });
       }
       onSaved();
@@ -481,20 +456,22 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700">¿Cuánto te prestaron originalmente? (Opcional)</label>
-                  <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
-                    <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={originalPrincipal}
-                      onChange={(e) => setOriginalPrincipal(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
-                    />
+                {onboardingMode === "EXISTING_DEBT" && (
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700">¿Cuánto te prestaron originalmente? (Opcional)</label>
+                    <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
+                      <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={originalPrincipal}
+                        onChange={(e) => setOriginalPrincipal(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-semibold text-slate-700">¿Cuánto vale aproximadamente el bien? (Opcional)</label>
@@ -638,20 +615,22 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700">Monto que recibiste originalmente (Opcional)</label>
-                  <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
-                    <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={originalPrincipal}
-                      onChange={(e) => setOriginalPrincipal(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
-                    />
+                {onboardingMode === "EXISTING_DEBT" && (
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700">Monto que recibiste originalmente (Opcional)</label>
+                    <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
+                      <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={originalPrincipal}
+                        onChange={(e) => setOriginalPrincipal(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1038,7 +1017,9 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
               </div>
 
               <div>
-                <p className="text-xs text-slate-500 font-medium">Debes actualmente</p>
+                <p className="text-xs text-slate-500 font-medium">
+                  {onboardingMode === "EXISTING_DEBT" ? "Debes actualmente" : "Monto a pagar"}
+                </p>
                 <p className="font-extrabold text-blue-700 text-xl">
                   {currencySymbol} {Number(openingPrincipalBalance || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
@@ -1051,12 +1032,12 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
               {originDate && (
                 <div>
-                  <p className="text-xs text-slate-500 font-medium">Empezó / Fecha origen</p>
-                  <p className="font-semibold text-slate-800">{originDate}</p>
+                  <p className="text-xs text-slate-500 font-medium">Comenzó</p>
+                  <p className="font-semibold text-slate-800">{formatReviewDate(originDate)}</p>
                 </div>
               )}
 
-              {originalPrincipal && (
+              {onboardingMode === "EXISTING_DEBT" && originalPrincipal && (
                 <div>
                   <p className="text-xs text-slate-500 font-medium">Monto original recibido</p>
                   <p className="font-semibold text-slate-800">
@@ -1071,7 +1052,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   <p className="font-bold text-slate-900">{pledgeItemDescription}</p>
                   {pledgeRedemptionDeadline && (
                     <p className="text-xs text-slate-600 mt-1">
-                      Límite para recuperar: <span className="font-bold text-slate-900">{pledgeRedemptionDeadline}</span>
+                      Límite para recuperar: <span className="font-bold text-slate-900">{formatReviewDate(pledgeRedemptionDeadline)}</span>
                     </p>
                   )}
                   {pledgeEstimatedValue && (
