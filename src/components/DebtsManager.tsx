@@ -191,7 +191,9 @@ export function DebtsManager({
                   </div>
                   <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between w-full">
                     <div>
-                      <p className="text-xs font-semibold text-slate-400">Saldo principal</p>
+                      <p className="text-xs font-semibold text-slate-400">
+                        {debt.debtKind === "credit_card" ? "Saldo actual" : "Saldo principal"}
+                      </p>
                       <p className="text-lg font-extrabold text-slate-900">{principalDisplay}</p>
                     </div>
                     <span className="text-sm font-bold text-blue-600 group-hover:translate-x-1 transition">

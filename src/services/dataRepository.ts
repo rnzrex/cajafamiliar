@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination";
 import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError } from "./dataRepositoryErrors";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -773,6 +773,7 @@ export function mapCreditCardOperationError(message: string): CreditCardOperatio
     "DEBT_ARCHIVED",
     "DEBT_NOT_ACTIVE",
     "CREDIT_CARD_PROFILE_NOT_FOUND",
+    "INVALID_CREDIT_CARD_PROFILE",
     "INVALID_CREDIT_CARD_PURCHASE",
     "INVALID_CREDIT_CARD_PAYMENT",
     "INVALID_CREDIT_CARD_STATEMENT",
@@ -795,6 +796,72 @@ export function mapCreditCardOperationError(message: string): CreditCardOperatio
   ];
   const matched = codes.find((code) => message.includes(code));
   return matched ? new CreditCardOperationError(matched) : null;
+}
+
+export function toCreateCreditCardDebtRpcArgs(input: CreditCardDebtCreateInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_name: input.name,
+    p_creditor_name: input.creditorName,
+    p_currency_code: input.currencyCode,
+    p_origin_date: input.originDate ?? null,
+    p_tracking_start_date: input.trackingStartDate,
+    p_opening_balance: input.openingBalance,
+    p_credit_limit: input.creditLimit ?? null,
+    p_closing_day: input.closingDay ?? null,
+    p_due_day: input.dueDay ?? null,
+    p_last4: input.last4 ?? null,
+    p_tea_percent: input.teaPercent ?? null,
+    p_tcea_percent: input.tceaPercent ?? null,
+    p_notes: input.notes ?? "",
+  };
+}
+
+export async function createCreditCardDebt(input: CreditCardDebtCreateInput): Promise<CreditCardDebtCreateResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+
+  const { data, error } = await supabase.rpc("create_credit_card_debt_v1", toCreateCreditCardDebtRpcArgs(input));
+  if (error) {
+    const mapped = mapCreditCardOperationError(error.message) || mapDebtOperationError(error.message);
+    if (mapped) throw mapped;
+    throw error;
+  }
+  if (!data || typeof data !== "object") throw new Error("La RPC create_credit_card_debt_v1 no devolvió un resultado válido.");
+  const res = data as any;
+  return {
+    success: true,
+    debtId: input.debtId,
+    debt: fromDebtRow(res.debt),
+    profile: fromCreditCardProfileRow(res.profile),
+  };
+}
+
+export function toSaveCreditCardProfileRpcArgs(input: CreditCardProfileSaveInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_credit_limit: input.creditLimit ?? null,
+    p_closing_day: input.closingDay ?? null,
+    p_due_day: input.dueDay ?? null,
+    p_last4: input.last4 ?? null,
+  };
+}
+
+export async function saveCreditCardProfile(input: CreditCardProfileSaveInput): Promise<CreditCardProfileSaveResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+
+  const { data, error } = await supabase.rpc("save_credit_card_profile_v1", toSaveCreditCardProfileRpcArgs(input));
+  if (error) {
+    const mapped = mapCreditCardOperationError(error.message) || mapDebtOperationError(error.message);
+    if (mapped) throw mapped;
+    throw error;
+  }
+  if (!data || typeof data !== "object") throw new Error("La RPC save_credit_card_profile_v1 no devolvió un resultado válido.");
+  return {
+    success: true,
+    profile: fromCreditCardProfileRow(data),
+  };
 }
 
 export function toCreditCardPurchaseRpcArgs(input: CreditCardPurchaseInput) {

@@ -438,3 +438,150 @@ describe("DEBT-5A Credit Card Liability Foundation & Hardening", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// calculateCreditCardRefundCapacity — five required scenarios (A-E)
+// ---------------------------------------------------------------------------
+
+import {
+  calculateCreditCardRefundCapacity,
+  isCreditCardEntryEligibleForReversal,
+  canOperateCreditCard,
+} from "./creditCardCalculations";
+
+function rcEntry(id: string, overrides: Partial<CreditCardEntry> = {}): CreditCardEntry {
+  return {
+    id,
+    debtId: "d1",
+    entryDate: "2026-08-01",
+    entryType: "purchase",
+    liabilityDelta: 100,
+    description: `e-${id}`,
+    movementId: `m-${id}`,
+    creditOfEntryId: null,
+    reversalOfEntryId: null,
+    registeredByUserId: "u1",
+    createdAt: "2026-08-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+describe("DEBT-5F-A calculateCreditCardRefundCapacity", () => {
+  it("A. purchase +100, no credits => refundable=true, remaining=100", () => {
+    const p = rcEntry("p1", { liabilityDelta: 100 });
+    const res = calculateCreditCardRefundCapacity(p, [p]);
+    expect(res.originalAmount).toBe(100);
+    expect(res.effectiveRefundedAmount).toBe(0);
+    expect(res.remainingRefundableAmount).toBe(100);
+    expect(res.isRefundable).toBe(true);
+  });
+
+  it("B. purchase +100 + credit -30 => refunded=30, remaining=70, refundable=true", () => {
+    const p = rcEntry("p1", { liabilityDelta: 100 });
+    const c = rcEntry("c1", { entryType: "credit", liabilityDelta: -30, creditOfEntryId: "p1" });
+    const res = calculateCreditCardRefundCapacity(p, [p, c]);
+    expect(res.effectiveRefundedAmount).toBe(30);
+    expect(res.remainingRefundableAmount).toBe(70);
+    expect(res.isRefundable).toBe(true);
+  });
+
+  it("C. purchase +100 + credit -100 => remaining=0, refundable=false", () => {
+    const p = rcEntry("p1", { liabilityDelta: 100 });
+    const c = rcEntry("c1", { entryType: "credit", liabilityDelta: -100, creditOfEntryId: "p1" });
+    const res = calculateCreditCardRefundCapacity(p, [p, c]);
+    expect(res.remainingRefundableAmount).toBe(0);
+    expect(res.isRefundable).toBe(false);
+  });
+
+  it("D. purchase +100 + credit -30 + reversal of credit => credit voided, remaining=100, refundable=true", () => {
+    const p = rcEntry("p1", { liabilityDelta: 100 });
+    const c = rcEntry("c1", { entryType: "credit", liabilityDelta: -30, creditOfEntryId: "p1" });
+    const r = rcEntry("r1", { entryType: "reversal", liabilityDelta: 30, reversalOfEntryId: "c1" });
+    const res = calculateCreditCardRefundCapacity(p, [p, c, r]);
+    expect(res.effectiveRefundedAmount).toBe(0);
+    expect(res.remainingRefundableAmount).toBe(100);
+    expect(res.isRefundable).toBe(true);
+  });
+
+  it("E. purchase +100 + reversal of purchase => target itself reversed, refundable=false", () => {
+    const p = rcEntry("p1", { liabilityDelta: 100 });
+    const r = rcEntry("r1", { entryType: "reversal", liabilityDelta: -100, reversalOfEntryId: "p1" });
+    const res = calculateCreditCardRefundCapacity(p, [p, r]);
+    expect(res.isRefundable).toBe(false);
+    expect(res.remainingRefundableAmount).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isCreditCardEntryEligibleForReversal — all required scenarios
+// ---------------------------------------------------------------------------
+
+describe("DEBT-5F-A isCreditCardEntryEligibleForReversal", () => {
+  it("reversal row itself is never eligible", () => {
+    const r = rcEntry("r1", { entryType: "reversal", reversalOfEntryId: "p1" });
+    expect(isCreditCardEntryEligibleForReversal(r, [r])).toBe(false);
+  });
+
+  it("already reversed purchase is not eligible", () => {
+    const p = rcEntry("p1", { liabilityDelta: 100 });
+    const r = rcEntry("r1", { entryType: "reversal", reversalOfEntryId: "p1" });
+    expect(isCreditCardEntryEligibleForReversal(p, [p, r])).toBe(false);
+  });
+
+  it("purchase with effective linked credit (active refund) is not eligible for reversal", () => {
+    const p = rcEntry("p1", { liabilityDelta: 100 });
+    const c = rcEntry("c1", { entryType: "credit", liabilityDelta: -30, creditOfEntryId: "p1" });
+    expect(isCreditCardEntryEligibleForReversal(p, [p, c])).toBe(false);
+  });
+
+  it("credit entry without reversal is eligible for reversal", () => {
+    const p = rcEntry("p1", { liabilityDelta: 100 });
+    const c = rcEntry("c1", { entryType: "credit", liabilityDelta: -30, creditOfEntryId: "p1" });
+    expect(isCreditCardEntryEligibleForReversal(c, [p, c])).toBe(true);
+  });
+
+  it("purchase whose linked credit was reversed is eligible again", () => {
+    const p = rcEntry("p1", { liabilityDelta: 100 });
+    const c = rcEntry("c1", { entryType: "credit", liabilityDelta: -30, creditOfEntryId: "p1" });
+    const r = rcEntry("r1", { entryType: "reversal", liabilityDelta: 30, reversalOfEntryId: "c1" });
+    expect(isCreditCardEntryEligibleForReversal(p, [p, c, r])).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// canOperateCreditCard — production lifecycle helper
+// ---------------------------------------------------------------------------
+
+describe("DEBT-5F-A canOperateCreditCard", () => {
+  function d(overrides: Partial<Debt> = {}): Debt {
+    return mockDebt({ debtKind: "credit_card", status: "active", isArchived: false, ...overrides });
+  }
+
+  it("active credit_card + canWriteDebt=true => true", () => {
+    expect(canOperateCreditCard(d(), true)).toBe(true);
+  });
+
+  it("active credit_card + canWriteDebt=false => false", () => {
+    expect(canOperateCreditCard(d(), false)).toBe(false);
+  });
+
+  it("archived credit_card => false", () => {
+    expect(canOperateCreditCard(d({ isArchived: true }), true)).toBe(false);
+  });
+
+  it("paid_off credit_card => false", () => {
+    expect(canOperateCreditCard(d({ status: "paid_off" }), true)).toBe(false);
+  });
+
+  it("bank_loan (non-card) => false", () => {
+    expect(canOperateCreditCard(d({ debtKind: "bank_loan" }), true)).toBe(false);
+  });
+
+  it("null => false", () => {
+    expect(canOperateCreditCard(null, true)).toBe(false);
+  });
+
+  it("undefined => false", () => {
+    expect(canOperateCreditCard(undefined, true)).toBe(false);
+  });
+});
