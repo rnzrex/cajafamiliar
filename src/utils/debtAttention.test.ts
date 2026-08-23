@@ -73,8 +73,12 @@ function sampleStatement(overrides: Partial<CreditCardStatement> = {}): CreditCa
 function sampleIntelligence(overrides: Partial<DebtIntelligenceItem> = {}): DebtIntelligenceItem {
   return {
     debtId: "debt-1",
+    debtName: "Préstamo Vehicular",
+    creditorName: "BCP",
     debtKind: "bank_loan",
     currencyCode: "PEN",
+    status: "active",
+    isArchived: false,
     currentPrincipal: 5000,
     originalPrincipal: 10000,
     openingPrincipalBalance: 10000,
