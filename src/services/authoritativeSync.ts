@@ -1,16 +1,36 @@
-import type { AppData } from "../types.js";
-import type { AppDataLoadSource } from "./dataRepository.js";
-import type { OfflineCreateMovementOperation } from "./offlineOutbox.js";
-
-export type RemoteSyncStatus = "idle" | "refreshing" | "fresh" | "offline" | "error";
+﻿import type { AppData } from "../types";
+import type { AppDataLoadResult } from "./dataRepository";
+import type { OfflineCreateMovementOperation } from "./offlineOutbox";
 
 /**
- * Pure helper: Determines if an authoritative refresh should start.
+ * Validates whether loaded AppData can be adopted based on browser connectivity state.
+ *
+ * Rule:
+ * - Online + remote: ACCEPT (true)
+ * - Online + fallback / local: REJECT (false)
+ * - Offline + fallback: ACCEPT (true)
+ * - Offline + remote / local: REJECT (false)
+ */
+export function validateAuthoritativeLoadSource({
+  isOnline,
+  source,
+}: {
+  isOnline: boolean;
+  source: AppDataLoadResult["source"];
+}): boolean {
+  if (isOnline) {
+    return source === "remote";
+  }
+  return source === "fallback";
+}
+
+/**
+ * Determines whether an automatic refresh trigger should execute or be deduplicated.
  *
  * Rules:
  * - If refresh is already in-flight: REJECT (false)
  * - If trigger is automatic and last refresh started less than windowMs ago: REJECT (false)
- * - Forced triggers ("manual" or "reconciliation") always bypass the time window deduplication.
+ * - Manual triggers always bypass the time window deduplication.
  */
 export function shouldStartAuthoritativeRefresh({
   reason,
@@ -26,8 +46,7 @@ export function shouldStartAuthoritativeRefresh({
   windowMs?: number;
 }): boolean {
   if (inFlight) return false;
-  const isForcedTrigger = reason === "manual" || reason === "reconciliation";
-  if (!isForcedTrigger && now - lastStartedAt < windowMs) {
+  if (reason !== "manual" && now - lastStartedAt < windowMs) {
     return false;
   }
   return true;
@@ -39,39 +58,13 @@ export function shouldStartAuthoritativeRefresh({
 export function mergePendingMovements(data: AppData, operations: OfflineCreateMovementOperation[]): AppData {
   const remoteMovementIds = new Set(data.movements.map((movement) => movement.id));
   const overlayMovementIds = new Set<string>();
+  const pendingMovements = operations
+    .map((operation) => operation.movement)
+    .filter((movement) => {
+      if (remoteMovementIds.has(movement.id) || overlayMovementIds.has(movement.id)) return false;
+      overlayMovementIds.add(movement.id);
+      return true;
+    });
 
-  const newPendingMovements = operations
-    .filter((op) => !remoteMovementIds.has(op.movement.id))
-    .map((op) => op.movement);
-
-  for (const op of operations) {
-    overlayMovementIds.add(op.movement.id);
-  }
-
-  const baseMovements = data.movements.map((movement) => {
-    if (overlayMovementIds.has(movement.id)) {
-      const op = operations.find((item) => item.movement.id === movement.id);
-      return op ? op.movement : movement;
-    }
-    return movement;
-  });
-
-  return {
-    ...data,
-    movements: [...newPendingMovements, ...baseMovements],
-  };
-}
-
-/**
- * Pure helper: Validates source for adopting authoritative load.
- */
-export function validateAuthoritativeLoadSource({
-  isOnline,
-  source,
-}: {
-  isOnline: boolean;
-  source: AppDataLoadSource | "trusted_snapshot";
-}): boolean {
-  if (isOnline) return source === "remote";
-  return source === "trusted_snapshot" || source === "fallback";
+  return pendingMovements.length > 0 ? { ...data, movements: [...pendingMovements, ...data.movements] } : data;
 }
