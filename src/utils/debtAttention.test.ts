@@ -54,6 +54,22 @@ function sampleCardDebt(overrides: Partial<Debt> = {}): Debt {
   });
 }
 
+function sampleStatement(overrides: Partial<CreditCardStatement> = {}): CreditCardStatement {
+  return {
+    id: "stm-1",
+    debtId: "card-debt-1",
+    statementDate: "2026-08-20",
+    dueDate: "2026-09-05",
+    statementBalance: 500,
+    minimumPaymentAmount: 50,
+    closingEntryId: null,
+    createdByUserId: "u1",
+    createdAt: "2026-08-20T00:00:00Z",
+    updatedAt: "2026-08-20T00:00:00Z",
+    ...overrides,
+  };
+}
+
 function sampleIntelligence(overrides: Partial<DebtIntelligenceItem> = {}): DebtIntelligenceItem {
   return {
     debtId: "debt-1",
@@ -82,9 +98,14 @@ function sampleIntelligence(overrides: Partial<DebtIntelligenceItem> = {}): Debt
       inconsistentEventCount: 0,
     },
     rateBasis: "tea",
-    nominalAnnualRate: 15,
     effectiveAnnualRate: 18,
-    dataLimitations: [],
+    readiness: {
+      isFullyConfigured: true,
+      hasPrincipal: true,
+      hasSchedule: true,
+      hasRates: true,
+      limitations: [],
+    },
     currentScheduleVersionId: "s1",
     scheduleReason: "initial",
     scheduleCreationDate: "2026-01-01",
@@ -94,7 +115,7 @@ function sampleIntelligence(overrides: Partial<DebtIntelligenceItem> = {}): Debt
     nextInstallmentDueStatus: "overdue",
     nextInstallmentExpectedAmount: 900,
     nextInstallmentRemainingAmount: 900,
-    nextInstallmentIsAmountUnknown: false,
+    nextInstallmentAmountKnown: true,
     ...overrides,
   };
 }
@@ -113,7 +134,7 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
       const dueTodayIntel = sampleIntelligence({
         debtId: "d-today",
         nextInstallmentDueDate: "2026-08-23",
-        nextInstallmentDueStatus: "due_today",
+        nextInstallmentDueStatus: "today",
       });
 
       const actions = buildAllDebtNextActions({
@@ -133,7 +154,7 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
       const dueTodayIntel = sampleIntelligence({
         debtId: "d-today",
         nextInstallmentDueDate: "2026-08-23",
-        nextInstallmentDueStatus: "due_today",
+        nextInstallmentDueStatus: "today",
       });
 
       const upcomingDebt = sampleDebt({ id: "d-upcoming", name: "Upcoming Loan" });
@@ -162,7 +183,7 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
         nextInstallmentDueDate: "2026-08-20",
         nextInstallmentDueStatus: "overdue",
         nextInstallmentRemainingAmount: null,
-        nextInstallmentIsAmountUnknown: true,
+        nextInstallmentAmountKnown: false,
       });
 
       const action = getDebtNextAction({
@@ -234,15 +255,14 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
         registeredByUserId: "u1",
         createdAt: "2026-08-15T00:00:00Z",
       };
-      const stm: CreditCardStatement = {
+      const stm = sampleStatement({
         id: "stm-1",
         debtId: "card-covered",
         statementDate: "2026-08-20",
         dueDate: "2026-09-05",
         statementBalance: 0,
         minimumPaymentAmount: 0,
-        createdAt: "2026-08-20T00:00:00Z",
-      };
+      });
 
       const action = getDebtNextAction({
         debt: coveredCard,
@@ -290,15 +310,14 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       };
-      const usdStm: CreditCardStatement = {
+      const usdStm = sampleStatement({
         id: "stm-usd",
         debtId: "usd-1",
         statementDate: "2026-08-20",
         dueDate: "2026-09-05",
         statementBalance: 100, // $ 100
         minimumPaymentAmount: 100,
-        createdAt: "2026-08-20T00:00:00Z",
-      };
+      });
 
       const actions = buildAllDebtNextActions({
         debts: [penDebt, usdDebt],
@@ -337,15 +356,14 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       };
-      const stm: CreditCardStatement = {
+      const stm = sampleStatement({
         id: "stm-1",
         debtId: card.id,
         statementDate: "2026-07-20",
         dueDate: "2026-08-05",
         statementBalance: 1000,
         minimumPaymentAmount: 100,
-        createdAt: "2026-07-20T00:00:00Z",
-      };
+      });
 
       const action = getDebtNextAction({
         debt: card,
@@ -372,15 +390,14 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       };
-      const stm: CreditCardStatement = {
+      const stm = sampleStatement({
         id: "stm-1",
         debtId: card.id,
         statementDate: "2026-08-08",
         dueDate: "2026-08-23",
         statementBalance: 400,
         minimumPaymentAmount: 50,
-        createdAt: "2026-08-08T00:00:00Z",
-      };
+      });
 
       const action = getDebtNextAction({
         debt: card,
@@ -406,15 +423,14 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-01T00:00:00Z",
       };
-      const stm: CreditCardStatement = {
+      const stm = sampleStatement({
         id: "stm-1",
         debtId: card.id,
         statementDate: "2026-08-10",
         dueDate: "2026-08-28",
         statementBalance: 800,
         minimumPaymentAmount: null,
-        createdAt: "2026-08-10T00:00:00Z",
-      };
+      });
 
       const action = getDebtNextAction({
         debt: card,
@@ -456,15 +472,14 @@ describe("DEBT-5F-B: Debt Attention Intelligence Model", () => {
         registeredByUserId: "u1",
         createdAt: "2026-08-15T00:00:00Z",
       };
-      const stm: CreditCardStatement = {
+      const stm = sampleStatement({
         id: "stm-1",
         debtId: card.id,
         statementDate: "2026-08-20",
         dueDate: "2026-09-05",
         statementBalance: 500,
         minimumPaymentAmount: 50,
-        createdAt: "2026-08-20T00:00:00Z",
-      };
+      });
       // Credit (refund) recorded AFTER statement close for a purchase in the snapshot
       const postClosingCredit: CreditCardEntry = {
         id: "e-post-credit",

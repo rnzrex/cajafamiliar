@@ -307,7 +307,7 @@ export function getDebtNextAction({
         };
       }
 
-      if (cardIntel.coverageStatus === "covered" || !cardIntel.actionable) {
+      if (!cardIntel.actionable || cardIntel.coverageStatus === "no_positive_obligation") {
         return {
           debtId: debt.id,
           debtName: debt.name,
@@ -401,7 +401,7 @@ export function getDebtNextAction({
     };
   }
 
-  if (dueStatus === "due_today" && dueDate) {
+  if (dueStatus === "today" && dueDate) {
     return {
       debtId: debt.id,
       debtName: debt.name,
@@ -423,7 +423,8 @@ export function getDebtNextAction({
     };
   }
 
-  if (dueStatus === "due_soon" && dueDate) {
+  if ((dueStatus === "tomorrow" || dueStatus === "upcoming") && dueDate) {
+    const isVerySoon = dueStatus === "tomorrow";
     return {
       debtId: debt.id,
       debtName: debt.name,
@@ -431,43 +432,21 @@ export function getDebtNextAction({
       debtKind: debt.debtKind,
       currencyCode: debt.currencyCode,
       kind: "pay_upcoming_installment",
-      priority: "due_soon",
-      priorityRank: 3,
-      title: "Cuota vence pronto",
+      priority: isVerySoon ? "due_soon" : "upcoming",
+      priorityRank: isVerySoon ? 3 : 4,
+      title: isVerySoon ? "Cuota vence pronto" : "Próxima cuota",
       detail: `La próxima cuota vence el ${dueDate}`,
       dueDate,
       resolvedAmount: remainingAmt,
       isAmountUnknown: remainingAmt == null,
       reason: remainingAmt == null ? "Monto de cuota por confirmar" : null,
       actionLabel: "Ver cuota",
-      badgeLabel: "Vence pronto",
-      badgeTone: "amber",
+      badgeLabel: isVerySoon ? "Vence pronto" : "Próximo pago",
+      badgeTone: isVerySoon ? "amber" : "blue",
     };
   }
 
-  if (dueStatus === "upcoming" && dueDate) {
-    return {
-      debtId: debt.id,
-      debtName: debt.name,
-      creditorName: debt.creditorName,
-      debtKind: debt.debtKind,
-      currencyCode: debt.currencyCode,
-      kind: "pay_upcoming_installment",
-      priority: "upcoming",
-      priorityRank: 4,
-      title: "Próxima cuota",
-      detail: `Programada para el ${dueDate}`,
-      dueDate,
-      resolvedAmount: remainingAmt,
-      isAmountUnknown: remainingAmt == null,
-      reason: remainingAmt == null ? "Monto de cuota por confirmar" : null,
-      actionLabel: "Ver cuota",
-      badgeLabel: "Próximo pago",
-      badgeTone: "blue",
-    };
-  }
-
-  if (intelligenceItem?.dataLimitations?.includes("missing_current_schedule")) {
+  if (intelligenceItem?.readiness?.limitations?.includes("missing_current_schedule")) {
     return {
       debtId: debt.id,
       debtName: debt.name,
