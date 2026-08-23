@@ -125,7 +125,6 @@ function sampleIntelligence(overrides: Partial<DebtIntelligenceItem> = {}): Debt
     nextInstallmentNumber: 7,
     nextInstallmentDueDate: "2026-08-20",
     nextInstallmentDueStatus: "overdue",
-    nextInstallmentExpectedAmount: 900,
     nextInstallmentRemainingAmount: 900,
     nextInstallmentAmountKnown: true,
     ...overrides,
