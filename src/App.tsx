@@ -1220,7 +1220,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
       const { recordAccountReconciliation } = await import("./services/dataRepository.js");
       const result = await recordAccountReconciliation(input);
       markRemoteSuccess();
-      await refreshAuthoritativeData("reconciliation");
+      await refreshAuthoritativeData("manual");
       showToast(result.status === "matched" ? "Conciliación completada: Cuadra" : "Conciliación registrada: Diferencia detectada");
       return result;
     } catch (error: any) {

@@ -436,6 +436,55 @@ describe("RECON-1A Reconciliation Foundation Helpers", () => {
     expect(isReconciliationStale(rec, modifiedAccount, [], [])).toBe(true);
   });
 
+  it("RECON-1A STALE DEFENSE: missing snapshot movement (deleted movement) triggers stale status", () => {
+    const m1: Movement = {
+      id: "m-deleted-1",
+      type: "ingreso",
+      date: "2026-08-10",
+      amount: 100,
+      description: "Movimiento eliminado",
+      method: "transferencia",
+      category: "Otros",
+      person: "Mama",
+      accountId: "acc-1",
+      movementContext: "standard",
+      createdAt: "2026-08-10T10:00:00.000Z",
+      updatedAt: "2026-08-10T10:00:00.000Z",
+    };
+
+    const rec: AccountReconciliation = {
+      id: "rec-missing",
+      householdId: "h-1",
+      accountId: "acc-1",
+      reconciliationType: "balance",
+      currencyCode: "PEN",
+      openingBalanceSnapshot: 1000,
+      expectedBalance: 1100,
+      actualBalance: 1100,
+      difference: 0,
+      status: "matched",
+      denominations: null,
+      registeredByUserId: "u-1",
+      createdAt: "2026-08-23T12:00:00.000Z",
+    };
+
+    const recMovements: AccountReconciliationMovement[] = [
+      {
+        id: "rm-del-1",
+        householdId: "h-1",
+        reconciliationId: "rec-missing",
+        movementId: "m-deleted-1",
+        balanceContribution: 100,
+        movementUpdatedAtSnapshot: "2026-08-10T10:00:00.000Z",
+        movementSnapshot: m1,
+        createdAt: "2026-08-23T12:00:00.000Z",
+      },
+    ];
+
+    // Current movements collection is EMPTY ([]), meaning m1 was deleted!
+    expect(isReconciliationStale(rec, sampleAccount, [], recMovements)).toBe(true);
+  });
+
   it("reversed credit card payment triggers stale status", () => {
     const mCard: Movement = {
       id: "m-card",

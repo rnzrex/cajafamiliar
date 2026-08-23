@@ -29,13 +29,13 @@ export function movementBelongsToAccount(movement: Movement, account: FinancialA
 }
 
 /**
- * Pure helper: Determines if a movement belongs to ANY active or existing financial account.
+ * Pure helper: Determines if a movement belongs to ANY ACTIVE financial account.
  */
-export function doesMovementBelongToAnyAccount(
+export function doesMovementBelongToAnyActiveAccount(
   movement: Movement,
   accounts: FinancialAccount[] = []
 ): boolean {
-  return accounts.some((account) => movementBelongsToAccount(movement, account));
+  return accounts.some((account) => account.isActive && movementBelongsToAccount(movement, account));
 }
 
 /**
@@ -89,7 +89,7 @@ export function isMovementCertifiedMatched(
 /**
  * Pure production helper: Determines if a movement is "Pendiente" for reconciliation.
  * A movement is pending ONLY if:
- * 1. It belongs to a reconcilable account (doesMovementBelongToAnyAccount is true).
+ * 1. It belongs to an ACTIVE reconcilable account (doesMovementBelongToAnyActiveAccount is true).
  * 2. AND it lacks current valid certified matched evidence.
  */
 export function isMovementPendingForReconciliation(
@@ -99,7 +99,7 @@ export function isMovementPendingForReconciliation(
   recMovements: AccountReconciliationMovement[] = [],
   creditCardEntries: CreditCardEntry[] = []
 ): boolean {
-  if (!doesMovementBelongToAnyAccount(movement, accounts)) {
+  if (!doesMovementBelongToAnyActiveAccount(movement, accounts)) {
     return false;
   }
   return !isMovementCertifiedMatched(movement, reconciliations, recMovements, creditCardEntries);
@@ -140,6 +140,10 @@ export function getUnreconciledMovements(
 
 /**
  * Pure helper: Determines if an account reconciliation status is stale.
+ * Stale condition rules (RECON-1A + RECON-1B):
+ * 1. openingBalanceSnapshot !== account.openingBalance
+ * 2. Any snapshot movement in latestMatchedRec is missing from current movements collection (deleted)
+ * 3. Any movement belonging to account is unreconciled (new, modified updatedAt, or contribution reversed)
  */
 export function isReconciliationStale(
   latestMatchedRec: AccountReconciliation | null,
@@ -152,6 +156,15 @@ export function isReconciliationStale(
 
   if (latestMatchedRec.openingBalanceSnapshot !== account.openingBalance) {
     return true;
+  }
+
+  const currentMovementIds = new Set(movements.map((m) => m.id));
+  const recSnapshots = recMovements.filter((rm) => rm.reconciliationId === latestMatchedRec.id);
+
+  for (const rm of recSnapshots) {
+    if (!currentMovementIds.has(rm.movementId)) {
+      return true;
+    }
   }
 
   const unreconciled = getUnreconciledMovements(
