@@ -1,9 +1,8 @@
 import { AlertTriangle, CheckCircle2, History, Scale, X } from "lucide-react";
 import { FormEvent, useMemo, useState } from "react";
-import type { AccountReconciliation, AccountReconciliationMovement, CreditCardEntry, FinancialAccount, Movement, RecordAccountReconciliationResult } from "../types.js";
+import type { AccountReconciliation, AccountReconciliationMovement, CreditCardEntry, FinancialAccount, HouseholdMember, Movement, RecordAccountReconciliationResult } from "../types.js";
 import { expectedAccountBalance, expectedCashBalance } from "../utils/accountHelpers.js";
 import { formatMoneyByCurrency } from "../utils/calculations.js";
-import { isReconciliationStale } from "../utils/reconciliationHelpers.js";
 
 const CASH_DENOMINATIONS = [
   { value: 200, label: "S/ 200" },
@@ -25,6 +24,8 @@ interface AccountReconciliationModalProps {
   reconciliations: AccountReconciliation[];
   reconciliationMovements: AccountReconciliationMovement[];
   creditCardEntries?: CreditCardEntry[];
+  members?: HouseholdMember[];
+  currentMember?: HouseholdMember;
   isOnline: boolean;
   onClose: () => void;
   onReconcile: (input: {
@@ -41,6 +42,8 @@ export function AccountReconciliationModal({
   reconciliations,
   reconciliationMovements,
   creditCardEntries = [],
+  members = [],
+  currentMember,
   isOnline,
   onClose,
   onReconcile,
@@ -53,7 +56,7 @@ export function AccountReconciliationModal({
 
   const isCash = account.reconciliationType === "cash";
 
-  const expectedBalance = useMemo(() => {
+  const expectedBalanceLocalEstimate = useMemo(() => {
     if (isCash) {
       return expectedCashBalance(movements, account.openingBalance, creditCardEntries, account.id);
     }
@@ -73,14 +76,10 @@ export function AccountReconciliationModal({
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }, [reconciliations, account.id]);
 
-  const latestMatched = useMemo(() => {
-    return history.find((r) => r.status === "matched") ?? null;
-  }, [history]);
-
-  const isStale = useMemo(() => {
-    if (!latestMatched) return false;
-    return isReconciliationStale(latestMatched, account, movements, reconciliationMovements, creditCardEntries);
-  }, [latestMatched, account, movements, reconciliationMovements, creditCardEntries]);
+  const serverReconciliationAfterRpc = useMemo(() => {
+    if (!result) return null;
+    return reconciliations.find((r) => r.id === result.reconciliationId) ?? null;
+  }, [result, reconciliations]);
 
   function handleDenomChange(denom: number, countStr: string) {
     const count = Math.max(0, parseInt(countStr, 10) || 0);
@@ -188,14 +187,19 @@ export function AccountReconciliationModal({
               <h4 className="mt-2 text-2xl font-black">{result.status === "matched" ? "Cuadra" : `Diferencia: ${formatMoneyByCurrency(result.difference, account.currencyCode)}`}</h4>
               <p className="mt-1 text-sm font-semibold">
                 {result.status === "matched"
-                  ? "El saldo real coincide exactamente con el saldo calculado por el sistema."
-                  : "Existe una diferencia entre el saldo real ingresado y el saldo calculado."}
+                  ? "El saldo real coincide exactamente con el saldo verificado por el servidor."
+                  : "Existe una diferencia entre el saldo real ingresado y el saldo verificado por el servidor."}
               </p>
+              {serverReconciliationAfterRpc && (
+                <p className="mt-2 text-xs font-bold text-slate-600">
+                  Fecha/hora de conciliación: {formatReconciliationTimestamp(serverReconciliationAfterRpc.createdAt)}
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-4 rounded-2xl bg-slate-50 p-4 text-base">
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Saldo esperado</p>
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Saldo esperado verificado</p>
                 <p className="text-xl font-black text-slate-900">{formatMoneyByCurrency(result.expectedBalance, account.currencyCode)}</p>
               </div>
               <div>
@@ -219,8 +223,9 @@ export function AccountReconciliationModal({
         ) : (
           <form onSubmit={handleSubmit} className="mt-6 space-y-6">
             <div className="rounded-2xl bg-slate-50 p-4">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Saldo esperado (calculado por el servidor)</p>
-              <p className="mt-1 text-3xl font-black text-slate-900">{formatMoneyByCurrency(expectedBalance, account.currencyCode)}</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Saldo esperado actual (estimación antes de conciliar)</p>
+              <p className="mt-1 text-3xl font-black text-slate-900">{formatMoneyByCurrency(expectedBalanceLocalEstimate, account.currencyCode)}</p>
+              <p className="mt-1 text-xs font-semibold text-slate-500">El valor definitivo es verificado y registrado por el servidor al conciliar.</p>
             </div>
 
             {isCash ? (
@@ -285,24 +290,48 @@ export function AccountReconciliationModal({
               <h4 className="text-lg font-black text-slate-900">Historial de conciliaciones</h4>
             </div>
             <div className="space-y-2 max-h-48 overflow-y-auto">
-              {history.map((item) => (
-                <div key={item.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm">
-                  <div>
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-black uppercase ${item.status === "matched" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
-                      {item.status === "matched" ? "Cuadra" : `Diferencia: ${formatMoneyByCurrency(item.difference, account.currencyCode)}`}
-                    </span>
-                    <p className="mt-1 text-xs text-slate-500">{new Date(item.createdAt).toLocaleString("es-PE")}</p>
+              {history.map((item) => {
+                const member = members.find((m) => m.id === item.registeredByUserId);
+                const registeredByName = member
+                  ? member.displayName
+                  : currentMember && currentMember.id === item.registeredByUserId
+                  ? currentMember.displayName
+                  : "Otro miembro";
+
+                return (
+                  <div key={item.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3 text-sm">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-black uppercase ${item.status === "matched" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                          {item.status === "matched" ? "Cuadra" : `Diferencia: ${formatMoneyByCurrency(item.difference, account.currencyCode)}`}
+                        </span>
+                        <span className="text-xs text-slate-400">({item.reconciliationType === "cash" ? "Efectivo" : "Banco"})</span>
+                      </div>
+                      <p className="mt-1 text-xs font-medium text-slate-600">Fecha/hora: {formatReconciliationTimestamp(item.createdAt)}</p>
+                      <p className="text-xs text-slate-500">Registrado por: {registeredByName}</p>
+                    </div>
+                    <div className="text-right font-bold text-slate-700">
+                      <p>Esperado: {formatMoneyByCurrency(item.expectedBalance, account.currencyCode)}</p>
+                      <p>Real: {formatMoneyByCurrency(item.actualBalance, account.currencyCode)}</p>
+                    </div>
                   </div>
-                  <div className="text-right font-bold text-slate-700">
-                    <p>Esperado: {formatMoneyByCurrency(item.expectedBalance, account.currencyCode)}</p>
-                    <p>Real: {formatMoneyByCurrency(item.actualBalance, account.currencyCode)}</p>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
       </div>
     </div>
   );
+}
+
+export function formatReconciliationTimestamp(isoString: string): string {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return isoString;
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  const hours = String(d.getHours()).padStart(2, "0");
+  const minutes = String(d.getMinutes()).padStart(2, "0");
+  return `${day}/${month}/${year} ${hours}:${minutes}`;
 }

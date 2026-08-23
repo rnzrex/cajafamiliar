@@ -402,19 +402,22 @@ function CertifiedMatchedBadge() {
   );
 }
 
-function formatMovementDate(value: string) {
+export function formatMovementDate(value: string) {
   const [year, month, day] = value.split("-");
   if (!year || !month || !day) return value;
   return `${day}/${month}/${year}`;
 }
 
-function formatCreatedAt(value?: string) {
+export function formatCreatedAt(value?: string): string {
   if (!value) return "-";
-  if (value.includes("T")) {
-    const [d, t] = value.split("T");
-    const [y, m, day] = d.split("-");
-    const timeStr = t ? t.substring(0, 5) : "";
-    return `${day}/${m}/${y} ${timeStr}`;
+  const parsedDate = new Date(value);
+  if (isNaN(parsedDate.getTime())) {
+    return formatMovementDate(value);
   }
-  return formatMovementDate(value);
+  const day = String(parsedDate.getDate()).padStart(2, "0");
+  const month = String(parsedDate.getMonth() + 1).padStart(2, "0");
+  const year = parsedDate.getFullYear();
+  const hours = String(parsedDate.getHours()).padStart(2, "0");
+  const minutes = String(parsedDate.getMinutes()).padStart(2, "0");
+  return `${day}/${month}/${year} ${hours}:${minutes}`;
 }

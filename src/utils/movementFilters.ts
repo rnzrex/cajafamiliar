@@ -3,7 +3,7 @@ import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "./accountHelpers.
 import { monthKey } from "./calculations.js";
 import { localDateString, localMonthString } from "./date.js";
 import { getMovementEconomics } from "./movementEconomics.js";
-import { isMovementCertifiedMatched } from "./reconciliationHelpers.js";
+import { isMovementCertifiedMatched, isMovementPendingForReconciliation } from "./reconciliationHelpers.js";
 
 export type DateFilterMode = "all" | "month" | "date" | "range";
 export type MovementTypeFilter = MovementType | "todos";
@@ -72,12 +72,11 @@ export function filterMovements(
     .filter((movement) => filters.type === "todos" || movement.type === filters.type)
     .filter((movement) => {
       if (filters.reconFilter === "todos") return true;
-      const isCertified = isMovementCertifiedMatched(movement, reconciliations, recMovements, creditCardEntries);
       if (filters.reconFilter === "conciliados") {
-        return isCertified;
+        return isMovementCertifiedMatched(movement, reconciliations, recMovements, creditCardEntries);
       }
       if (filters.reconFilter === "pendientes") {
-        return !isCertified;
+        return isMovementPendingForReconciliation(movement, accounts, reconciliations, recMovements, creditCardEntries);
       }
       return true;
     })
