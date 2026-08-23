@@ -29,6 +29,16 @@ export function movementBelongsToAccount(movement: Movement, account: FinancialA
 }
 
 /**
+ * Pure helper: Determines if a movement belongs to ANY ACTIVE financial account.
+ */
+export function doesMovementBelongToAnyActiveAccount(
+  movement: Movement,
+  accounts: FinancialAccount[] = []
+): boolean {
+  return accounts.some((account) => account.isActive && movementBelongsToAccount(movement, account));
+}
+
+/**
  * Pure helper: Computes the effective balance contribution of a movement as of now.
  */
 export function calculateEffectiveContribution(
@@ -77,12 +87,27 @@ export function isMovementCertifiedMatched(
 }
 
 /**
+ * Pure production helper: Determines if a movement is "Pendiente" for reconciliation.
+ * A movement is pending ONLY if:
+ * 1. It belongs to an ACTIVE reconcilable account (doesMovementBelongToAnyActiveAccount is true).
+ * 2. AND it lacks current valid certified matched evidence.
+ */
+export function isMovementPendingForReconciliation(
+  movement: Movement,
+  accounts: FinancialAccount[] = [],
+  reconciliations: AccountReconciliation[] = [],
+  recMovements: AccountReconciliationMovement[] = [],
+  creditCardEntries: CreditCardEntry[] = []
+): boolean {
+  if (!doesMovementBelongToAnyActiveAccount(movement, accounts)) {
+    return false;
+  }
+  return !isMovementCertifiedMatched(movement, reconciliations, recMovements, creditCardEntries);
+}
+
+/**
  * Pure helper: Gets movements belonging to an account that do NOT have valid matched snapshot evidence
  * in its latest matched reconciliation.
- * A movement is pending (unreconciled) if:
- * 1. It was NOT included in the latest matched reconciliation snapshot.
- * 2. Or it WAS included, but its updatedAt changed since the snapshot.
- * 3. Or it WAS included, but its effective contribution changed (e.g. credit card payment reversed).
  */
 export function getUnreconciledMovements(
   account: FinancialAccount,
@@ -105,77 +130,50 @@ export function getUnreconciledMovements(
 
   return accountMovements.filter((m) => {
     const rm = snapshotMap.get(m.id);
-    if (!rm) {
-      // New movement not in snapshot => pending
-      return true;
-    }
-
-    // Included movement whose updatedAt changed => pending
-    if (m.updatedAt && m.updatedAt !== rm.movementUpdatedAtSnapshot) {
-      return true;
-    }
-
-    // Included movement whose effective contribution changed => pending
+    if (!rm) return true;
+    if (m.updatedAt && m.updatedAt !== rm.movementUpdatedAtSnapshot) return true;
     const effectiveContrib = calculateEffectiveContribution(m, creditCardEntries);
-    if (effectiveContrib !== rm.balanceContribution) {
-      return true;
-    }
-
+    if (effectiveContrib !== rm.balanceContribution) return true;
     return false;
   });
 }
 
 /**
- * Pure helper: Determines if a reconciliation state is STALE for the entire reconciliation.
- * Stale conditions:
- * 1. Opening balance changed (account.openingBalance !== reconciliation.openingBalanceSnapshot).
- * 2. A new movement appeared for the account that was NOT in the reconciliation snapshot.
- * 3. An included movement's version/updatedAt changed.
- * 4. An included movement's effective contribution changed (e.g., credit card payment reversal).
+ * Pure helper: Determines if an account reconciliation status is stale.
+ * Stale condition rules (RECON-1A + RECON-1B):
+ * 1. openingBalanceSnapshot !== account.openingBalance
+ * 2. Any snapshot movement in latestMatchedRec is missing from current movements collection (deleted)
+ * 3. Any movement belonging to account is unreconciled (new, modified updatedAt, or contribution reversed)
  */
 export function isReconciliationStale(
-  reconciliation: AccountReconciliation,
+  latestMatchedRec: AccountReconciliation | null,
   account: FinancialAccount,
   movements: Movement[],
   recMovements: AccountReconciliationMovement[],
   creditCardEntries: CreditCardEntry[] = []
 ): boolean {
-  // Condition 1: Opening balance changed
-  if (account.openingBalance !== reconciliation.openingBalanceSnapshot) {
+  if (!latestMatchedRec) return false;
+
+  if (latestMatchedRec.openingBalanceSnapshot !== account.openingBalance) {
     return true;
   }
 
-  const snapshotRecMovements = recMovements.filter(
-    (rm) => rm.reconciliationId === reconciliation.id
+  const currentMovementIds = new Set(movements.map((m) => m.id));
+  const recSnapshots = recMovements.filter((rm) => rm.reconciliationId === latestMatchedRec.id);
+
+  for (const rm of recSnapshots) {
+    if (!currentMovementIds.has(rm.movementId)) {
+      return true;
+    }
+  }
+
+  const unreconciled = getUnreconciledMovements(
+    account,
+    movements,
+    latestMatchedRec,
+    recMovements,
+    creditCardEntries
   );
-  const snapshotMovementIds = new Set(snapshotRecMovements.map((rm) => rm.movementId));
 
-  // Condition 2: New movement appeared that belongs to account but not in snapshot
-  const currentAccountMovements = movements.filter((m) => movementBelongsToAccount(m, account));
-  const hasNewMovement = currentAccountMovements.some((m) => !snapshotMovementIds.has(m.id));
-  if (hasNewMovement) {
-    return true;
-  }
-
-  // Condition 3 & 4: Check existing snapshot movements for updatedAt mismatch or contribution mismatch
-  for (const snapshotRm of snapshotRecMovements) {
-    const currentMov = movements.find((m) => m.id === snapshotRm.movementId);
-    if (!currentMov) {
-      // Movement was removed/missing
-      return true;
-    }
-
-    // Check updatedAt mismatch if currentMov has updatedAt
-    if (currentMov.updatedAt && currentMov.updatedAt !== snapshotRm.movementUpdatedAtSnapshot) {
-      return true;
-    }
-
-    // Check effective contribution mismatch (e.g. credit card reversal)
-    const currentEffectiveContrib = calculateEffectiveContribution(currentMov, creditCardEntries);
-    if (currentEffectiveContrib !== snapshotRm.balanceContribution) {
-      return true;
-    }
-  }
-
-  return false;
+  return unreconciled.length > 0;
 }

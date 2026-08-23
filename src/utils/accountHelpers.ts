@@ -1,5 +1,6 @@
-import type { CreditCardEntry, FinancialAccount, Movement, PaymentMethod } from "../types";
-import { isCreditCardMovementEffective } from "./creditCardCalculations";
+import type { CreditCardEntry, FinancialAccount, Movement, PaymentMethod } from "../types.js";
+import { expectedCash } from "./calculations.js";
+import { isCreditCardMovementEffective } from "./creditCardCalculations.js";
 
 export const UNASSIGNED_ACCOUNT_ID = "__unassigned__";
 const UNASSIGNED_ACCOUNT_LABEL = "Sin cuenta (histórico)";
@@ -40,4 +41,13 @@ export function expectedAccountBalance(
     }
     return movement.type === "ingreso" ? total + movement.amount : total - movement.amount;
   }, openingBalance);
+}
+
+export function expectedCashBalance(
+  movements: Movement[],
+  openingBalance: number,
+  creditCardEntries?: CreditCardEntry[],
+  cashAccountId?: string | null
+) {
+  return expectedCash(movements, openingBalance, cashAccountId ?? null, creditCardEntries ?? []);
 }
