@@ -29,7 +29,7 @@ import { DebtOperationForm } from "./components/DebtOperationForm";
 import { DebtDetailModal } from "./components/DebtDetailModal";
 import { Toast } from "./components/Toast";
 import { translateDebtError } from "./utils/debtViewModel";
-import { AppData, CashCount, Category, Debt, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecurringPayment } from "./types";
+import { AppData, CashCount, Category, Debt, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecordAccountReconciliationResult, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, formatMoneyByCurrency, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
 import { currentDebtPrincipal } from "./utils/debtCalculations";
 import { buildDebtPlanningItems, summarizeDebtPlanningAlerts } from "./utils/debtPlanning";
@@ -1207,6 +1207,29 @@ async function saveInitialBalance(value: number): Promise<boolean> {
     }
   }
 
+  async function handleReconcileAccount(input: {
+    reconciliationId: string;
+    accountId: string;
+    actualBalance?: number | null;
+    denominations?: Record<string, number> | null;
+  }): Promise<RecordAccountReconciliationResult | null> {
+    if (!ensureOnlineWriteAllowed()) return null;
+    if (!ensureDataReady()) return null;
+
+    try {
+      const { recordAccountReconciliation } = await import("./services/dataRepository.js");
+      const result = await recordAccountReconciliation(input);
+      markRemoteSuccess();
+      await refreshAuthoritativeData("reconciliation");
+      showToast(result.status === "matched" ? "Conciliación completada: Cuadra" : "Conciliación registrada: Diferencia detectada");
+      return result;
+    } catch (error: any) {
+      markRemoteFailure();
+      window.alert(error.message || "No se pudo registrar la conciliación. Intenta nuevamente.");
+      return null;
+    }
+  }
+
   function markPaidForCurrentMonth(payment: RecurringPayment): RecurringPayment {
     const paidDate = localDateString();
     const [paidYear, paidMonth] = paidDate.split("-").map(Number);
@@ -1351,6 +1374,9 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               debtEvents={data.debtEvents}
               categories={data.categories}
               accounts={data.financialAccounts}
+              reconciliations={data.accountReconciliations}
+              reconciliationMovements={data.accountReconciliationMovements}
+              creditCardEntries={data.creditCardEntries}
               currentMember={currentMember}
               pendingMovementIds={pendingMovementIds}
               onQuickCreateCategory={saveCategory}
@@ -1388,7 +1414,20 @@ async function saveInitialBalance(value: number): Promise<boolean> {
             </Suspense>
           )}
           {view === "categorias" && <CategoriesManager categories={data.categories} onSave={saveCategory} onDelete={deleteCategory} onToggle={toggleCategory} />}
-          {view === "cuentas" && <AccountsManager accounts={data.financialAccounts} movements={data.movements} onSave={saveAccount} onToggle={toggleAccount} onEditInitialBalance={() => navigate("saldo-inicial")} />}
+          {view === "cuentas" && (
+            <AccountsManager
+              accounts={data.financialAccounts}
+              movements={data.movements}
+              reconciliations={data.accountReconciliations}
+              reconciliationMovements={data.accountReconciliationMovements}
+              creditCardEntries={data.creditCardEntries}
+              isOnline={isBrowserOnline}
+              onSave={saveAccount}
+              onToggle={toggleAccount}
+              onEditInitialBalance={() => navigate("saldo-inicial")}
+              onReconcileAccount={handleReconcileAccount}
+            />
+          )}
           {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={saveInitialBalance} />}
           {view === "deudas" && (
             <DebtsManager

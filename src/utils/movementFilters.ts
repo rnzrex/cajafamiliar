@@ -1,12 +1,14 @@
-import { DebtEvent, FinancialAccount, Movement, MovementType } from "../types";
-import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "./accountHelpers";
-import { monthKey } from "./calculations";
-import { localDateString, localMonthString } from "./date";
-import type { CreditCardEntry } from "../types";
-import { getMovementEconomics } from "./movementEconomics";
+import { AccountReconciliation, AccountReconciliationMovement, CreditCardEntry, DebtEvent, FinancialAccount, Movement, MovementType } from "../types.js";
+import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "./accountHelpers.js";
+import { monthKey } from "./calculations.js";
+import { localDateString, localMonthString } from "./date.js";
+import { getMovementEconomics } from "./movementEconomics.js";
+import { isMovementCertifiedMatched } from "./reconciliationHelpers.js";
 
 export type DateFilterMode = "all" | "month" | "date" | "range";
 export type MovementTypeFilter = MovementType | "todos";
+export type MovementOrderMode = "registro" | "fecha";
+export type MovementReconFilter = "todos" | "pendientes" | "conciliados";
 
 export interface MovementFilters {
   search: string;
@@ -18,6 +20,8 @@ export interface MovementFilters {
   category: string;
   accountId: string;
   type: MovementTypeFilter;
+  orderMode: MovementOrderMode;
+  reconFilter: MovementReconFilter;
 }
 
 export const defaultMovementFilters = (): MovementFilters => ({
@@ -30,9 +34,18 @@ export const defaultMovementFilters = (): MovementFilters => ({
   category: "todas",
   accountId: "",
   type: "todos",
+  orderMode: "registro",
+  reconFilter: "todos",
 });
 
-export function filterMovements(movements: Movement[], filters: MovementFilters, accounts: FinancialAccount[] = []) {
+export function filterMovements(
+  movements: Movement[],
+  filters: MovementFilters,
+  accounts: FinancialAccount[] = [],
+  reconciliations: AccountReconciliation[] = [],
+  recMovements: AccountReconciliationMovement[] = [],
+  creditCardEntries: CreditCardEntry[] = []
+) {
   const search = normalizeSearch(filters.search);
 
   return movements
@@ -57,7 +70,38 @@ export function filterMovements(movements: Movement[], filters: MovementFilters,
       return movement.accountId === filters.accountId;
     })
     .filter((movement) => filters.type === "todos" || movement.type === filters.type)
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .filter((movement) => {
+      if (filters.reconFilter === "todos") return true;
+      const isCertified = isMovementCertifiedMatched(movement, reconciliations, recMovements, creditCardEntries);
+      if (filters.reconFilter === "conciliados") {
+        return isCertified;
+      }
+      if (filters.reconFilter === "pendientes") {
+        return !isCertified;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (filters.orderMode === "fecha") {
+        const dateCmp = b.date.localeCompare(a.date);
+        if (dateCmp !== 0) return dateCmp;
+        const createdA = a.createdAt || a.date;
+        const createdB = b.createdAt || b.date;
+        const createdCmp = createdB.localeCompare(createdA);
+        if (createdCmp !== 0) return createdCmp;
+        return b.id.localeCompare(a.id);
+      }
+
+      const createdA = a.createdAt || a.date;
+      const createdB = b.createdAt || b.date;
+      const createdCmp = createdB.localeCompare(createdA);
+      if (createdCmp !== 0) return createdCmp;
+
+      const dateCmp = b.date.localeCompare(a.date);
+      if (dateCmp !== 0) return dateCmp;
+
+      return b.id.localeCompare(a.id);
+    });
 }
 
 function normalizeSearch(value: string) {
@@ -78,6 +122,7 @@ export function describeFilters(filters: MovementFilters, accountName?: string) 
   if (filters.category !== "todas") parts.push(`Categoria ${filters.category}`);
   if (filters.accountId) parts.push(`Cuenta ${accountName ?? (filters.accountId === UNASSIGNED_ACCOUNT_ID ? "Sin cuenta (historico)" : filters.accountId)}`);
   if (filters.type !== "todos") parts.push(`Tipo ${filters.type}`);
+  if (filters.reconFilter !== "todos") parts.push(`Conciliación: ${filters.reconFilter}`);
   return parts.join(" - ");
 }
 
@@ -118,8 +163,8 @@ export function movementTotals(
   };
 }
 
-import type { Debt } from "../types";
-import { resolveMovementCurrencyCode } from "./movementEconomics";
+import type { Debt } from "../types.js";
+import { resolveMovementCurrencyCode } from "./movementEconomics.js";
 
 export interface SingleCurrencyMovementTotals {
   currencyCode: string;

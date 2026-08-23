@@ -1,8 +1,10 @@
-import { ArchiveRestore, Archive, Pencil, Plus, Save, Wallet, X } from "lucide-react";
-import { FormEvent, useState } from "react";
-import { CreditCardEntry, FinancialAccount, Movement } from "../types";
-import { formatMoney, formatMoneyByCurrency } from "../utils/calculations";
-import { accountDisplayName, expectedAccountBalance, getActiveCashAccount } from "../utils/accountHelpers";
+import { ArchiveRestore, Archive, Pencil, Plus, Save, Wallet, X, Scale, CheckCircle2, AlertTriangle, HelpCircle } from "lucide-react";
+import { FormEvent, useMemo, useState } from "react";
+import type { AccountReconciliation, AccountReconciliationMovement, CreditCardEntry, FinancialAccount, Movement, RecordAccountReconciliationResult } from "../types.js";
+import { formatMoneyByCurrency } from "../utils/calculations.js";
+import { accountDisplayName, expectedAccountBalance, expectedCashBalance, getActiveCashAccount } from "../utils/accountHelpers.js";
+import { isReconciliationStale } from "../utils/reconciliationHelpers.js";
+import { AccountReconciliationModal } from "./AccountReconciliationModal.js";
 
 const accountTypeLabels: Record<FinancialAccount["reconciliationType"], string> = {
   cash: "Efectivo",
@@ -12,23 +14,47 @@ const accountTypeLabels: Record<FinancialAccount["reconciliationType"], string> 
 interface AccountsManagerProps {
   accounts: FinancialAccount[];
   movements: Movement[];
+  reconciliations?: AccountReconciliation[];
+  reconciliationMovements?: AccountReconciliationMovement[];
   creditCardEntries?: CreditCardEntry[];
+  isOnline?: boolean;
   onSave: (account: Omit<FinancialAccount, "id" | "createdAt" | "updatedAt">, id?: string) => FinancialAccount | null | Promise<FinancialAccount | null>;
   onToggle: (id: string, isActive: boolean) => boolean | Promise<boolean>;
   onEditInitialBalance: () => void;
+  onReconcileAccount?: (input: {
+    reconciliationId: string;
+    accountId: string;
+    actualBalance?: number | null;
+    denominations?: Record<string, number> | null;
+  }) => Promise<RecordAccountReconciliationResult | null>;
 }
 
-export function AccountsManager({ accounts, movements, creditCardEntries = [], onSave, onToggle, onEditInitialBalance }: AccountsManagerProps) {
+export function AccountsManager({
+  accounts,
+  movements,
+  reconciliations = [],
+  reconciliationMovements = [],
+  creditCardEntries = [],
+  isOnline = true,
+  onSave,
+  onToggle,
+  onEditInitialBalance,
+  onReconcileAccount,
+}: AccountsManagerProps) {
   const [editing, setEditing] = useState<FinancialAccount | null>(null);
+  const [reconcilingAccount, setReconcilingAccount] = useState<FinancialAccount | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [openingBalance, setOpeningBalance] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
-  const sorted = [...accounts].sort((a, b) => {
-    if (a.reconciliationType !== b.reconciliationType) return a.reconciliationType === "cash" ? -1 : 1;
-    return a.sortOrder - b.sortOrder || a.name.localeCompare(b.name);
-  });
+  const sorted = useMemo(() => {
+    return [...accounts].sort((a, b) => {
+      if (a.reconciliationType !== b.reconciliationType) return a.reconciliationType === "cash" ? -1 : 1;
+      return a.sortOrder - b.sortOrder || a.name.localeCompare(b.name);
+    });
+  }, [accounts]);
+
   const activeAccounts = sorted.filter((account) => account.isActive);
   const archivedAccounts = sorted.filter((account) => !account.isActive);
   const hasCashAccount = Boolean(getActiveCashAccount(accounts));
@@ -70,8 +96,7 @@ export function AccountsManager({ accounts, movements, creditCardEntries = [], o
   }
 
   async function handleToggle(account: FinancialAccount) {
-    const verb = account.isActive ? "archivar" : "reactivar";
-    if (account.isActive && !window.confirm(`Seguro que deseas archivar la cuenta "${account.name}"? Los movimientos históricos se conservan.`)) return;
+    if (account.isActive && !window.confirm(`¿Seguro que deseas archivar la cuenta "${account.name}"? Los movimientos históricos se conservan.`)) return;
     const saved = await onToggle(account.id, !account.isActive);
     if (saved) setEditing(null);
   }
@@ -104,16 +129,29 @@ export function AccountsManager({ accounts, movements, creditCardEntries = [], o
           <h3 className="text-xl font-black text-slate-900">Cuentas activas</h3>
           {activeAccounts.length === 0 && <p className="mt-2 rounded-2xl bg-slate-50 p-4 text-slate-600">Aún no hay cuentas activas.</p>}
           <div className="mt-3 space-y-3">
-            {activeAccounts.map((account) => (
-              <AccountCard
-                key={account.id}
-                account={account}
-                balance={expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries)}
-                onEdit={() => openEditForm(account)}
-                onToggle={() => void handleToggle(account)}
-                onEditInitialBalance={onEditInitialBalance}
-              />
-            ))}
+            {activeAccounts.map((account) => {
+              const expectedBal = account.reconciliationType === "cash"
+                ? expectedCashBalance(movements, account.openingBalance, creditCardEntries)
+                : expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries);
+
+              const accountRecs = reconciliations.filter((r) => r.accountId === account.id);
+
+              return (
+                <AccountCard
+                  key={account.id}
+                  account={account}
+                  balance={expectedBal}
+                  reconciliations={accountRecs}
+                  reconciliationMovements={reconciliationMovements}
+                  movements={movements}
+                  creditCardEntries={creditCardEntries}
+                  onEdit={() => openEditForm(account)}
+                  onToggle={() => void handleToggle(account)}
+                  onEditInitialBalance={onEditInitialBalance}
+                  onReconcile={() => setReconcilingAccount(account)}
+                />
+              );
+            })}
           </div>
         </section>
 
@@ -121,16 +159,28 @@ export function AccountsManager({ accounts, movements, creditCardEntries = [], o
           <h3 className="text-xl font-black text-slate-900">Cuentas archivadas</h3>
           {archivedAccounts.length === 0 && <p className="mt-2 rounded-2xl bg-slate-50 p-4 text-slate-600">No hay cuentas archivadas.</p>}
           <div className="mt-3 space-y-3">
-            {archivedAccounts.map((account) => (
-              <AccountCard
-                key={account.id}
-                account={account}
-                balance={expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries)}
-                onEdit={() => openEditForm(account)}
-                onToggle={() => void handleToggle(account)}
-                onEditInitialBalance={onEditInitialBalance}
-              />
-            ))}
+            {archivedAccounts.map((account) => {
+              const expectedBal = account.reconciliationType === "cash"
+                ? expectedCashBalance(movements, account.openingBalance, creditCardEntries)
+                : expectedAccountBalance(movements, account.id, account.openingBalance, creditCardEntries);
+
+              const accountRecs = reconciliations.filter((r) => r.accountId === account.id);
+
+              return (
+                <AccountCard
+                  key={account.id}
+                  account={account}
+                  balance={expectedBal}
+                  reconciliations={accountRecs}
+                  reconciliationMovements={reconciliationMovements}
+                  movements={movements}
+                  creditCardEntries={creditCardEntries}
+                  onEdit={() => openEditForm(account)}
+                  onToggle={() => void handleToggle(account)}
+                  onEditInitialBalance={onEditInitialBalance}
+                />
+              );
+            })}
           </div>
         </section>
       </div>
@@ -164,6 +214,19 @@ export function AccountsManager({ accounts, movements, creditCardEntries = [], o
           </form>
         </div>
       )}
+
+      {reconcilingAccount && onReconcileAccount && (
+        <AccountReconciliationModal
+          account={reconcilingAccount}
+          movements={movements}
+          reconciliations={reconciliations}
+          reconciliationMovements={reconciliationMovements}
+          creditCardEntries={creditCardEntries}
+          isOnline={isOnline}
+          onClose={() => setReconcilingAccount(null)}
+          onReconcile={onReconcileAccount}
+        />
+      )}
     </section>
   );
 }
@@ -171,17 +234,67 @@ export function AccountsManager({ accounts, movements, creditCardEntries = [], o
 function AccountCard({
   account,
   balance,
+  reconciliations = [],
+  reconciliationMovements = [],
+  movements = [],
+  creditCardEntries = [],
   onEdit,
   onToggle,
   onEditInitialBalance,
+  onReconcile,
 }: {
   account: FinancialAccount;
   balance: number;
+  reconciliations?: AccountReconciliation[];
+  reconciliationMovements?: AccountReconciliationMovement[];
+  movements?: Movement[];
+  creditCardEntries?: CreditCardEntry[];
   onEdit: () => void;
   onToggle: () => void;
   onEditInitialBalance: () => void;
+  onReconcile?: () => void;
 }) {
   const isCash = account.reconciliationType === "cash";
+
+  const latestRec = useMemo(() => {
+    if (reconciliations.length === 0) return null;
+    return [...reconciliations].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  }, [reconciliations]);
+
+  const reconStatusInfo = useMemo(() => {
+    if (!latestRec) {
+      return {
+        label: "Sin conciliación",
+        color: "bg-slate-100 text-slate-700 border-slate-200",
+        icon: HelpCircle,
+      };
+    }
+
+    if (latestRec.status === "mismatch") {
+      return {
+        label: "Requiere revisión",
+        color: "bg-amber-100 text-amber-800 border-amber-200",
+        icon: AlertTriangle,
+      };
+    }
+
+    const stale = isReconciliationStale(latestRec, account, movements, reconciliationMovements, creditCardEntries);
+    if (stale) {
+      return {
+        label: "Requiere revisión",
+        color: "bg-amber-100 text-amber-800 border-amber-200",
+        icon: AlertTriangle,
+      };
+    }
+
+    return {
+      label: "Cuadra",
+      color: "bg-emerald-100 text-emerald-800 border-emerald-200",
+      icon: CheckCircle2,
+    };
+  }, [latestRec, account, movements, reconciliationMovements, creditCardEntries]);
+
+  const StatusIcon = reconStatusInfo.icon;
 
   return (
     <article className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
@@ -193,11 +306,24 @@ function AccountCard({
             <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-black uppercase tracking-wide text-blue-800">{accountTypeLabels[account.reconciliationType]}</span>
             {account.currencyCode && <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-black uppercase text-slate-700">{account.currencyCode}</span>}
             {!account.isActive && <span className="rounded-full bg-slate-200 px-2.5 py-1 text-xs font-black text-slate-700">Archivada</span>}
+            <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-black ${reconStatusInfo.color}`}>
+              <StatusIcon className="h-3.5 w-3.5" />
+              {reconStatusInfo.label}
+            </span>
           </div>
           <p className="mt-1 text-sm font-semibold text-slate-600">Saldo esperado: {formatMoneyByCurrency(balance, account.currencyCode)}</p>
-          <p className="text-sm font-semibold text-slate-600">Saldo inicial: {formatMoneyByCurrency(account.openingBalance, account.currencyCode)}</p>
+          <p className="text-sm font-semibold text-slate-600">
+            Última conciliación: {latestRec ? new Date(latestRec.createdAt).toLocaleString("es-PE") : "Sin conciliación"}
+          </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {account.isActive && onReconcile && (
+            <button type="button" onClick={onReconcile} className="flex min-h-10 items-center gap-2 rounded-xl bg-blue-600 px-3 py-2 text-sm font-black text-white shadow-sm hover:bg-blue-700">
+              <Scale className="h-4 w-4" />
+              Conciliar
+            </button>
+          )}
+
           {isCash ? (
             <button type="button" onClick={onEditInitialBalance} className="flex min-h-10 items-center gap-2 rounded-xl bg-white px-3 py-2 text-sm font-black text-blue-800 shadow-sm hover:bg-blue-50">
               <Pencil className="h-4 w-4" />
