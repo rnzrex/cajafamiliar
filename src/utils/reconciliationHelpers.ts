@@ -29,47 +29,6 @@ export function movementBelongsToAccount(movement: Movement, account: FinancialA
 }
 
 /**
- * Pure helper: Determines if a movement has valid MATCHED reconciliation evidence.
- */
-export function isMovementCertifiedMatched(
-  movementId: string,
-  reconciliations: AccountReconciliation[],
-  recMovements: AccountReconciliationMovement[]
-): boolean {
-  const matchedRecIds = new Set(
-    reconciliations.filter((r) => r.status === "matched").map((r) => r.id)
-  );
-
-  return recMovements.some(
-    (rm) => rm.movementId === movementId && matchedRecIds.has(rm.reconciliationId)
-  );
-}
-
-/**
- * Pure helper: Gets movements belonging to an account that were NOT included in its latest matched reconciliation.
- */
-export function getUnreconciledMovements(
-  account: FinancialAccount,
-  movements: Movement[],
-  latestMatchedRec: AccountReconciliation | null,
-  recMovements: AccountReconciliationMovement[]
-): Movement[] {
-  const accountMovements = movements.filter((m) => movementBelongsToAccount(m, account));
-
-  if (!latestMatchedRec) {
-    return accountMovements;
-  }
-
-  const snapshotMovementIds = new Set(
-    recMovements
-      .filter((rm) => rm.reconciliationId === latestMatchedRec.id)
-      .map((rm) => rm.movementId)
-  );
-
-  return accountMovements.filter((m) => !snapshotMovementIds.has(m.id));
-}
-
-/**
  * Pure helper: Computes the effective balance contribution of a movement as of now.
  */
 export function calculateEffectiveContribution(
@@ -83,7 +42,91 @@ export function calculateEffectiveContribution(
 }
 
 /**
- * Pure helper: Determines if a reconciliation state is STALE.
+ * Pure helper: Determines if a movement has CURRENT valid MATCHED reconciliation evidence.
+ * A movement has valid matched evidence ONLY when its membership in a matched reconciliation agrees with:
+ * 1. movement.updatedAt === snapshot.movementUpdatedAtSnapshot
+ * 2. effective contribution === snapshot.balanceContribution
+ */
+export function isMovementCertifiedMatched(
+  movement: Movement,
+  reconciliations: AccountReconciliation[],
+  recMovements: AccountReconciliationMovement[],
+  creditCardEntries: CreditCardEntry[] = []
+): boolean {
+  const matchedRecIds = new Set(
+    reconciliations.filter((r) => r.status === "matched").map((r) => r.id)
+  );
+
+  const effectiveContrib = calculateEffectiveContribution(movement, creditCardEntries);
+
+  return recMovements.some((rm) => {
+    if (rm.movementId !== movement.id || !matchedRecIds.has(rm.reconciliationId)) {
+      return false;
+    }
+
+    if (movement.updatedAt && movement.updatedAt !== rm.movementUpdatedAtSnapshot) {
+      return false;
+    }
+
+    if (effectiveContrib !== rm.balanceContribution) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Pure helper: Gets movements belonging to an account that do NOT have valid matched snapshot evidence
+ * in its latest matched reconciliation.
+ * A movement is pending (unreconciled) if:
+ * 1. It was NOT included in the latest matched reconciliation snapshot.
+ * 2. Or it WAS included, but its updatedAt changed since the snapshot.
+ * 3. Or it WAS included, but its effective contribution changed (e.g. credit card payment reversed).
+ */
+export function getUnreconciledMovements(
+  account: FinancialAccount,
+  movements: Movement[],
+  latestMatchedRec: AccountReconciliation | null,
+  recMovements: AccountReconciliationMovement[],
+  creditCardEntries: CreditCardEntry[] = []
+): Movement[] {
+  const accountMovements = movements.filter((m) => movementBelongsToAccount(m, account));
+
+  if (!latestMatchedRec) {
+    return accountMovements;
+  }
+
+  const snapshotMap = new Map<string, AccountReconciliationMovement>(
+    recMovements
+      .filter((rm) => rm.reconciliationId === latestMatchedRec.id)
+      .map((rm) => [rm.movementId, rm])
+  );
+
+  return accountMovements.filter((m) => {
+    const rm = snapshotMap.get(m.id);
+    if (!rm) {
+      // New movement not in snapshot => pending
+      return true;
+    }
+
+    // Included movement whose updatedAt changed => pending
+    if (m.updatedAt && m.updatedAt !== rm.movementUpdatedAtSnapshot) {
+      return true;
+    }
+
+    // Included movement whose effective contribution changed => pending
+    const effectiveContrib = calculateEffectiveContribution(m, creditCardEntries);
+    if (effectiveContrib !== rm.balanceContribution) {
+      return true;
+    }
+
+    return false;
+  });
+}
+
+/**
+ * Pure helper: Determines if a reconciliation state is STALE for the entire reconciliation.
  * Stale conditions:
  * 1. Opening balance changed (account.openingBalance !== reconciliation.openingBalanceSnapshot).
  * 2. A new movement appeared for the account that was NOT in the reconciliation snapshot.

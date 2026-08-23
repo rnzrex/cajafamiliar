@@ -62,7 +62,7 @@ create table if not exists public.account_reconciliations (
 create index if not exists idx_account_reconciliations_household_account
   on public.account_reconciliations(household_id, account_id, created_at desc);
 
--- 3. Table account_reconciliation_movements
+-- 3. Table account_reconciliation_movements (NO FK to movements so mismatch movement deletion is allowed)
 create table if not exists public.account_reconciliation_movements (
   id uuid not null default gen_random_uuid() primary key,
   household_id uuid not null,
@@ -81,10 +81,6 @@ create table if not exists public.account_reconciliation_movements (
     foreign key (reconciliation_id)
     references public.account_reconciliations(id)
     on delete cascade,
-  constraint account_reconciliation_movements_movement_fkey
-    foreign key (movement_id)
-    references public.movements(id)
-    on delete restrict, -- NO ON DELETE CASCADE from movements
   constraint account_reconciliation_movements_unique_rec_mov
     unique (reconciliation_id, movement_id)
 );
@@ -201,7 +197,7 @@ begin
 end;
 $function$;
 
--- 6. RPC record_account_reconciliation_v1
+-- 6. RPC record_account_reconciliation_v1 (Single coherent snapshot capture)
 create or replace function public.record_account_reconciliation_v1(
   p_household_id uuid,
   p_reconciliation_id uuid,
@@ -318,8 +314,10 @@ begin
     raise exception 'UNSUPPORTED_RECONCILIATION_TYPE';
   end if;
 
-  -- 4. Calculate expected balance on server side from movements snapshot
-  select coalesce(sum(
+  -- 4. Single-scan: Capture eligible movements set & effective contribution into temp table ONCE
+  create temp table _temp_rec_movements on commit drop as
+  select
+    m.id as movement_id,
     case
       when exists (
         select 1
@@ -330,9 +328,9 @@ begin
       ) then 0
       when m.type = 'ingreso' then m.amount
       else -m.amount
-    end
-  ), 0)
-  into v_movement_sum
+    end as balance_contribution,
+    m.updated_at as movement_updated_at_snapshot,
+    pg_catalog.to_jsonb(m.*) as movement_snapshot
   from public.movements as m
   where m.household_id = p_household_id
     and (
@@ -340,6 +338,11 @@ begin
       or
       (v_reconciliation_type = 'cash' and (m.account_id = p_account_id or (m.account_id is null and m.method = 'efectivo')))
     );
+
+  -- Calculate expected balance directly from captured snapshot
+  select coalesce(sum(balance_contribution), 0)
+    into v_movement_sum
+    from _temp_rec_movements;
 
   v_expected_balance := v_opening_balance + v_movement_sum;
   v_difference := v_actual_balance - v_expected_balance;
@@ -419,7 +422,7 @@ begin
     now()
   );
 
-  -- 7. Insert explicit movement membership snapshots
+  -- 7. Insert explicit movement membership snapshots directly from captured snapshot
   insert into public.account_reconciliation_movements (
     household_id,
     reconciliation_id,
@@ -432,28 +435,12 @@ begin
   select
     p_household_id,
     p_reconciliation_id,
-    m.id,
-    case
-      when exists (
-        select 1
-          from public.credit_card_entries as c
-          join public.credit_card_entries as r on r.reversal_of_entry_id = c.id and r.household_id = p_household_id
-         where c.movement_id = m.id
-           and c.household_id = p_household_id
-      ) then 0
-      when m.type = 'ingreso' then m.amount
-      else -m.amount
-    end as balance_contribution,
-    m.updated_at as movement_updated_at_snapshot,
-    pg_catalog.to_jsonb(m.*) as movement_snapshot,
+    movement_id,
+    balance_contribution,
+    movement_updated_at_snapshot,
+    movement_snapshot,
     now()
-  from public.movements as m
-  where m.household_id = p_household_id
-    and (
-      (v_reconciliation_type = 'balance' and m.account_id = p_account_id)
-      or
-      (v_reconciliation_type = 'cash' and (m.account_id = p_account_id or (m.account_id is null and m.method = 'efectivo')))
-    );
+  from _temp_rec_movements;
 
   get diagnostics v_inserted_mov_count = row_count;
 
@@ -471,5 +458,6 @@ begin
 end;
 $function$;
 
-revoke all on function public.record_account_reconciliation_v1(uuid, uuid, uuid, numeric, jsonb) from public, anon;
+-- Revoke execute explicitly from public, anon, service_role
+revoke all on function public.record_account_reconciliation_v1(uuid, uuid, uuid, numeric, jsonb) from public, anon, service_role;
 grant execute on function public.record_account_reconciliation_v1(uuid, uuid, uuid, numeric, jsonb) to authenticated;

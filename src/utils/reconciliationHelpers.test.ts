@@ -48,7 +48,6 @@ const sampleUsdAccount: FinancialAccount = {
 
 describe("RECON-1A Reconciliation Foundation Helpers", () => {
   it("CRITICAL RULE: backdated movement registered after reconciliation remains pending", () => {
-    // M1 registered today (or earlier) and included in today's reconciliation
     const m1: Movement = {
       id: "m1",
       type: "ingreso",
@@ -93,11 +92,10 @@ describe("RECON-1A Reconciliation Foundation Helpers", () => {
       },
     ];
 
-    // M2 is registered after recToday, but its economic date is 3 days ago (2026-08-20)
     const m2: Movement = {
       id: "m2",
       type: "egreso",
-      date: "2026-08-20", // Backdated economic date!
+      date: "2026-08-20",
       amount: 40,
       description: "M2 backdated",
       method: "transferencia",
@@ -105,18 +103,157 @@ describe("RECON-1A Reconciliation Foundation Helpers", () => {
       person: "Papa",
       accountId: "acc-1",
       movementContext: "standard",
-      createdAt: "2026-08-23T13:00:00.000Z", // Created after reconciliation
+      createdAt: "2026-08-23T13:00:00.000Z",
       updatedAt: "2026-08-23T13:00:00.000Z",
     };
 
     const allMovements = [m1, m2];
 
-    // M2 is NOT certified as matched by rec-1
-    expect(isMovementCertifiedMatched("m2", [recToday], recMovements)).toBe(false);
+    expect(isMovementCertifiedMatched(m2, [recToday], recMovements)).toBe(false);
+    expect(isMovementCertifiedMatched(m1, [recToday], recMovements)).toBe(true);
 
-    // M2 is pending / unreconciled
     const pending = getUnreconciledMovements(sampleAccount, allMovements, recToday, recMovements);
     expect(pending.map((m) => m.id)).toEqual(["m2"]);
+  });
+
+  it("valid evidence checking: modified updatedAt or reversed credit-card payment makes movement pending", () => {
+    const mUnchanged: Movement = {
+      id: "m-unchanged",
+      type: "ingreso",
+      date: "2026-08-20",
+      amount: 100,
+      description: "Unchanged",
+      method: "transferencia",
+      category: "Otros",
+      person: "Mama",
+      accountId: "acc-1",
+      movementContext: "standard",
+      updatedAt: "2026-08-20T10:00:00.000Z",
+    };
+
+    const mUpdated: Movement = {
+      id: "m-updated",
+      type: "egreso",
+      date: "2026-08-20",
+      amount: 50,
+      description: "Updated later",
+      method: "transferencia",
+      category: "Mercado",
+      person: "Papa",
+      accountId: "acc-1",
+      movementContext: "standard",
+      updatedAt: "2026-08-23T15:00:00.000Z", // Changed since snapshot!
+    };
+
+    const mCardPay: Movement = {
+      id: "m-card-pay",
+      type: "egreso",
+      date: "2026-08-20",
+      amount: 200,
+      description: "Pago tarjeta",
+      method: "tarjeta",
+      category: "Compras personales",
+      person: "Mama",
+      accountId: "acc-1",
+      movementContext: "credit_card_payment",
+      updatedAt: "2026-08-20T10:00:00.000Z",
+    };
+
+    const recMatched: AccountReconciliation = {
+      id: "rec-valid-test",
+      householdId: "h-1",
+      accountId: "acc-1",
+      reconciliationType: "balance",
+      currencyCode: "PEN",
+      openingBalanceSnapshot: 1000,
+      expectedBalance: 850,
+      actualBalance: 850,
+      difference: 0,
+      status: "matched",
+      denominations: null,
+      registeredByUserId: "u-1",
+      createdAt: "2026-08-23T12:00:00.000Z",
+    };
+
+    const recMovements: AccountReconciliationMovement[] = [
+      {
+        id: "rm-1",
+        householdId: "h-1",
+        reconciliationId: "rec-valid-test",
+        movementId: "m-unchanged",
+        balanceContribution: 100,
+        movementUpdatedAtSnapshot: "2026-08-20T10:00:00.000Z",
+        movementSnapshot: mUnchanged,
+        createdAt: "2026-08-23T12:00:00.000Z",
+      },
+      {
+        id: "rm-2",
+        householdId: "h-1",
+        reconciliationId: "rec-valid-test",
+        movementId: "m-updated",
+        balanceContribution: -50,
+        movementUpdatedAtSnapshot: "2026-08-20T10:00:00.000Z", // Old snapshot timestamp
+        movementSnapshot: mUpdated,
+        createdAt: "2026-08-23T12:00:00.000Z",
+      },
+      {
+        id: "rm-3",
+        householdId: "h-1",
+        reconciliationId: "rec-valid-test",
+        movementId: "m-card-pay",
+        balanceContribution: -200,
+        movementUpdatedAtSnapshot: "2026-08-20T10:00:00.000Z",
+        movementSnapshot: mCardPay,
+        createdAt: "2026-08-23T12:00:00.000Z",
+      },
+    ];
+
+    const cardEntry: CreditCardEntry = {
+      id: "e-pay",
+      debtId: "card-debt-1",
+      entryDate: "2026-08-20",
+      entryType: "payment",
+      liabilityDelta: -200,
+      movementId: "m-card-pay",
+      reversalOfEntryId: null,
+      description: "Pago",
+      registeredByUserId: "u-1",
+      createdAt: "2026-08-20T10:00:00.000Z",
+    };
+
+    const reversalEntry: CreditCardEntry = {
+      id: "e-rev",
+      debtId: "card-debt-1",
+      entryDate: "2026-08-23",
+      entryType: "reversal",
+      liabilityDelta: 0,
+      movementId: null,
+      reversalOfEntryId: "e-pay",
+      description: "Reversion",
+      registeredByUserId: "u-1",
+      createdAt: "2026-08-23T16:00:00.000Z",
+    };
+
+    const cardEntries = [cardEntry, reversalEntry];
+
+    // Unchanged movement: certified and NOT pending
+    expect(isMovementCertifiedMatched(mUnchanged, [recMatched], recMovements, cardEntries)).toBe(true);
+
+    // Updated movement: NOT certified and IS pending
+    expect(isMovementCertifiedMatched(mUpdated, [recMatched], recMovements, cardEntries)).toBe(false);
+
+    // Reversed card payment movement: NOT certified and IS pending
+    expect(isMovementCertifiedMatched(mCardPay, [recMatched], recMovements, cardEntries)).toBe(false);
+
+    const pending = getUnreconciledMovements(
+      sampleAccount,
+      [mUnchanged, mUpdated, mCardPay],
+      recMatched,
+      recMovements,
+      cardEntries
+    );
+
+    expect(pending.map((m) => m.id)).toEqual(["m-updated", "m-card-pay"]);
   });
 
   it("mismatch status does not certify movements for protection", () => {
@@ -162,7 +299,7 @@ describe("RECON-1A Reconciliation Foundation Helpers", () => {
       },
     ];
 
-    expect(isMovementCertifiedMatched("m1", [recMismatch], recMovements)).toBe(false);
+    expect(isMovementCertifiedMatched(m1, [recMismatch], recMovements)).toBe(false);
     expect(getLatestMatchedReconciliation(sampleAccount, [recMismatch])).toBeNull();
   });
 
@@ -178,7 +315,7 @@ describe("RECON-1A Reconciliation Foundation Helpers", () => {
       person: "Mama",
       accountId: "acc-1",
       movementContext: "standard",
-      updatedAt: "2026-08-23T14:00:00.000Z", // Updated after reconciliation
+      updatedAt: "2026-08-23T14:00:00.000Z",
     };
 
     const rec: AccountReconciliation = {
@@ -204,7 +341,7 @@ describe("RECON-1A Reconciliation Foundation Helpers", () => {
         reconciliationId: "rec-1",
         movementId: "m1",
         balanceContribution: 100,
-        movementUpdatedAtSnapshot: "2026-08-23T12:00:00.000Z", // Old snapshot timestamp
+        movementUpdatedAtSnapshot: "2026-08-23T12:00:00.000Z",
         movementSnapshot: m1,
         createdAt: "2026-08-23T12:00:00.000Z",
       },
@@ -293,7 +430,7 @@ describe("RECON-1A Reconciliation Foundation Helpers", () => {
 
     const modifiedAccount: FinancialAccount = {
       ...sampleAccount,
-      openingBalance: 1500, // Changed!
+      openingBalance: 1500,
     };
 
     expect(isReconciliationStale(rec, modifiedAccount, [], [])).toBe(true);
@@ -363,16 +500,13 @@ describe("RECON-1A Reconciliation Foundation Helpers", () => {
       entryType: "reversal",
       liabilityDelta: 0,
       movementId: null,
-      reversalOfEntryId: "entry-pay", // Reverses paymentEntry
+      reversalOfEntryId: "entry-pay",
       description: "Reversión pago",
       registeredByUserId: "u-1",
       createdAt: "2026-08-23T14:00:00.000Z",
     };
 
-    // Before reversal entry exists: not stale
     expect(isReconciliationStale(rec, sampleAccount, [mCard], recMovements, [paymentEntry])).toBe(false);
-
-    // After reversal entry exists: effective contribution becomes 0 -> STALE!
     expect(
       isReconciliationStale(rec, sampleAccount, [mCard], recMovements, [paymentEntry, reversalEntry])
     ).toBe(true);
@@ -388,7 +522,7 @@ describe("RECON-1A Reconciliation Foundation Helpers", () => {
       method: "efectivo",
       category: "Negocio",
       person: "Mama",
-      accountId: null, // Legacy accountless cash movement
+      accountId: null,
       movementContext: "standard",
     };
 

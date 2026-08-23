@@ -131,6 +131,28 @@ async function runLocalSmoke() {
     },
   });
 
+  // Create second auth user OUTSIDE household
+  const outsiderEmail = `outsider.recon.${Date.now()}@local.test`;
+  const { data: outsiderData, error: outsiderErr } = await adminClient.auth.admin.createUser({
+    email: outsiderEmail,
+    password: testPassword,
+    email_confirm: true,
+  });
+  assert(!outsiderErr && outsiderData?.user, "Outsider user created");
+
+  const { data: outsiderSession } = await anonClient.auth.signInWithPassword({
+    email: outsiderEmail,
+    password: testPassword,
+  });
+  const outsiderClient = createClient(LOCAL_SUPABASE_URL, LOCAL_ANON_KEY, {
+    auth: { persistSession: false },
+    global: {
+      headers: {
+        Authorization: `Bearer ${outsiderSession.session.access_token}`,
+      },
+    },
+  });
+
   // 4. CREATE ACCOUNTS AND MOVEMENTS
   const balanceAccountId = makeUuid();
 
@@ -228,7 +250,37 @@ async function runLocalSmoke() {
   });
   assert(!mCashErr, "Cash movement inserted", mCashErr);
 
-  // 5. TEST RPC FOR BALANCE ACCOUNT (MATCHED)
+  // 5. TEST EXPLICIT RPC SECURITY DENIALS
+  log("Testing explicit RPC security revokes (anon, service_role, non-member)...");
+  const dummyRecId = makeUuid();
+  const { error: anonRpcErr } = await anonClient.rpc("record_account_reconciliation_v1", {
+    p_household_id: householdId,
+    p_reconciliation_id: dummyRecId,
+    p_account_id: balanceAccountId,
+    p_actual_balance: 1150,
+    p_denominations: null,
+  });
+  assert(Boolean(anonRpcErr), "RPC call by anon denied as expected");
+
+  const { error: serviceRoleRpcErr } = await adminClient.rpc("record_account_reconciliation_v1", {
+    p_household_id: householdId,
+    p_reconciliation_id: dummyRecId,
+    p_account_id: balanceAccountId,
+    p_actual_balance: 1150,
+    p_denominations: null,
+  });
+  assert(Boolean(serviceRoleRpcErr), "RPC call by service_role denied as expected");
+
+  const { error: outsiderRpcErr } = await outsiderClient.rpc("record_account_reconciliation_v1", {
+    p_household_id: householdId,
+    p_reconciliation_id: dummyRecId,
+    p_account_id: balanceAccountId,
+    p_actual_balance: 1150,
+    p_denominations: null,
+  });
+  assert(Boolean(outsiderRpcErr), "RPC call by non-member user denied as expected");
+
+  // 6. TEST RPC FOR BALANCE ACCOUNT (MATCHED)
   // Expected balance: 1000 (opening) + 200 (ingreso) - 50 (egreso) = 1150
   const rec1Id = makeUuid();
   log("Testing record_account_reconciliation_v1 for balance account (matched)...");
@@ -256,8 +308,32 @@ async function runLocalSmoke() {
 
   assert(!snapErr && snapMovs.length === 2, "2 snapshot movement records present", snapErr);
 
-  // 6. TEST IDEMPOTENCY FOR REC 1
-  log("Testing idempotency retry for rec 1...");
+  // VERIFY sum(snapshot balance_contribution) + opening_balance_snapshot == expected_balance
+  const sumContrib = snapMovs.reduce((sum, rm) => sum + Number(rm.balance_contribution), 0);
+  assert(
+    sumContrib + rec1Res.opening_balance_snapshot === rec1Res.expected_balance,
+    `sum(balance_contribution) (${sumContrib}) + opening_balance (${rec1Res.opening_balance_snapshot}) == expected_balance (${rec1Res.expected_balance})`
+  );
+
+  // 7. TEST IDEMPOTENCY WITH POST-RECONCILIATION BACKDATED MOVEMENT
+  log("Testing idempotency scenario with post-reconciliation backdated movement...");
+  const movBackdatedId = makeUuid();
+  const { error: backdatedErr } = await adminClient.from("movements").insert({
+    id: movBackdatedId,
+    household_id: householdId,
+    type: "ingreso",
+    date: "2026-08-19", // Backdated economic date!
+    amount: 500,
+    description: "Ingreso antiguo registrado tarde",
+    method: "transferencia",
+    category: "Otros",
+    person: "Recon Tester",
+    account_id: balanceAccountId,
+    movement_context: "standard",
+  });
+  assert(!backdatedErr, "Post-reconciliation backdated movement inserted", backdatedErr);
+
+  // Retry calling RPC with exact same reconciliation_id and payload
   const { data: rec1Retry, error: rec1RetryErr } = await authClient.rpc("record_account_reconciliation_v1", {
     p_household_id: householdId,
     p_reconciliation_id: rec1Id,
@@ -268,8 +344,9 @@ async function runLocalSmoke() {
 
   assert(!rec1RetryErr, "RPC retry call succeeded", rec1RetryErr);
   assert(rec1Retry.idempotent === true, "Idempotent flag is true on retry");
+  assert(rec1Retry.movements_count === 2, "Membership snapshot remains unchanged with 2 movements (backdated movement NOT retroactively added)");
 
-  // 7. TEST RECONCILIATION_ID_CONFLICT
+  // 8. TEST RECONCILIATION_ID_CONFLICT
   log("Testing payload conflict for same reconciliation_id...");
   const { data: conflictRes, error: conflictErr } = await authClient.rpc("record_account_reconciliation_v1", {
     p_household_id: householdId,
@@ -282,7 +359,7 @@ async function runLocalSmoke() {
   assert(Boolean(conflictErr), "Conflicting payload threw error as expected");
   assert(conflictErr.message.includes("RECONCILIATION_ID_CONFLICT"), "Error message contains RECONCILIATION_ID_CONFLICT");
 
-  // 8. TEST RPC FOR CASH ACCOUNT WITH DENOMINATIONS
+  // 9. TEST RPC FOR CASH ACCOUNT WITH DENOMINATIONS
   // Expected balance: 500 (opening) + 100 (ingreso) = 600
   // Denominations: {"100": 4, "50": 4} -> Total = 400 + 200 = 600
   const recCashId = makeUuid();
@@ -301,7 +378,29 @@ async function runLocalSmoke() {
   assert(recCashRes.expected_balance === 600, "Expected cash balance calculated server side is 600");
   assert(recCashRes.actual_balance === 600, "Actual cash balance calculated server side is 600");
 
-  // 9. TEST MISMATCH RECONCILIATION
+  // 10. TEST INVALID DENOMINATIONS ROLLBACK
+  log("Testing rollback on invalid denominations...");
+  const badRecId = makeUuid();
+  const { error: badDenomErr } = await authClient.rpc("record_account_reconciliation_v1", {
+    p_household_id: householdId,
+    p_reconciliation_id: badRecId,
+    p_account_id: cashAccountId,
+    p_actual_balance: null,
+    p_denominations: { "100": -5 }, // Invalid negative count!
+  });
+
+  assert(Boolean(badDenomErr), "Invalid denominations rejected with error");
+  assert(badDenomErr.message.includes("INVALID_DENOMINATIONS"), "Error message contains INVALID_DENOMINATIONS");
+
+  const { data: badRecRow } = await adminClient
+    .from("account_reconciliations")
+    .select("*")
+    .eq("id", badRecId)
+    .maybeSingle();
+
+  assert(badRecRow == null, "Transaction rolled back: no reconciliation record created");
+
+  // 11. TEST MISMATCH RECONCILIATION & MISMATCH DELETE SURVIVAL
   const recMismatchId = makeUuid();
   const mismatchAccountId = makeUuid();
 
@@ -346,7 +445,34 @@ async function runLocalSmoke() {
   assert(mismatchRes.status === "mismatch", "Reconciliation status is mismatch");
   assert(mismatchRes.difference === -100, "Difference is -100");
 
-  // 10. TEST MOVEMENT PROTECTION TRIGGER (MOVEMENT_RECONCILED)
+  // TEST MISMATCH MOVEMENT EDITABLE AND DELETABLE
+  log("Testing editable movement in mismatch reconciliation (movMismatchId)...");
+  const { error: updateMismatchMovErr } = await authClient
+    .from("movements")
+    .update({ amount: 150 })
+    .eq("id", movMismatchId);
+
+  assert(!updateMismatchMovErr, "Movement in mismatch reconciliation UPDATE succeeds", updateMismatchMovErr);
+
+  log("Testing deletion of movement in mismatch reconciliation (movMismatchId)...");
+  const { error: deleteMismatchMovErr } = await authClient
+    .from("movements")
+    .delete()
+    .eq("id", movMismatchId);
+
+  assert(!deleteMismatchMovErr, "Movement in mismatch reconciliation DELETE succeeds", deleteMismatchMovErr);
+
+  // VERIFY MISMATCH SNAPSHOT SURVIVES MOVEMENT DELETION
+  const { data: survivedSnapshot } = await adminClient
+    .from("account_reconciliation_movements")
+    .select("*")
+    .eq("reconciliation_id", recMismatchId)
+    .eq("movement_id", movMismatchId)
+    .maybeSingle();
+
+  assert(survivedSnapshot != null, "Mismatch reconciliation movement snapshot SURVIVES movement deletion!");
+
+  // 12. TEST MOVEMENT PROTECTION TRIGGER (MOVEMENT_RECONCILED) ON MATCHED RECONCILIATION
   log("Testing MOVEMENT_RECONCILED protection on matched movement (mov1Id)...");
   const { error: updateMov1Err } = await authClient
     .from("movements")
@@ -364,18 +490,9 @@ async function runLocalSmoke() {
   assert(Boolean(deleteMov1Err), "Direct DELETE of matched movement blocked as expected");
   assert(deleteMov1Err.message.includes("MOVEMENT_RECONCILED"), "Error message contains MOVEMENT_RECONCILED");
 
-  // 11. TEST MISMATCH MOVEMENT REMAINS EDITABLE
-  log("Testing editable movement in mismatch reconciliation (movMismatchId)...");
-  const { error: updateMismatchMovErr } = await authClient
-    .from("movements")
-    .update({ amount: 150 })
-    .eq("id", movMismatchId);
-
-  assert(!updateMismatchMovErr, "Movement in mismatch reconciliation remains editable", updateMismatchMovErr);
-
-  // 12. TEST DIRECT WRITE PROTECTION ON NEW TABLES (RLS/GRANTS)
-  log("Testing direct write protection on account_reconciliations...");
-  const { error: directInsertErr } = await authClient.from("account_reconciliations").insert({
+  // 13. TEST DIRECT WRITE PROTECTION ON BOTH NEW TABLES (RLS/GRANTS)
+  log("Testing direct write protection on account_reconciliations and account_reconciliation_movements...");
+  const { error: directInsertRecErr } = await authClient.from("account_reconciliations").insert({
     id: makeUuid(),
     household_id: householdId,
     account_id: balanceAccountId,
@@ -389,7 +506,33 @@ async function runLocalSmoke() {
     registered_by_user_id: userId,
   });
 
-  assert(Boolean(directInsertErr), "Direct INSERT on account_reconciliations blocked as expected");
+  assert(Boolean(directInsertRecErr), "Direct INSERT on account_reconciliations denied as expected");
+
+  const { error: directInsertRecMovErr } = await authClient.from("account_reconciliation_movements").insert({
+    id: makeUuid(),
+    household_id: householdId,
+    reconciliation_id: rec1Id,
+    movement_id: "mov-dummy",
+    balance_contribution: 10,
+    movement_updated_at_snapshot: new Date().toISOString(),
+    movement_snapshot: {},
+  });
+
+  assert(Boolean(directInsertRecMovErr), "Direct INSERT on account_reconciliation_movements denied as expected");
+
+  const { error: directUpdateRecErr } = await authClient
+    .from("account_reconciliations")
+    .update({ status: "mismatch" })
+    .eq("id", rec1Id);
+
+  assert(Boolean(directUpdateRecErr), "Direct UPDATE on account_reconciliations denied as expected");
+
+  const { error: directDeleteRecErr } = await authClient
+    .from("account_reconciliations")
+    .delete()
+    .eq("id", rec1Id);
+
+  assert(Boolean(directDeleteRecErr), "Direct DELETE on account_reconciliations denied as expected");
 
   log("ALL LOCAL SMOKE INTEGRATION TESTS PASSED CLEANLY!");
 }
