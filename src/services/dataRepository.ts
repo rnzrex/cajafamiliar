@@ -16,6 +16,18 @@ export class HouseholdNotProvisionedError extends Error {
   }
 }
 
+export class RemoteAppDataLoadError extends Error {
+  failedResource: string;
+  causeError?: unknown;
+
+  constructor(failedResource: string, causeError?: unknown) {
+    super(`Error al cargar datos financieros remotos de la tabla: ${failedResource}`);
+    this.name = "RemoteAppDataLoadError";
+    this.failedResource = failedResource;
+    this.causeError = causeError;
+  }
+}
+
 export class TrustedOfflineSnapshotUnavailableError extends Error {
   constructor() {
     super("No existe una copia verificada de Caja Familiar para usar sin conexión.");
@@ -87,26 +99,28 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       supabase.from("credit_card_profiles").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
       supabase.from("credit_card_entries").select("*").eq("household_id", householdId).order("entry_date", { ascending: true }).order("created_at", { ascending: true }),
       supabase.from("credit_card_statements").select("*").eq("household_id", householdId).order("statement_date", { ascending: true }),
-    ]);
+    ]);    const queries = [
+      { resource: "settings", result: settingsResult },
+      { resource: "movements", result: movementsResult },
+      { resource: "categories", result: categoriesResult },
+      { resource: "cash_counts", result: countsResult },
+      { resource: "recurring_payments", result: paymentsResult },
+      { resource: "financial_accounts", result: accountsResult },
+      { resource: "debts", result: debtsResult },
+      { resource: "debt_events", result: debtEventsResult },
+      { resource: "debt_schedule_versions", result: debtScheduleVersionsResult },
+      { resource: "debt_installments", result: debtInstallmentsResult },
+      { resource: "debt_event_installment_allocations", result: debtAllocationsResult },
+      { resource: "debt_collaterals", result: debtCollateralsResult },
+      { resource: "credit_card_profiles", result: creditCardProfilesResult },
+      { resource: "credit_card_entries", result: creditCardEntriesResult },
+      { resource: "credit_card_statements", result: creditCardStatementsResult },
+    ];
 
-    const queryError = [
-      settingsResult,
-      movementsResult,
-      categoriesResult,
-      countsResult,
-      paymentsResult,
-      accountsResult,
-      debtsResult,
-      debtEventsResult,
-      debtScheduleVersionsResult,
-      debtInstallmentsResult,
-      debtAllocationsResult,
-      debtCollateralsResult,
-      creditCardProfilesResult,
-      creditCardEntriesResult,
-      creditCardStatementsResult,
-    ].find((result) => result.error)?.error;
-    if (queryError) throw queryError;
+    const failedQuery = queries.find((q) => q.result.error);
+    if (failedQuery) {
+      throw new RemoteAppDataLoadError(failedQuery.resource, failedQuery.result.error);
+    }
 
     const hasRemoteData =
       (movementsResult.data?.length ?? 0) > 0 ||
