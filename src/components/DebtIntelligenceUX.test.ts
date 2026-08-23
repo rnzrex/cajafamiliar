@@ -15,6 +15,7 @@ import { DebtDetailModal } from "./DebtDetailModal.js";
 import { buildAllDebtNextActions } from "../utils/debtAttention.js";
 import { buildDebtStrategies } from "../utils/debtStrategy.js";
 import { buildDebtIntelligenceItems } from "../utils/debtIntelligence.js";
+import { buildDebtPlanningItems } from "../utils/debtPlanning.js";
 import type { DebtIntelligenceItem } from "../utils/debtIntelligence.js";
 
 function sampleLoanDebt(overrides: Partial<Debt> = {}): Debt {
@@ -108,12 +109,14 @@ function sampleLoanIntelligence(
   installments: DebtInstallment[] = [defaultInstallment],
   todayKey: string = "2026-08-23"
 ): DebtIntelligenceItem {
+  const planningItems = buildDebtPlanningItems([loan], [], versions, installments, [], todayKey);
   return buildDebtIntelligenceItems({
     debts: [loan],
     debtEvents: [],
     debtScheduleVersions: versions,
     debtInstallments: installments,
     debtCollaterals: [],
+    debtPlanningItems: planningItems,
     todayKey,
   })[0];
 }

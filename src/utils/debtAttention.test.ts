@@ -98,7 +98,7 @@ function sampleIntelligence(overrides: Partial<DebtIntelligenceItem> = {}): Debt
       inconsistentEventCount: 0,
     },
     rateBasis: "tea",
-    effectiveAnnualRate: 18,
+    ratePercent: 18,
     readiness: {
       hasOriginalPrincipal: true,
       hasCurrentSchedule: true,
