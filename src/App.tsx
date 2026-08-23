@@ -38,6 +38,7 @@ import { buildDebtStrategies } from "./utils/debtStrategy";
 import { parseNotificationDeepLink } from "./utils/deepLink";
 import { buildObligationProjection } from "./utils/obligationProjection";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
+import { mergePendingMovements, shouldStartAuthoritativeRefresh, validateAuthoritativeLoadSource } from "./services/authoritativeSync";
 import {
   CategoryNotFoundError,
   createCashCount,
@@ -176,28 +177,41 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [pendingSyncState, setPendingSyncState] = useState<PendingSyncState>("idle");
   const [syncAttempt, setSyncAttempt] = useState(0);
   const [lastSuccessfulRemoteSyncAt, setLastSuccessfulRemoteSyncAt] = useState<number | null>(null);
-  const [remoteSyncStatus, setRemoteSyncStatus] = useState<"fresh" | "refreshing" | "error" | "offline">("fresh");
+  const [remoteSyncStatus, setRemoteSyncStatus] = useState<"loading" | "fresh" | "refreshing" | "error" | "offline">("loading");
   const refreshInFlightRef = useRef(false);
+  const lastRefreshStartedAtRef = useRef(0);
+  const dataReadyRef = useRef(dataReady);
+
+  useEffect(() => {
+    dataReadyRef.current = dataReady;
+  }, [dataReady]);
 
   const refreshAuthoritativeData = useCallback(
     async (reason = "manual") => {
       if (!isSupabaseConfigured || !currentMember) return false;
-      if (refreshInFlightRef.current) return false;
 
+      const now = Date.now();
+      const shouldRun = shouldStartAuthoritativeRefresh({
+        reason,
+        now,
+        lastStartedAt: lastRefreshStartedAtRef.current,
+        inFlight: refreshInFlightRef.current,
+        windowMs: 1000,
+      });
+
+      if (!shouldRun) return false;
+
+      lastRefreshStartedAtRef.current = now;
       refreshInFlightRef.current = true;
       setRemoteSyncStatus("refreshing");
 
       try {
         const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
-        if (!isOnline) {
-          setRemoteSyncStatus("offline");
-          setLastRemoteContact("failure");
-          return false;
-        }
-
         const res = await loadAppData(currentMember);
-        if (res.source !== "remote") {
-          setRemoteSyncStatus("error");
+
+        const canAdopt = validateAuthoritativeLoadSource({ isOnline, source: res.source });
+        if (!canAdopt) {
+          setRemoteSyncStatus(isOnline ? "error" : "offline");
           setLastRemoteContact("failure");
           return false;
         }
@@ -215,22 +229,32 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         setData(mergedData);
         setDataReady(true);
         setDataLoadError(null);
-        setLastSuccessfulRemoteSyncAt(Date.now());
-        setRemoteSyncStatus("fresh");
-        setLastRemoteContact("success");
+
+        if (isOnline) {
+          setLastSuccessfulRemoteSyncAt(Date.now());
+          setRemoteSyncStatus("fresh");
+          setLastRemoteContact("success");
+        } else {
+          setRemoteSyncStatus("offline");
+          setLastRemoteContact("failure");
+        }
         setPendingSyncState("idle");
         return true;
-      } catch (err) {
+      } catch (err: unknown) {
         console.error(`[AuthoritativeSync] Error in refreshAuthoritativeData (${reason}):`, err);
         setLastRemoteContact("failure");
-        setRemoteSyncStatus("error");
-        if (!dataReady) {
+        const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
+        setRemoteSyncStatus(isOnline ? "error" : "offline");
+        if (!dataReadyRef.current) {
+          const failedResource = err instanceof RemoteAppDataLoadError ? err.failedResource : "desconocida";
           setDataLoadError(
             err instanceof RemoteAppDataLoadError
-              ? `No se pudo sincronizar la informaci?n financiera remota (${(err as any)?.failedResource ?? "remota"}). Intenta nuevamente.`
+              ? `No se pudo sincronizar la información financiera remota (${failedResource}). Intenta nuevamente.`
               : err instanceof HouseholdNotProvisionedError
-                ? "Este hogar todav?a no est? provisionado en Supabase."
-                : "Problema de conexi?n al cargar la informaci?n financiera remota."
+                ? "Este hogar todavía no está provisionado en Supabase."
+                : err instanceof TrustedOfflineSnapshotUnavailableError
+                  ? "Este dispositivo todavía no tiene una copia verificada para usar Caja Familiar sin conexión. Conéctate a internet al menos una vez."
+                  : "Problema de conexión al cargar la información financiera."
           );
         }
         return false;
@@ -238,7 +262,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         refreshInFlightRef.current = false;
       }
     },
-    [currentMember, dataReady]
+    [currentMember]
   );
   const flushInFlightRef = useRef(false);
   const appMountedRef = useRef(true);
@@ -327,29 +351,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
             ? "connected"
             : lastRemoteContact === "failure"
               ? "problem"
-              : "loading";
-
-  useEffect(() => {
-    if (!isSupabaseConfigured) return;
-
-    function handleOnline() {
-      setIsBrowserOnline(true);
-      setLastRemoteContact("unknown");
-    }
-
-    function handleOffline() {
-      setIsBrowserOnline(false);
-    }
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
-
-  useEffect(() => {
+              : "loading";  useEffect(() => {
     appMountedRef.current = true;
     return () => {
       appMountedRef.current = false;
@@ -357,9 +359,6 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   }, []);
 
   useEffect(() => {
-    if (!isSupabaseConfigured || !remoteStatus) return;
-    setLastRemoteContact(remoteStatus === "connected" ? "success" : "failure");
-  }, [remoteStatus]);  useEffect(() => {
     if (!isSupabaseConfigured) {
       setDataReady(true);
       return;
@@ -377,7 +376,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   useEffect(() => {
     if (typeof document === "undefined" || !isSupabaseConfigured || !currentMember) return;
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible" && isBrowserOnline && !refreshInFlightRef.current) {
+      if (document.visibilityState === "visible" && isBrowserOnline) {
         void refreshAuthoritativeData("visibility");
       }
     };
@@ -391,7 +390,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     const handleFocus = () => {
       window.clearTimeout(focusTimeout);
       focusTimeout = window.setTimeout(() => {
-        if (document.visibilityState === "visible" && isBrowserOnline && !refreshInFlightRef.current) {
+        if (document.visibilityState === "visible" && isBrowserOnline) {
           void refreshAuthoritativeData("focus");
         }
       }, 300);
@@ -426,7 +425,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   useEffect(() => {
     if (typeof window === "undefined" || !isSupabaseConfigured || !currentMember || !isBrowserOnline) return;
     const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible" && !refreshInFlightRef.current) {
+      if (document.visibilityState === "visible") {
         void refreshAuthoritativeData("periodic");
       }
     }, 20000);
@@ -1555,20 +1554,6 @@ async function saveInitialBalance(value: number): Promise<boolean> {
   );
 }
 
-function mergePendingMovements(data: AppData, operations: OfflineCreateMovementOperation[]): AppData {
-  const remoteMovementIds = new Set(data.movements.map((movement) => movement.id));
-  const overlayMovementIds = new Set<string>();
-  const pendingMovements = operations
-    .map((operation) => operation.movement)
-    .filter((movement) => {
-      if (remoteMovementIds.has(movement.id) || overlayMovementIds.has(movement.id)) return false;
-      overlayMovementIds.add(movement.id);
-      return true;
-    });
-
-  return pendingMovements.length > 0 ? { ...data, movements: [...pendingMovements, ...data.movements] } : data;
-}
-
 function SyncStatus({
   status,
   pendingCount,
@@ -1596,7 +1581,7 @@ function SyncStatus({
     dotClass = "bg-amber-400";
     textClass = "text-slate-600";
   } else if (!isOnline || remoteSyncStatus === "offline" || status === "offline") {
-    label = pendingCount > 0 ? `Sin conexi?n ? ${pendingLabel}` : "Sin conexi?n ? datos guardados";
+    label = pendingCount > 0 ? `Sin conexión ? ${pendingLabel}` : "Sin conexión · datos guardados";
     dotClass = "bg-red-500";
     textClass = "text-red-700";
   } else if (remoteSyncStatus === "refreshing" || status === "syncing") {
@@ -1604,7 +1589,7 @@ function SyncStatus({
     dotClass = "bg-amber-400";
     textClass = "text-slate-600";
   } else if (remoteSyncStatus === "error" || status === "problem") {
-    label = pendingCount > 0 ? `No se pudo sincronizar ? ${pendingLabel}` : "No se pudo sincronizar";
+    label = pendingCount > 0 ? `No se pudo sincronizar · ${pendingLabel}` : "No se pudo sincronizar";
     dotClass = "bg-red-500";
     textClass = "text-red-700";
   } else if (timeStr) {

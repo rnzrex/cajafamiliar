@@ -1,14 +1,17 @@
-﻿import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+﻿import { describe, expect, it, vi } from "vitest";
 import type { AppData, HouseholdMember, Movement } from "../types";
 import {
   RemoteAppDataLoadError,
-  HouseholdNotProvisionedError,
   TrustedOfflineSnapshotUnavailableError,
-  loadAppData,
 } from "./dataRepository";
+import {
+  mergePendingMovements,
+  shouldStartAuthoritativeRefresh,
+  validateAuthoritativeLoadSource,
+} from "./authoritativeSync";
 import { expectedCash } from "../utils/calculations";
 
-describe("HOTFIX-CASH-02 — Authoritative Online Sync & Repository Safeguards", () => {
+describe("HOTFIX-CASH-02 — Production Authoritative Sync Contract & Helpers", () => {
   const member: HouseholdMember = {
     householdId: "e7e4e53e-5f59-4c1d-8749-6159ef122df1",
     userId: "user-1",
@@ -16,9 +19,22 @@ describe("HOTFIX-CASH-02 — Authoritative Online Sync & Repository Safeguards",
     role: "owner",
   };
 
-  const sampleSnapshot: AppData = {
+  const sampleAppData: AppData = {
     initialBalance: 837.5,
-    movements: [],
+    movements: [
+      {
+        id: "m-remote-1",
+        type: "ingreso",
+        date: "2026-08-22",
+        amount: 70.9,
+        description: "Remoto",
+        method: "efectivo",
+        category: "Otros",
+        person: "Renzo",
+        accountId: "cash-1",
+        movementContext: "standard",
+      },
+    ],
     categories: [],
     cashCounts: [],
     recurringPayments: [],
@@ -34,31 +50,106 @@ describe("HOTFIX-CASH-02 — Authoritative Online Sync & Repository Safeguards",
     creditCardStatements: [],
   };
 
-  describe("loadAppData Remote Authority & Error Isolation (Section 3 & 4)", () => {
-    it("TEST A — ONLINE FAILURE: throws RemoteAppDataLoadError with failedResource and NEVER returns fallback", async () => {
-      // Set online
-      vi.stubGlobal("navigator", { onLine: true });
-
-      const error = new RemoteAppDataLoadError("movements", new Error("Network timeout"));
-      expect(error.failedResource).toBe("movements");
-      expect(error.name).toBe("RemoteAppDataLoadError");
-      expect(error.message).toContain("movements");
+  describe("Section 17: Production Helper validateAuthoritativeLoadSource", () => {
+    it("ONLINE: accepts 'remote' source, rejects 'fallback' and 'local'", () => {
+      expect(validateAuthoritativeLoadSource({ isOnline: true, source: "remote" })).toBe(true);
+      expect(validateAuthoritativeLoadSource({ isOnline: true, source: "fallback" })).toBe(false);
+      expect(validateAuthoritativeLoadSource({ isOnline: true, source: "local" })).toBe(false);
     });
 
-    it("TEST B — ONLINE UNKNOWN FAILURE: throws RemoteAppDataLoadError('unknown')", () => {
-      const error = new RemoteAppDataLoadError("unknown", new Error("Unexpected error"));
-      expect(error.failedResource).toBe("unknown");
-    });
-
-    it("TEST C & D — OFFLINE FALLBACK vs NO SNAPSHOT contracts", () => {
-      vi.stubGlobal("navigator", { onLine: false });
-      // Offline mode must return fallback when snapshot exists, or throw TrustedOfflineSnapshotUnavailableError
-      const noSnapshotError = new TrustedOfflineSnapshotUnavailableError();
-      expect(noSnapshotError.name).toBe("TrustedOfflineSnapshotUnavailableError");
+    it("OFFLINE: accepts 'fallback' source, rejects 'remote' and 'local'", () => {
+      expect(validateAuthoritativeLoadSource({ isOnline: false, source: "fallback" })).toBe(true);
+      expect(validateAuthoritativeLoadSource({ isOnline: false, source: "remote" })).toBe(false);
+      expect(validateAuthoritativeLoadSource({ isOnline: false, source: "local" })).toBe(false);
     });
   });
 
-  describe("Reconciliation & Stale-Online Prevention (Section 3 & 25 & 11)", () => {
+  describe("Section 19: Production Helper shouldStartAuthoritativeRefresh (Deduplication)", () => {
+    it("deduplicates automatic triggers within 1000ms window, allows manual bypass", () => {
+      // 1. Initial automatic trigger (visibility) at t=1000
+      const run1 = shouldStartAuthoritativeRefresh({
+        reason: "visibility",
+        now: 1000,
+        lastStartedAt: 0,
+        inFlight: false,
+      });
+      expect(run1).toBe(true);
+
+      // 2. Automatic trigger (focus) at t=1050 (within 1000ms window) -> GUARDED (false)
+      const run2 = shouldStartAuthoritativeRefresh({
+        reason: "focus",
+        now: 1050,
+        lastStartedAt: 1000,
+        inFlight: false,
+      });
+      expect(run2).toBe(false);
+
+      // 3. Manual trigger at t=1060 -> BYPASSES window (true)
+      const run3 = shouldStartAuthoritativeRefresh({
+        reason: "manual",
+        now: 1060,
+        lastStartedAt: 1000,
+        inFlight: false,
+      });
+      expect(run3).toBe(true);
+
+      // 4. Automatic trigger at t=2100 -> AFTER window (true)
+      const run4 = shouldStartAuthoritativeRefresh({
+        reason: "periodic",
+        now: 2100,
+        lastStartedAt: 1000,
+        inFlight: false,
+      });
+      expect(run4).toBe(true);
+
+      // 5. In-flight guard -> REJECTED (false)
+      const run5 = shouldStartAuthoritativeRefresh({
+        reason: "manual",
+        now: 3000,
+        lastStartedAt: 1000,
+        inFlight: true,
+      });
+      expect(run5).toBe(false);
+    });
+  });
+
+  describe("Section 18: Production Helper mergePendingMovements", () => {
+    it("merges new pending outbox operations without duplicating existing remote IDs", () => {
+      const pendingOperation = {
+        version: 1 as const,
+        operationId: "op-1",
+        kind: "create-movement" as const,
+        householdId: "h1",
+        userId: "user-1",
+        clientTimestamp: 1000,
+        queuedAt: "2026-08-22T20:00:00Z",
+        syncedAt: null,
+        createdAt: "2026-08-22T20:00:00Z",
+        movement: {
+          id: "m-local-pending",
+          type: "ingreso" as const,
+          date: "2026-08-22",
+          amount: 50.0,
+          description: "Pendiente local",
+          method: "efectivo" as const,
+          category: "Otros",
+          person: "Renzo",
+          accountId: "cash-1",
+          movementContext: "standard" as const,
+        },
+      };
+
+      const merged = mergePendingMovements(sampleAppData, [pendingOperation]);
+      expect(merged.movements).toHaveLength(2);
+      expect(merged.movements[0].id).toBe("m-local-pending");
+
+      // Merge again with duplicate operation ID -> should NOT duplicate
+      const reMerged = mergePendingMovements(merged, [pendingOperation]);
+      expect(reMerged.movements).toHaveLength(2);
+    });
+  });
+
+  describe("Reconciliation & Production Cash Fixture (1554.20 + 70.90 = 1625.10)", () => {
     it("remote authoritative state (1554.20 opening + 70.90 net) yields expectedCash = 1625.10", () => {
       const openingBalance = 1554.2;
       const cashAccountId = "acc-cash-prod";
@@ -93,89 +184,13 @@ describe("HOTFIX-CASH-02 — Authoritative Online Sync & Repository Safeguards",
       expect(result).toBeCloseTo(1625.1, 2);
       expect(result).not.toBe(908.4);
     });
-
-    it("online mode must never adopt stale 837.50 opening balance when remote reports 1554.20", () => {
-      const staleOpening = 837.5;
-      const remoteOpening = 1554.2;
-      const cashAccountId = "acc-cash-prod";
-      const movements: Movement[] = [
-        {
-          id: "m1",
-          type: "ingreso",
-          date: "2026-08-22",
-          amount: 70.9,
-          description: "Ingreso neto",
-          method: "efectivo",
-          category: "Negocio",
-          person: "Renzo",
-          accountId: cashAccountId,
-          movementContext: "standard",
-        },
-      ];
-
-      const staleResult = expectedCash(movements, staleOpening, cashAccountId);
-      const remoteResult = expectedCash(movements, remoteOpening, cashAccountId);
-
-      expect(staleResult).toBeCloseTo(908.4, 2);
-      expect(remoteResult).toBeCloseTo(1625.1, 2);
-
-      const isOnline = true;
-      const effectiveExpected = isOnline ? remoteResult : staleResult;
-      expect(effectiveExpected).toBeCloseTo(1625.1, 2);
-    });
   });
 
-  describe("Authoritative Adopter Logic & Outbox Preservation (Section 8 & 9 & 24-28)", () => {
-    it("rejects fallback source when online = true (defensive online fallback rejection)", () => {
-      const isOnline = true;
-      const loadResult = { data: sampleSnapshot, source: "fallback" as const };
-
-      const canAdopt = isOnline ? (loadResult.source as string) === "remote" : (loadResult.source as string) === "fallback";
-      expect(canAdopt).toBe(false);
-    });
-
-    it("accepts fallback source when online = false (offline fallback adoption)", () => {
-      const isOnline = false;
-      const loadResult = { data: sampleSnapshot, source: "fallback" as const };
-
-      const canAdopt = isOnline ? (loadResult.source as string) === "remote" : (loadResult.source as string) === "fallback";
-      expect(canAdopt).toBe(true);
-    });
-
-    it("deduplicates visibility and focus triggers within 1000ms window", () => {
-      let lastRefreshTime = 0;
-      const tryRefresh = (reason: string, now: number) => {
-        if (reason !== "manual" && now - lastRefreshTime < 1000) {
-          return false;
-        }
-        lastRefreshTime = now;
-        return true;
-      };
-
-      expect(tryRefresh("visibility", 1000)).toBe(true);
-      expect(tryRefresh("focus", 1050)).toBe(false); // Guarded, within 1000ms
-      expect(tryRefresh("manual", 1060)).toBe(true); // Manual bypasses guard
-      expect(tryRefresh("periodic", 2100)).toBe(true); // After 1000ms window
-    });
-  });
-
-  describe("PWA Update Activation Safeguards (Section 19 & 29)", () => {
-    it("ensures controllerchange triggers window reload exactly once", () => {
-      let reloadCount = 0;
-      let refreshing = false;
-
-      const triggerReload = () => {
-        if (!refreshing) {
-          refreshing = true;
-          reloadCount++;
-        }
-      };
-
-      // Simulate statechange activated AND controllerchange firing consecutively
-      triggerReload(); // controllerchange
-      triggerReload(); // statechange activated
-
-      expect(reloadCount).toBe(1);
+  describe("Typed Errors", () => {
+    it("RemoteAppDataLoadError retains failedResource property", () => {
+      const err = new RemoteAppDataLoadError("financial_accounts", new Error("RLS error"));
+      expect(err.failedResource).toBe("financial_accounts");
+      expect(err.name).toBe("RemoteAppDataLoadError");
     });
   });
 });
