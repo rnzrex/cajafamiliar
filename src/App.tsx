@@ -9,11 +9,12 @@ import {
   MoreHorizontal,
   PiggyBank,
   PlusCircle,
+  RefreshCw,
   Tags,
   Wallet,
   X,
 } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountsManager } from "./components/AccountsManager";
 import { CashCounter } from "./components/CashCounter";
 import { CategoriesManager } from "./components/CategoriesManager";
@@ -37,6 +38,7 @@ import { buildDebtStrategies } from "./utils/debtStrategy";
 import { parseNotificationDeepLink } from "./utils/deepLink";
 import { buildObligationProjection } from "./utils/obligationProjection";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
+import { mergePendingMovements, shouldStartAuthoritativeRefresh, validateAuthoritativeLoadSource } from "./services/authoritativeSync";
 import {
   CategoryNotFoundError,
   createCashCount,
@@ -55,6 +57,7 @@ import {
   FinancialAccountProtectedError,
   HouseholdMemberNotProvisionedError,
   HouseholdNotProvisionedError,
+  RemoteAppDataLoadError,
   InvalidMovementError,
   loadAppData,
   MovementContextImmutableError,
@@ -173,19 +176,98 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const pendingMovementIdsRef = useRef<Set<string>>(new Set());
   const [pendingSyncState, setPendingSyncState] = useState<PendingSyncState>("idle");
   const [syncAttempt, setSyncAttempt] = useState(0);
+  const [lastSuccessfulRemoteSyncAt, setLastSuccessfulRemoteSyncAt] = useState<number | null>(null);
+  const [remoteSyncStatus, setRemoteSyncStatus] = useState<"loading" | "fresh" | "refreshing" | "error" | "offline">("loading");
+  const refreshInFlightRef = useRef(false);
+  const lastRefreshStartedAtRef = useRef(0);
+  const dataReadyRef = useRef(dataReady);
+
+  useEffect(() => {
+    dataReadyRef.current = dataReady;
+  }, [dataReady]);
+
+  const refreshAuthoritativeData = useCallback(
+    async (reason = "manual") => {
+      if (!isSupabaseConfigured || !currentMember) return false;
+
+      const now = Date.now();
+      const shouldRun = shouldStartAuthoritativeRefresh({
+        reason,
+        now,
+        lastStartedAt: lastRefreshStartedAtRef.current,
+        inFlight: refreshInFlightRef.current,
+        windowMs: 1000,
+      });
+
+      if (!shouldRun) return false;
+
+      lastRefreshStartedAtRef.current = now;
+      refreshInFlightRef.current = true;
+      setRemoteSyncStatus("refreshing");
+
+      try {
+        const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
+        const res = await loadAppData(currentMember);
+
+        const canAdopt = validateAuthoritativeLoadSource({ isOnline, source: res.source });
+        if (!canAdopt) {
+          setRemoteSyncStatus(isOnline ? "error" : "offline");
+          setLastRemoteContact("failure");
+          return false;
+        }
+
+        let pendingOperations: OfflineCreateMovementOperation[] = [];
+        try {
+          pendingOperations = await listPendingCreateMovements(currentMember);
+        } catch {
+          // Outbox read best effort
+        }
+
+        updatePendingMovementIds(pendingOperations.map((op) => op.movement.id));
+        const mergedData = mergePendingMovements(res.data, pendingOperations);
+
+        setData(mergedData);
+        setDataReady(true);
+        setDataLoadError(null);
+
+        if (isOnline) {
+          setLastSuccessfulRemoteSyncAt(Date.now());
+          setRemoteSyncStatus("fresh");
+          setLastRemoteContact("success");
+        } else {
+          setRemoteSyncStatus("offline");
+          setLastRemoteContact("failure");
+        }
+        setPendingSyncState("idle");
+        return true;
+      } catch (err: unknown) {
+        console.error(`[AuthoritativeSync] Error in refreshAuthoritativeData (${reason}):`, err);
+        setLastRemoteContact("failure");
+        const isOnline = typeof navigator !== "undefined" ? navigator.onLine : true;
+        setRemoteSyncStatus(isOnline ? "error" : "offline");
+        if (!dataReadyRef.current) {
+          const failedResource = err instanceof RemoteAppDataLoadError ? err.failedResource : "desconocida";
+          setDataLoadError(
+            err instanceof RemoteAppDataLoadError
+              ? `No se pudo sincronizar la información financiera remota (${failedResource}). Intenta nuevamente.`
+              : err instanceof HouseholdNotProvisionedError
+                ? "Este hogar todavía no está provisionado en Supabase."
+                : err instanceof TrustedOfflineSnapshotUnavailableError
+                  ? "Este dispositivo todavía no tiene una copia verificada para usar Caja Familiar sin conexión. Conéctate a internet al menos una vez."
+                  : "Problema de conexión al cargar la información financiera."
+          );
+        }
+        return false;
+      } finally {
+        refreshInFlightRef.current = false;
+      }
+    },
+    [currentMember]
+  );
   const flushInFlightRef = useRef(false);
   const appMountedRef = useRef(true);
-
-  const refreshAppData = async () => {
-    if (currentMember) {
-      try {
-        const res = await loadAppData(currentMember);
-        setData(res.data);
-      } catch (err) {
-        console.error("Error refreshing app data:", err);
-        throw err;
-      }
-    }
+  const refreshAppData = async (reason = "debt-event") => {
+    await refreshAuthoritativeData(reason);
   };
   const canWriteDebt = isSupabaseConfigured && isBrowserOnline && Boolean(currentMember);
   const expected = useMemo(() => {
@@ -269,29 +351,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
             ? "connected"
             : lastRemoteContact === "failure"
               ? "problem"
-              : "loading";
-
-  useEffect(() => {
-    if (!isSupabaseConfigured) return;
-
-    function handleOnline() {
-      setIsBrowserOnline(true);
-      setLastRemoteContact("unknown");
-    }
-
-    function handleOffline() {
-      setIsBrowserOnline(false);
-    }
-
-    window.addEventListener("online", handleOnline);
-    window.addEventListener("offline", handleOffline);
-    return () => {
-      window.removeEventListener("online", handleOnline);
-      window.removeEventListener("offline", handleOffline);
-    };
-  }, []);
-
-  useEffect(() => {
+              : "loading";  useEffect(() => {
     appMountedRef.current = true;
     return () => {
       appMountedRef.current = false;
@@ -299,60 +359,78 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   }, []);
 
   useEffect(() => {
-    if (!isSupabaseConfigured || !remoteStatus) return;
-    setLastRemoteContact(remoteStatus === "connected" ? "success" : "failure");
-  }, [remoteStatus]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function load() {
-      if (isSupabaseConfigured) {
-        updatePendingMovementIds([]);
-        setPendingSyncState("idle");
-        setDataReady(false);
-        setDataLoadError(null);
-      }
-
-      try {
-        const result = await loadAppData(currentMember);
-        let pendingOperations: OfflineCreateMovementOperation[] = [];
-        if (isSupabaseConfigured && currentMember) {
-          try {
-            pendingOperations = await listPendingCreateMovements(currentMember);
-          } catch (error) {
-            if (!active) return;
-            if (!isBrowserOnline) throw error;
-            setPendingSyncState("problem");
-          }
-        }
-        if (!active) return;
-
-        updatePendingMovementIds(pendingOperations.map((operation) => operation.movement.id));
-        setData(mergePendingMovements(result.data, pendingOperations));
-        setLastRemoteContact(result.source === "remote" ? "success" : result.source === "fallback" ? "failure" : "unknown");
-        setDataReady(true);
-      } catch (error) {
-        if (!active) return;
-        setLastRemoteContact("failure");
-        setDataLoadError(
-          error instanceof TrustedOfflineSnapshotUnavailableError
-            ? "Este dispositivo todavía no tiene una copia verificada para usar Caja Familiar sin conexión. Conéctate a internet al menos una vez."
-            : error instanceof HouseholdNotProvisionedError
-              ? "Este hogar todavía no está provisionado en Supabase. Contacta al administrador para habilitarlo."
-              : error instanceof Error && error.message.includes("IndexedDB")
-                ? "No se pudieron cargar los movimientos pendientes de este dispositivo. Intenta nuevamente."
-                : "Problema de conexión. No se pudo cargar la información financiera. Intenta nuevamente más tarde."
-        );
-      }
+    if (!isSupabaseConfigured) {
+      setDataReady(true);
+      return;
     }
+    if (!currentMember) return;
 
-    void load();
+    let active = true;
+    void refreshAuthoritativeData("mount");
 
     return () => {
       active = false;
     };
-  }, [currentMember?.householdId, currentMember?.userId]);
+  }, [currentMember?.householdId, currentMember?.userId, refreshAuthoritativeData]);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || !isSupabaseConfigured || !currentMember) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && isBrowserOnline) {
+        void refreshAuthoritativeData("visibility");
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [currentMember, isBrowserOnline, refreshAuthoritativeData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isSupabaseConfigured || !currentMember) return;
+    let focusTimeout: number | undefined;
+    const handleFocus = () => {
+      window.clearTimeout(focusTimeout);
+      focusTimeout = window.setTimeout(() => {
+        if (document.visibilityState === "visible" && isBrowserOnline) {
+          void refreshAuthoritativeData("focus");
+        }
+      }, 300);
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      window.clearTimeout(focusTimeout);
+    };
+  }, [currentMember, isBrowserOnline, refreshAuthoritativeData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleOnline = () => {
+      setIsBrowserOnline(true);
+      if (isSupabaseConfigured && currentMember) {
+        void refreshAuthoritativeData("online");
+      }
+    };
+    const handleOffline = () => {
+      setIsBrowserOnline(false);
+      setRemoteSyncStatus("offline");
+    };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [currentMember, refreshAuthoritativeData]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !isSupabaseConfigured || !currentMember || !isBrowserOnline) return;
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void refreshAuthoritativeData("periodic");
+      }
+    }, 20000);
+    return () => window.clearInterval(interval);
+  }, [currentMember, isBrowserOnline, refreshAuthoritativeData]);
 
   useEffect(() => {
     if (!dataReady || typeof window === "undefined") return;
@@ -1201,7 +1279,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
             </div>
               <div className="flex flex-wrap items-center gap-3">
                 {currentMember && <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-800">Sesión: {currentMember.displayName}</span>}
-              <SyncStatus status={syncStatus} pendingCount={pendingMovementCount} />
+              <SyncStatus status={syncStatus} pendingCount={pendingMovementCount} lastSyncAt={lastSuccessfulRemoteSyncAt} isOnline={isBrowserOnline} remoteSyncStatus={remoteSyncStatus} onManualSync={() => void refreshAuthoritativeData("manual")} />
               {isSupabaseConfigured && isBrowserOnline && pendingSyncState === "problem" && (
                 <button type="button" onClick={() => { setPendingSyncState("idle"); setSyncAttempt((attempt) => attempt + 1); }} className="rounded-full border border-red-200 bg-white px-3 py-1 text-sm font-bold text-red-700 hover:bg-red-50">
                   Reintentar sincronización
@@ -1476,45 +1554,63 @@ async function saveInitialBalance(value: number): Promise<boolean> {
   );
 }
 
-function mergePendingMovements(data: AppData, operations: OfflineCreateMovementOperation[]): AppData {
-  const remoteMovementIds = new Set(data.movements.map((movement) => movement.id));
-  const overlayMovementIds = new Set<string>();
-  const pendingMovements = operations
-    .map((operation) => operation.movement)
-    .filter((movement) => {
-      if (remoteMovementIds.has(movement.id) || overlayMovementIds.has(movement.id)) return false;
-      overlayMovementIds.add(movement.id);
-      return true;
-    });
-
-  return pendingMovements.length > 0 ? { ...data, movements: [...pendingMovements, ...data.movements] } : data;
-}
-
-function SyncStatus({ status, pendingCount }: { status: SyncStatus; pendingCount: number }) {
-  const config = {
-    loading: { label: "Conectando...", className: "bg-amber-400", textClassName: "text-slate-600" },
-    connected: { label: "Conectado", className: "bg-emerald-500", textClassName: "text-emerald-700" },
-    local: { label: "Modo local", className: "bg-slate-400", textClassName: "text-slate-600" },
-    offline: { label: "Sin conexión", className: "bg-red-500", textClassName: "text-red-700" },
-    problem: { label: "Problema de conexión", className: "bg-red-500", textClassName: "text-red-700" },
-    syncing: { label: "Sincronizando...", className: "bg-amber-400", textClassName: "text-amber-700" },
-  }[status];
+function SyncStatus({
+  status,
+  pendingCount,
+  lastSyncAt,
+  isOnline = true,
+  remoteSyncStatus = "fresh",
+  onManualSync,
+}: {
+  status: SyncStatus;
+  pendingCount: number;
+  lastSyncAt?: number | null;
+  isOnline?: boolean;
+  remoteSyncStatus?: "loading" | "fresh" | "refreshing" | "error" | "offline";
+  onManualSync?: () => void;
+}) {
   const pendingLabel = pendingCount === 1 ? "1 pendiente" : `${pendingCount} pendientes`;
-  const label =
-    status === "offline" && pendingCount > 0
-      ? `Sin conexión · ${pendingLabel}`
-      : status === "syncing"
-        ? `Sincronizando ${pendingCount}...`
-        : status === "problem" && pendingCount > 0
-          ? `Problema de sincronización · ${pendingLabel}`
-          : status === "connected" && pendingCount > 0
-            ? `Conectado · ${pendingLabel}`
-            : config.label;
+  const timeStr = lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+
+  let label = "Sincronizado";
+  let dotClass = "bg-emerald-500";
+  let textClass = "text-emerald-700";
+
+  if (remoteSyncStatus === "loading" || status === "loading") {
+    label = "Conectando...";
+    dotClass = "bg-amber-400";
+    textClass = "text-slate-600";
+  } else if (!isOnline || remoteSyncStatus === "offline" || status === "offline") {
+    label = pendingCount > 0 ? `Sin conexión · ${pendingLabel}` : "Sin conexión · datos guardados";
+    dotClass = "bg-red-500";
+    textClass = "text-red-700";
+  } else if (remoteSyncStatus === "refreshing" || status === "syncing") {
+    label = pendingCount > 0 ? `Sincronizando ${pendingCount}...` : "Sincronizando...";
+    dotClass = "bg-amber-400";
+    textClass = "text-slate-600";
+  } else if (remoteSyncStatus === "error" || status === "problem") {
+    label = pendingCount > 0 ? `No se pudo sincronizar · ${pendingLabel}` : "No se pudo sincronizar";
+    dotClass = "bg-red-500";
+    textClass = "text-red-700";
+  } else if (timeStr) {
+    label = `Sincronizado ${timeStr}${pendingCount > 0 ? ` · ${pendingLabel}` : ""}`;
+  }
 
   return (
-    <div className={`flex items-center gap-2 text-sm font-bold ${config.textClassName}`} role="status" aria-live="polite">
-      <span className={`h-2.5 w-2.5 rounded-full ${config.className}`} aria-hidden="true" />
-      {label}
+    <div className={`flex items-center gap-2 text-sm font-bold ${textClass}`} role="status" aria-live="polite">
+      <span className={`h-2.5 w-2.5 rounded-full ${dotClass}`} aria-hidden="true" />
+      <span>{label}</span>
+      {onManualSync && isOnline && (
+        <button
+          type="button"
+          onClick={onManualSync}
+          disabled={remoteSyncStatus === "refreshing"}
+          title="Sincronizar ahora"
+          className="ml-1 rounded p-1 hover:bg-slate-100 disabled:opacity-40"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${remoteSyncStatus === "refreshing" ? "animate-spin" : ""}`} />
+        </button>
+      )}
     </div>
   );
 }

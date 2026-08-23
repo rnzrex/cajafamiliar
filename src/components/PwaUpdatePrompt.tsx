@@ -119,13 +119,23 @@ export function PwaUpdatePrompt() {
         return;
       }
 
-      const reloadWhenActivated = () => {
-        if (waitingWorker.state === "activated") {
+      let refreshing = false;
+      const triggerReload = () => {
+        if (!refreshing) {
+          refreshing = true;
           window.location.reload();
         }
       };
 
-      waitingWorker.addEventListener("statechange", reloadWhenActivated);
+      if (typeof navigator !== "undefined" && navigator.serviceWorker) {
+        navigator.serviceWorker.addEventListener("controllerchange", triggerReload, { once: true });
+      }
+
+      waitingWorker.addEventListener("statechange", () => {
+        if (waitingWorker.state === "activated") {
+          triggerReload();
+        }
+      });
       waitingWorker.postMessage({ type: "SKIP_WAITING" });
     } catch (error) {
       console.error("No se pudo aplicar la actualización de Caja Familiar.", error);
