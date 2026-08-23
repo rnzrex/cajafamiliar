@@ -417,3 +417,64 @@ export function selectUrgentCreditCardStatementAlertsForReminder(
     (alert) => alert.actionable && ["overdue", "today", "tomorrow", "upcoming"].includes(alert.dueStatus)
   );
 }
+
+export interface CreditCardRefundCapacity {
+  originalAmount: number;
+  effectiveRefundedAmount: number;
+  remainingRefundableAmount: number;
+  isRefundable: boolean;
+}
+
+export function calculateCreditCardRefundCapacity(
+  targetEntry: CreditCardEntry,
+  cardEntries: CreditCardEntry[]
+): CreditCardRefundCapacity {
+  const originalAmount = Math.abs(targetEntry.liabilityDelta);
+
+  const scopedEntries = cardEntries.filter((e) => e.debtId === targetEntry.debtId);
+  const reversedIds = new Set<string>(
+    scopedEntries
+      .filter((e) => e.entryType === "reversal" && e.reversalOfEntryId !== null)
+      .map((e) => e.reversalOfEntryId!)
+  );
+
+  const effectiveCredits = scopedEntries.filter(
+    (e) =>
+      e.entryType === "credit" &&
+      e.creditOfEntryId === targetEntry.id &&
+      !reversedIds.has(e.id)
+  );
+
+  const effectiveRefundedAmount = effectiveCredits.reduce(
+    (sum, e) => sum + Math.abs(e.liabilityDelta),
+    0
+  );
+
+  const remainingRefundableAmount = Math.max(0, originalAmount - effectiveRefundedAmount);
+  const isRefundable = remainingRefundableAmount > 0.0001;
+
+  return {
+    originalAmount,
+    effectiveRefundedAmount,
+    remainingRefundableAmount,
+    isRefundable,
+  };
+}
+
+export function isCreditCardEntryEligibleForReversal(
+  entry: CreditCardEntry,
+  cardEntries: CreditCardEntry[]
+): boolean {
+  if (entry.entryType === "reversal") return false;
+
+  const scopedEntries = cardEntries.filter((e) => e.debtId === entry.debtId);
+  const isReversed = scopedEntries.some(
+    (e) => e.entryType === "reversal" && e.reversalOfEntryId === entry.id
+  );
+  if (isReversed) return false;
+
+  const refundCap = calculateCreditCardRefundCapacity(entry, cardEntries);
+  if (refundCap.effectiveRefundedAmount > 0.0001) return false;
+
+  return true;
+}

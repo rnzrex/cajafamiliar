@@ -167,6 +167,10 @@ begin
 end;
 $function$;
 
+revoke all privileges on function public.create_credit_card_debt_v1(
+  uuid, uuid, text, text, text, date, date, numeric, numeric, integer, integer, text, numeric, numeric, text
+) from public, anon, service_role;
+
 grant execute on function public.create_credit_card_debt_v1(
   uuid, uuid, text, text, text, date, date, numeric, numeric, integer, integer, text, numeric, numeric, text
 ) to authenticated;
@@ -270,6 +274,10 @@ begin
   return pg_catalog.to_jsonb(v_profile);
 end;
 $function$;
+
+revoke all privileges on function public.save_credit_card_profile_v1(
+  uuid, uuid, numeric, integer, integer, text
+) from public, anon, service_role;
 
 grant execute on function public.save_credit_card_profile_v1(
   uuid, uuid, numeric, integer, integer, text

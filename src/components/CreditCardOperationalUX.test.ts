@@ -98,7 +98,6 @@ describe("DEBT-5F-A: Credit Card Operational UX Component & Domain Tests", () =>
     ];
 
     const balance = currentCreditCardBalance(debt, entries);
-    // 1000 + 500 - 300 + 50 = 1250
     expect(balance).toBe(1250);
   });
 
@@ -235,5 +234,140 @@ describe("DEBT-5F-A: Credit Card Operational UX Component & Domain Tests", () =>
 
     expect(eligible.length).toBe(1);
     expect(eligible[0].id).toBe("acc-usd-active");
+  });
+
+  it("7. executeCreditCardOperation correctly dispatches purchase operation", async () => {
+    const { executeCreditCardOperation } = await import("../services/creditCardOperationalActions");
+    const dataRepo = await import("../services/dataRepository");
+
+    const spy = vi.spyOn(dataRepo, "recordCreditCardPurchase").mockResolvedValueOnce({
+      success: true,
+      entryId: "e-purchase",
+      movementId: "m-purchase",
+      idempotent: false,
+    });
+
+    const res = await executeCreditCardOperation({
+      operation: "purchase",
+      purchaseInput: {
+        debtId: "card-debt-100",
+        entryId: "e-purchase",
+        movementId: "m-purchase",
+        purchaseDate: "2026-08-20",
+        amount: 150,
+        description: "Supermercado",
+        category: "cat1",
+      },
+    });
+
+    expect(spy).toHaveBeenCalledOnce();
+    expect(res.type).toBe("purchase");
+    if (res.type === "purchase") {
+      expect(res.result.entryId).toBe("e-purchase");
+    }
+  });
+
+  it("8. calculateCreditCardRefundCapacity accurately accounts for partial refunds", async () => {
+    const { calculateCreditCardRefundCapacity } = await import("../utils/creditCardCalculations");
+
+    const purchaseEntry: CreditCardEntry = {
+      id: "p1",
+      debtId: "card-debt-100",
+      entryDate: "2026-08-01",
+      entryType: "purchase",
+      liabilityDelta: 500,
+      description: "Laptop",
+      movementId: "m1",
+      creditOfEntryId: null,
+      reversalOfEntryId: null,
+      registeredByUserId: "u1",
+      createdAt: "2026-08-01T00:00:00Z",
+    };
+
+    const partialRefund: CreditCardEntry = {
+      id: "c1",
+      debtId: "card-debt-100",
+      entryDate: "2026-08-05",
+      entryType: "credit",
+      liabilityDelta: -200,
+      description: "Devolución parcial",
+      movementId: "m2",
+      creditOfEntryId: "p1",
+      reversalOfEntryId: null,
+      registeredByUserId: "u1",
+      createdAt: "2026-08-05T00:00:00Z",
+    };
+
+    const cardEntries = [purchaseEntry, partialRefund];
+    const refundCap = calculateCreditCardRefundCapacity(purchaseEntry, cardEntries);
+
+    expect(refundCap.originalAmount).toBe(500);
+    expect(refundCap.effectiveRefundedAmount).toBe(200);
+    expect(refundCap.remainingRefundableAmount).toBe(300);
+    expect(refundCap.isRefundable).toBe(true);
+  });
+
+  it("9. isCreditCardEntryEligibleForReversal blocks entries with active linked refunds", async () => {
+    const { isCreditCardEntryEligibleForReversal } = await import("../utils/creditCardCalculations");
+
+    const purchaseWithRefund: CreditCardEntry = {
+      id: "p1",
+      debtId: "card-debt-100",
+      entryDate: "2026-08-01",
+      entryType: "purchase",
+      liabilityDelta: 500,
+      description: "Laptop",
+      movementId: "m1",
+      creditOfEntryId: null,
+      reversalOfEntryId: null,
+      registeredByUserId: "u1",
+      createdAt: "2026-08-01T00:00:00Z",
+    };
+
+    const partialRefund: CreditCardEntry = {
+      id: "c1",
+      debtId: "card-debt-100",
+      entryDate: "2026-08-05",
+      entryType: "credit",
+      liabilityDelta: -200,
+      description: "Devolución parcial",
+      movementId: "m2",
+      creditOfEntryId: "p1",
+      reversalOfEntryId: null,
+      registeredByUserId: "u1",
+      createdAt: "2026-08-05T00:00:00Z",
+    };
+
+    const cleanPurchase: CreditCardEntry = {
+      id: "p2",
+      debtId: "card-debt-100",
+      entryDate: "2026-08-02",
+      entryType: "purchase",
+      liabilityDelta: 100,
+      description: "Audífonos",
+      movementId: "m3",
+      creditOfEntryId: null,
+      reversalOfEntryId: null,
+      registeredByUserId: "u1",
+      createdAt: "2026-08-02T00:00:00Z",
+    };
+
+    const cardEntries = [purchaseWithRefund, partialRefund, cleanPurchase];
+
+    expect(isCreditCardEntryEligibleForReversal(purchaseWithRefund, cardEntries)).toBe(false);
+    expect(isCreditCardEntryEligibleForReversal(cleanPurchase, cardEntries)).toBe(true);
+  });
+
+  it("10. canOperateCard correctly evaluates active non-archived status", () => {
+    const activeDebt = sampleCardDebt({ status: "active", isArchived: false });
+    const archivedDebt = sampleCardDebt({ status: "active", isArchived: true });
+    const closedDebt = sampleCardDebt({ status: "paid_off", isArchived: false });
+
+    const evalCard = (d: Debt, canWrite = true) => canWrite && d.status === "active" && !d.isArchived;
+
+    expect(evalCard(activeDebt, true)).toBe(true);
+    expect(evalCard(activeDebt, false)).toBe(false);
+    expect(evalCard(archivedDebt, true)).toBe(false);
+    expect(evalCard(closedDebt, true)).toBe(false);
   });
 });

@@ -221,56 +221,67 @@ export function CreditCardDetailPanel({
       </div>
 
       {/* Operational Actions Grid */}
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h3 className="text-lg font-bold text-slate-900 mb-4">Acciones de tarjeta</h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <button
-            type="button"
-            onClick={() => setActiveModalOp("purchase")}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 p-3.5 text-sm font-bold text-white shadow-md hover:bg-blue-700 transition"
-          >
-            <Plus className="h-4 w-4" /> Registrar compra
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveModalOp("payment")}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 p-3.5 text-sm font-bold text-white shadow-md hover:bg-emerald-700 transition"
-          >
-            <ArrowRightLeft className="h-4 w-4" /> Registrar pago
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveModalOp("fee")}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-purple-600 p-3.5 text-sm font-bold text-white shadow-md hover:bg-purple-700 transition"
-          >
-            <Percent className="h-4 w-4" /> Interés / Comisión
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveModalOp("statement")}
-            className="flex items-center justify-center gap-2 rounded-2xl bg-slate-800 p-3.5 text-sm font-bold text-white shadow-md hover:bg-slate-900 transition"
-          >
-            <FileText className="h-4 w-4" /> Cerrar estado
-          </button>
-        </div>
+      {(() => {
+        const canOperateCard = canWriteDebt && debt.status === "active" && !debt.isArchived;
+        return (
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-900 mb-4">Acciones de tarjeta</h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <button
+                type="button"
+                disabled={!canOperateCard}
+                onClick={() => setActiveModalOp("purchase")}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-blue-600 p-3.5 text-sm font-bold text-white shadow-md hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Plus className="h-4 w-4" /> Registrar compra
+              </button>
+              <button
+                type="button"
+                disabled={!canOperateCard}
+                onClick={() => setActiveModalOp("payment")}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 p-3.5 text-sm font-bold text-white shadow-md hover:bg-emerald-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ArrowRightLeft className="h-4 w-4" /> Registrar pago
+              </button>
+              <button
+                type="button"
+                disabled={!canOperateCard}
+                onClick={() => setActiveModalOp("fee")}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-purple-600 p-3.5 text-sm font-bold text-white shadow-md hover:bg-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Percent className="h-4 w-4" /> Interés / Comisión
+              </button>
+              <button
+                type="button"
+                disabled={!canOperateCard}
+                onClick={() => setActiveModalOp("statement")}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-slate-800 p-3.5 text-sm font-bold text-white shadow-md hover:bg-slate-900 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <FileText className="h-4 w-4" /> Cerrar estado
+              </button>
+            </div>
 
-        <div className="mt-3 flex flex-wrap gap-2 pt-2 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={() => setActiveModalOp("credit")}
-            className="flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
-          >
-            <RotateCcw className="h-3.5 w-3.5 text-blue-600" /> Registrar devolución / reembolso
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveModalOp("reversal")}
-            className="flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200"
-          >
-            <RefreshCw className="h-3.5 w-3.5 text-amber-600" /> Corregir mediante reverso
-          </button>
-        </div>
-      </div>
+            <div className="mt-3 flex flex-wrap gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={!canOperateCard}
+                onClick={() => setActiveModalOp("credit")}
+                className="flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RotateCcw className="h-3.5 w-3.5 text-blue-600" /> Registrar devolución / reembolso
+              </button>
+              <button
+                type="button"
+                disabled={!canOperateCard}
+                onClick={() => setActiveModalOp("reversal")}
+                className="flex items-center gap-1.5 rounded-xl bg-slate-100 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-amber-600" /> Corregir mediante reverso
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Card Ledger / Entry History */}
       <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">

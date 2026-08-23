@@ -13,14 +13,10 @@ import { makeUuid } from "../utils/storage";
 import { formatMoneyByCurrency } from "../utils/calculations";
 import { translateDebtError } from "../utils/debtViewModel";
 import {
-  recordCreditCardPurchase,
-  recordCreditCardPayment,
-  recordCreditCardFee,
-  recordCreditCardCredit,
-  reverseCreditCardEntry,
-  closeCreditCardStatement,
-  saveCreditCardProfile,
-} from "../services/dataRepository";
+  calculateCreditCardRefundCapacity,
+  isCreditCardEntryEligibleForReversal,
+} from "../utils/creditCardCalculations";
+import { executeCreditCardOperation } from "../services/creditCardOperationalActions";
 
 export type CardOperationType =
   | "purchase"
@@ -76,6 +72,7 @@ export function CreditCardOperationModal({
 
   // Credit / Reversal states
   const [targetEntryId, setTargetEntryId] = useState("");
+  const [reversalConfirmed, setReversalConfirmed] = useState(false);
 
   // Profile edit states
   const [creditLimit, setCreditLimit] = useState(profile?.creditLimit != null ? String(profile.creditLimit) : "");
@@ -83,30 +80,44 @@ export function CreditCardOperationModal({
   const [dueDay, setDueDay] = useState(profile?.dueDay != null ? String(profile.dueDay) : "");
   const [last4, setLast4] = useState(profile?.last4 ?? "");
 
+  const canOperateCard = canWriteDebt && debt.status === "active" && !debt.isArchived;
+
   // Eligible accounts for card payment (Must be active & match card currency)
   const eligibleAccounts = accounts.filter(
     (acc) => acc.isActive && acc.currencyCode === debt.currencyCode
   );
 
-  // Eligible target entries for Credit/Refund (purchase or finance_charge that are not reversed)
-  const nonReversalEntries = cardEntries.filter((e) => e.entryType !== "reversal");
-  const reversedEntryIds = new Set(
-    cardEntries.filter((e) => e.entryType === "reversal" && e.reversalOfEntryId).map((e) => e.reversalOfEntryId!)
-  );
-  const eligibleCreditTargets = nonReversalEntries.filter(
-    (e) => (e.entryType === "purchase" || e.entryType === "finance_charge") && !reversedEntryIds.has(e.id)
+  // Eligible target entries for Credit/Refund (purchase or finance_charge with remaining refundable capacity > 0)
+  const scopedEntries = cardEntries.filter((e) => e.debtId === debt.id);
+  const eligibleCreditTargets = scopedEntries.filter(
+    (e) =>
+      (e.entryType === "purchase" || e.entryType === "finance_charge") &&
+      calculateCreditCardRefundCapacity(e, cardEntries).isRefundable
   );
 
-  // Eligible target entries for Reversal (any non-reversal entry not yet reversed)
-  const eligibleReversalTargets = nonReversalEntries.filter((e) => !reversedEntryIds.has(e.id));
+  // Eligible target entries for Reversal (non-reversal entries not yet reversed and without active linked refunds)
+  const eligibleReversalTargets = scopedEntries.filter((e) =>
+    isCreditCardEntryEligibleForReversal(e, cardEntries)
+  );
 
-  const selectedTargetEntry = cardEntries.find((e) => e.id === targetEntryId);
+  const selectedTargetEntry = scopedEntries.find((e) => e.id === targetEntryId);
+  const selectedTargetRefundCap = selectedTargetEntry
+    ? calculateCreditCardRefundCapacity(selectedTargetEntry, cardEntries)
+    : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
+    if (!canOperateCard) {
       setToast({
-        message: "Las operaciones de tarjeta requieren conexión a internet y estar habilitado.",
+        message: "No se pueden realizar operaciones en una tarjeta inactiva o archivada.",
+        type: "error",
+      });
+      return;
+    }
+
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      setToast({
+        message: "Las operaciones de tarjeta requieren conexión a internet.",
         type: "error",
       });
       return;
@@ -120,14 +131,17 @@ export function CreditCardOperationModal({
           setSubmitting(false);
           return;
         }
-        await recordCreditCardPurchase({
-          debtId: debt.id,
-          entryId: makeUuid(),
-          movementId: makeUuid(),
-          purchaseDate: date,
-          amount: Number(amount),
-          description: description.trim(),
-          category: categoryId,
+        await executeCreditCardOperation({
+          operation: "purchase",
+          purchaseInput: {
+            debtId: debt.id,
+            entryId: makeUuid(),
+            movementId: makeUuid(),
+            purchaseDate: date,
+            amount: Number(amount),
+            description: description.trim(),
+            category: categoryId,
+          },
         });
         setToast({ message: "Compra registrada exitosamente.", type: "success" });
       } else if (opType === "payment") {
@@ -136,15 +150,18 @@ export function CreditCardOperationModal({
           setSubmitting(false);
           return;
         }
-        await recordCreditCardPayment({
-          debtId: debt.id,
-          entryId: makeUuid(),
-          movementId: makeUuid(),
-          paymentDate: date,
-          amount: Number(amount),
-          accountId,
-          description: description.trim(),
-          category: categoryId,
+        await executeCreditCardOperation({
+          operation: "payment",
+          paymentInput: {
+            debtId: debt.id,
+            entryId: makeUuid(),
+            movementId: makeUuid(),
+            paymentDate: date,
+            amount: Number(amount),
+            accountId,
+            description: description.trim(),
+            category: categoryId,
+          },
         });
         setToast({ message: "Pago de tarjeta registrado exitosamente.", type: "success" });
       } else if (opType === "fee") {
@@ -153,14 +170,17 @@ export function CreditCardOperationModal({
           setSubmitting(false);
           return;
         }
-        await recordCreditCardFee({
-          debtId: debt.id,
-          entryId: makeUuid(),
-          movementId: makeUuid(),
-          feeDate: date,
-          amount: Number(amount),
-          description: description.trim(),
-          category: categoryId,
+        await executeCreditCardOperation({
+          operation: "fee",
+          feeInput: {
+            debtId: debt.id,
+            entryId: makeUuid(),
+            movementId: makeUuid(),
+            feeDate: date,
+            amount: Number(amount),
+            description: description.trim(),
+            category: categoryId,
+          },
         });
         setToast({ message: "Comisión / interés registrado exitosamente.", type: "success" });
       } else if (opType === "statement") {
@@ -169,12 +189,15 @@ export function CreditCardOperationModal({
           setSubmitting(false);
           return;
         }
-        await closeCreditCardStatement({
-          statementId: makeUuid(),
-          debtId: debt.id,
-          statementDate,
-          dueDate,
-          minimumPaymentAmount: minimumPaymentAmount ? Number(minimumPaymentAmount) : null,
+        await executeCreditCardOperation({
+          operation: "statement_close",
+          statementCloseInput: {
+            statementId: makeUuid(),
+            debtId: debt.id,
+            statementDate,
+            dueDate,
+            minimumPaymentAmount: minimumPaymentAmount ? Number(minimumPaymentAmount) : null,
+          },
         });
         setToast({ message: "Estado de cuenta cerrado exitosamente.", type: "success" });
       } else if (opType === "credit") {
@@ -183,14 +206,25 @@ export function CreditCardOperationModal({
           setSubmitting(false);
           return;
         }
-        await recordCreditCardCredit({
-          debtId: debt.id,
-          entryId: makeUuid(),
-          movementId: makeUuid(),
-          targetEntryId,
-          creditDate: date,
-          amount: Number(amount),
-          description: description.trim(),
+        if (selectedTargetRefundCap && Number(amount) > selectedTargetRefundCap.remainingRefundableAmount + 0.0001) {
+          setToast({
+            message: `El monto devuelto (${formatMoneyByCurrency(Number(amount), debt.currencyCode)}) excede el saldo máximo disponible para reembolso (${formatMoneyByCurrency(selectedTargetRefundCap.remainingRefundableAmount, debt.currencyCode)}).`,
+            type: "error",
+          });
+          setSubmitting(false);
+          return;
+        }
+        await executeCreditCardOperation({
+          operation: "credit",
+          creditInput: {
+            debtId: debt.id,
+            entryId: makeUuid(),
+            movementId: makeUuid(),
+            targetEntryId,
+            creditDate: date,
+            amount: Number(amount),
+            description: description.trim(),
+          },
         });
         setToast({ message: "Devolución / reembolso registrado exitosamente.", type: "success" });
       } else if (opType === "reversal") {
@@ -199,12 +233,20 @@ export function CreditCardOperationModal({
           setSubmitting(false);
           return;
         }
-        await reverseCreditCardEntry({
-          debtId: debt.id,
-          reversalEntryId: makeUuid(),
-          targetEntryId,
-          reversalDate: date,
-          description: description.trim(),
+        if (!reversalConfirmed) {
+          setToast({ message: "Debe confirmar que comprende el reverso de la transacción.", type: "error" });
+          setSubmitting(false);
+          return;
+        }
+        await executeCreditCardOperation({
+          operation: "reversal",
+          reversalInput: {
+            debtId: debt.id,
+            reversalEntryId: makeUuid(),
+            targetEntryId,
+            reversalDate: date,
+            description: description.trim(),
+          },
         });
         setToast({ message: "Registro revertido exitosamente.", type: "success" });
       } else if (opType === "profile") {
@@ -228,12 +270,15 @@ export function CreditCardOperationModal({
           setSubmitting(false);
           return;
         }
-        await saveCreditCardProfile({
-          debtId: debt.id,
-          creditLimit: creditLimit ? Number(creditLimit) : null,
-          closingDay: closingDay ? Number(closingDay) : null,
-          dueDay: dueDay ? Number(dueDay) : null,
-          last4: last4.trim() || null,
+        await executeCreditCardOperation({
+          operation: "profile_save",
+          profileSaveInput: {
+            debtId: debt.id,
+            creditLimit: creditLimit ? Number(creditLimit) : null,
+            closingDay: closingDay ? Number(closingDay) : null,
+            dueDay: dueDay ? Number(dueDay) : null,
+            last4: last4.trim() || null,
+          },
         });
         setToast({ message: "Datos de tarjeta actualizados exitosamente.", type: "success" });
       }
@@ -570,11 +615,13 @@ export function CreditCardOperationModal({
                 )}
               </div>
 
-              {selectedTargetEntry && (
+              {selectedTargetEntry && selectedTargetRefundCap && (
                 <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-700 space-y-1 border border-slate-200">
                   <div><strong>Fecha original:</strong> {selectedTargetEntry.entryDate}</div>
                   <div><strong>Descripción:</strong> {selectedTargetEntry.description}</div>
-                  <div><strong>Monto original:</strong> {formatMoneyByCurrency(selectedTargetEntry.liabilityDelta, debt.currencyCode)}</div>
+                  <div><strong>Monto original:</strong> {formatMoneyByCurrency(selectedTargetRefundCap.originalAmount, debt.currencyCode)}</div>
+                  <div><strong>Ya reembolsado:</strong> {formatMoneyByCurrency(selectedTargetRefundCap.effectiveRefundedAmount, debt.currencyCode)}</div>
+                  <div className="text-blue-700 font-bold"><strong>Disponible máximo para reembolso:</strong> {formatMoneyByCurrency(selectedTargetRefundCap.remainingRefundableAmount, debt.currencyCode)}</div>
                 </div>
               )}
 
@@ -596,6 +643,7 @@ export function CreditCardOperationModal({
                     step="0.01"
                     required
                     min="0.01"
+                    max={selectedTargetRefundCap ? selectedTargetRefundCap.remainingRefundableAmount : undefined}
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
                     placeholder="0.00"
@@ -664,6 +712,16 @@ export function CreditCardOperationModal({
               <div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900 border border-amber-200">
                 <strong>Atención:</strong> El reverso es una corrección lógica inmutable (append-only). No elimina datos del historial financiero.
               </div>
+
+              <label className="flex items-start gap-2 text-xs font-semibold text-slate-700 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={reversalConfirmed}
+                  onChange={(e) => setReversalConfirmed(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                />
+                <span>Entiendo que este reverso anulará el efecto financiero del registro sin eliminar el historial.</span>
+              </label>
             </>
           )}
 
@@ -735,8 +793,8 @@ export function CreditCardOperationModal({
             </button>
             <button
               type="submit"
-              disabled={submitting}
-              className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50"
+              disabled={submitting || !canOperateCard || (opType === "reversal" && !reversalConfirmed)}
+              className="rounded-xl bg-blue-600 px-5 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? "Procesando..." : "Guardar operación"}
             </button>
