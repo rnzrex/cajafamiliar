@@ -132,6 +132,15 @@ function sampleIntelligence(overrides: Partial<DebtIntelligenceItem> = {}): Debt
     nextInstallmentDueStatus: "overdue",
     nextInstallmentRemainingAmount: 900,
     nextInstallmentAmountKnown: true,
+    next30KnownAmount: 0,
+    next30UnknownAmountCount: 0,
+    next30InstallmentCount: 0,
+    prepaymentPrincipalReduction: 0,
+    prepaymentCashOutflow: 0,
+    hasActiveCollateral: false,
+    activeCollateralCount: 0,
+    nearestRedemptionDeadline: null,
+    nearestRedemptionStatus: null,
     ...overrides,
   };
 }
