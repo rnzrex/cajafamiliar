@@ -242,17 +242,8 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   );
   const flushInFlightRef = useRef(false);
   const appMountedRef = useRef(true);
-
-  const refreshAppData = async () => {
-    if (currentMember) {
-      try {
-        const res = await loadAppData(currentMember);
-        setData(res.data);
-      } catch (err) {
-        console.error("Error refreshing app data:", err);
-        throw err;
-      }
-    }
+  const refreshAppData = async (reason = "debt-event") => {
+    await refreshAuthoritativeData(reason);
   };
   const canWriteDebt = isSupabaseConfigured && isBrowserOnline && Boolean(currentMember);
   const expected = useMemo(() => {
@@ -1590,7 +1581,7 @@ function SyncStatus({
   pendingCount: number;
   lastSyncAt?: number | null;
   isOnline?: boolean;
-  remoteSyncStatus?: "fresh" | "refreshing" | "error" | "offline";
+  remoteSyncStatus?: "loading" | "fresh" | "refreshing" | "error" | "offline";
   onManualSync?: () => void;
 }) {
   const pendingLabel = pendingCount === 1 ? "1 pendiente" : `${pendingCount} pendientes`;
@@ -1600,7 +1591,11 @@ function SyncStatus({
   let dotClass = "bg-emerald-500";
   let textClass = "text-emerald-700";
 
-  if (!isOnline || remoteSyncStatus === "offline" || status === "offline") {
+  if (remoteSyncStatus === "loading" || status === "loading") {
+    label = "Conectando...";
+    dotClass = "bg-amber-400";
+    textClass = "text-slate-600";
+  } else if (!isOnline || remoteSyncStatus === "offline" || status === "offline") {
     label = pendingCount > 0 ? `Sin conexi?n ? ${pendingLabel}` : "Sin conexi?n ? datos guardados";
     dotClass = "bg-red-500";
     textClass = "text-red-700";

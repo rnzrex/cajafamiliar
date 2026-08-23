@@ -154,13 +154,10 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
     markTrustedSnapshot(member);
     return { data: remoteData, source: "remote" };
   } catch (error) {
-    if (error instanceof HouseholdNotProvisionedError) throw error;
-    const trustedSnapshot = loadTrustedSnapshot(member.householdId, member.userId);
-    if (trustedSnapshot) {
-      console.warn("No se pudo cargar desde Supabase. Usando el snapshot confiable local.", error);
-      return { data: trustedSnapshot, source: "fallback" };
+    if (error instanceof HouseholdNotProvisionedError || error instanceof RemoteAppDataLoadError) {
+      throw error;
     }
-    throw new TrustedOfflineSnapshotUnavailableError();
+    throw new RemoteAppDataLoadError("unknown", error);
   }
 }
 
