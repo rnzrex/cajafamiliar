@@ -1,12 +1,13 @@
-import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2, ShieldCheck, Filter } from "lucide-react";
+import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2, ShieldCheck, Filter, AlertTriangle, History } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { AccountReconciliation, AccountReconciliationMovement, Category, CreditCardEntry, Debt, DebtEvent, FinancialAccount, HouseholdMember, Movement, MovementFormInput } from "../types.js";
+import type { AccountReconciliation, AccountReconciliationMovement, Category, CreditCardEntry, Debt, DebtEvent, FinancialAccount, HouseholdMember, Movement, MovementCorrection, MovementFormInput } from "../types.js";
 import { formatMoneyByCurrency } from "../utils/calculations.js";
 import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "../utils/accountHelpers.js";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters.js";
 import { movementLabel, resolveMovementCurrencyCode } from "../utils/movementEconomics.js";
 import { isMovementCertifiedMatched } from "../utils/reconciliationHelpers.js";
 import { MovementForm } from "./MovementForm.js";
+import { MovementCorrectionModal } from "./MovementCorrectionModal.js";
 
 interface MovementsListProps {
   movements: Movement[];
@@ -17,11 +18,13 @@ interface MovementsListProps {
   debts?: Debt[];
   reconciliations?: AccountReconciliation[];
   reconciliationMovements?: AccountReconciliationMovement[];
+  movementCorrections?: MovementCorrection[];
   creditCardEntries?: CreditCardEntry[];
   currentMember?: HouseholdMember;
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
   onSave: (movement: MovementFormInput, id?: string) => void | Promise<boolean>;
   onDelete: (id: string) => void | Promise<boolean>;
+  onReloadAllData?: () => void | Promise<void>;
 }
 
 export function MovementsList({
@@ -33,14 +36,17 @@ export function MovementsList({
   debts = [],
   reconciliations = [],
   reconciliationMovements = [],
+  movementCorrections = [],
   creditCardEntries = [],
   currentMember,
   onQuickCreateCategory,
   onSave,
   onDelete,
+  onReloadAllData,
 }: MovementsListProps) {
   const [filters, setFilters] = useState(defaultMovementFilters);
   const [editing, setEditing] = useState<Movement | null>(null);
+  const [correctingMovement, setCorrectingMovement] = useState<Movement | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -57,6 +63,16 @@ export function MovementsList({
     }
     return set;
   }, [reconciliationMovements, matchedRecIds]);
+
+  const movementCorrectionsMap = useMemo(() => {
+    const map = new Map<string, MovementCorrection[]>();
+    for (const c of movementCorrections) {
+      const list = map.get(c.movementId) || [];
+      list.push(c);
+      map.set(c.movementId, list);
+    }
+    return map;
+  }, [movementCorrections]);
 
   const filtered = useMemo(
     () => filterMovements(movements, filters, accounts, reconciliations, reconciliationMovements, creditCardEntries),
@@ -287,22 +303,51 @@ export function MovementsList({
               <p className="mt-3 text-sm font-semibold text-slate-600">Fecha movimiento: {formatMovementDate(movement.date)} · {accountNameForMovement(movement, accounts)}</p>
               <p className="mt-1 text-xs text-slate-500">Registrado: {formatCreatedAt(movement.createdAt || movement.date)}</p>
               <p className="mt-1 text-sm text-slate-500">{movement.category} · {movement.person}</p>
-              <div className="mt-4 grid grid-cols-2 gap-2">
+
+              {(movementCorrectionsMap.get(movement.id)?.length ?? 0) > 0 && (
+                <div className="mt-3 rounded-2xl bg-amber-50 p-3 border border-amber-200 text-xs text-amber-900">
+                  <p className="font-bold flex items-center gap-1.5 text-amber-900">
+                    <History className="h-4 w-4 text-amber-700 shrink-0" />
+                    Historial de correcciones ({(movementCorrectionsMap.get(movement.id) || []).length}):
+                  </p>
+                  <div className="mt-1.5 space-y-1.5 pl-2 border-l-2 border-amber-300">
+                    {(movementCorrectionsMap.get(movement.id) || []).map((c) => (
+                      <div key={c.id}>
+                        <p className="font-semibold">Fecha: {formatCreatedAt(c.createdAt)}</p>
+                        <p className="text-amber-800">Motivo: {c.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
                   disabled={isProtectedInUI}
                   onClick={() => setEditing(movement)}
-                  className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-blue-100 px-3 text-base font-black text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-blue-100 px-3 text-base font-black text-blue-800 hover:bg-blue-200 disabled:cursor-not-allowed disabled:opacity-60"
                   title={protectionTitle}
                 >
                   <Edit className="h-5 w-5" />
                   Editar
                 </button>
+                {isHistoricallyProtected && movement.movementContext === "standard" && (
+                  <button
+                    type="button"
+                    onClick={() => setCorrectingMovement(movement)}
+                    className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-amber-100 px-3 text-base font-black text-amber-800 hover:bg-amber-200"
+                    title="Corregir este movimiento conservando el historial de conciliación"
+                  >
+                    <AlertTriangle className="h-5 w-5" />
+                    Corregir
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={isProtectedInUI || deletingId !== null}
                   onClick={() => void handleDelete(movement.id)}
-                  className="flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-red-100 px-3 text-base font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-red-100 px-3 text-base font-black text-red-800 hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-60"
                   title={protectionTitle}
                 >
                   <Trash2 className="h-5 w-5" />
@@ -354,6 +399,12 @@ export function MovementsList({
                       <span>{movementLabel(movement)}</span>
                       {isPendingSync && <PendingMovementBadge />}
                       {isCertified && <CertifiedMatchedBadge />}
+                      {(movementCorrectionsMap.get(movement.id)?.length ?? 0) > 0 && (
+                        <span title={(movementCorrectionsMap.get(movement.id) || []).map(c => `Fecha: ${formatCreatedAt(c.createdAt)} - Motivo: ${c.reason}`).join("\n")} className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
+                          <History className="h-3 w-3" />
+                          {(movementCorrectionsMap.get(movement.id) || []).length} corrección(es)
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-4">{movement.description}</td>
@@ -373,6 +424,17 @@ export function MovementsList({
                         <Edit className="h-5 w-5" />
                         Editar
                       </button>
+                      {isHistoricallyProtected && movement.movementContext === "standard" && (
+                        <button
+                          type="button"
+                          onClick={() => setCorrectingMovement(movement)}
+                          className="flex min-h-12 items-center gap-2 rounded-xl bg-amber-100 px-3 text-sm font-black text-amber-800 hover:bg-amber-200"
+                          title="Corregir este movimiento conservando el historial de conciliación"
+                        >
+                          <AlertTriangle className="h-5 w-5" />
+                          Corregir
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={isProtectedInUI || deletingId !== null}
@@ -393,6 +455,22 @@ export function MovementsList({
       </div>
 
       {filtered.length === 0 && <p className="rounded-3xl bg-white p-8 text-center text-lg text-slate-500 shadow-sm">No hay movimientos para la búsqueda o los filtros elegidos.</p>}
+
+      {correctingMovement && (
+        <MovementCorrectionModal
+          movement={correctingMovement}
+          categories={categories}
+          accounts={accounts}
+          corrections={movementCorrections}
+          currentMember={currentMember}
+          onClose={() => setCorrectingMovement(null)}
+          onSuccess={async () => {
+            if (onReloadAllData) {
+              await onReloadAllData();
+            }
+          }}
+        />
+      )}
     </section>
   );
 }

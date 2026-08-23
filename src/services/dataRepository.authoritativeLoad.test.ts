@@ -50,6 +50,7 @@ describe("Real loadAppData Execution Tests (Section 4, 5, 6, 7)", () => {
     creditCardStatements: [],
     accountReconciliations: [],
     accountReconciliationMovements: [],
+    movementCorrections: [],
   };
 
   beforeEach(() => {

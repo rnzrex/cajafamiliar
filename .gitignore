@@ -16,3 +16,5 @@ vitest.config.d.ts
 
 # Supabase CLI local state
 supabase/.temp/
+supabase/.temp_stmt.sql
+supabase/.branches/

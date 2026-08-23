@@ -50,6 +50,7 @@ describe("HOTFIX-CASH-02 — Production Authoritative Sync Contract & Helpers", 
     creditCardStatements: [],
     accountReconciliations: [],
     accountReconciliationMovements: [],
+    movementCorrections: [],
   };
 
   describe("Section 17: Production Helper validateAuthoritativeLoadSource", () => {

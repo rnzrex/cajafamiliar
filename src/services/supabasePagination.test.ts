@@ -46,6 +46,7 @@ describe("HOTFIX-CASH-03 — Exhaustive Remote Dataset Pagination & Trusted Snap
     creditCardStatements: [],
     accountReconciliations: [],
     accountReconciliationMovements: [],
+    movementCorrections: [],
   };
 
   beforeEach(() => {
