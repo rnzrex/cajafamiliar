@@ -291,10 +291,10 @@ export function AccountReconciliationModal({
             </div>
             <div className="space-y-2 max-h-48 overflow-y-auto">
               {history.map((item) => {
-                const member = members.find((m) => m.id === item.registeredByUserId);
+                const member = members.find((m) => m.userId === item.registeredByUserId);
                 const registeredByName = member
                   ? member.displayName
-                  : currentMember && currentMember.id === item.registeredByUserId
+                  : currentMember && currentMember.userId === item.registeredByUserId
                   ? currentMember.displayName
                   : "Otro miembro";
 
