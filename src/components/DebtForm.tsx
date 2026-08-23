@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category } from "../types";
-import { createDebt } from "../services/dataRepository";
+import { createDebt, createCreditCardDebt } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError } from "../utils/debtViewModel";
@@ -36,6 +36,12 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
   const [tceaPercent, setTceaPercent] = useState("");
   const [notes, setNotes] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Credit card specific fields
+  const [creditLimit, setCreditLimit] = useState("");
+  const [closingDay, setClosingDay] = useState("");
+  const [dueDay, setDueDay] = useState("");
+  const [last4, setLast4] = useState("");
 
   const [installments, setInstallments] = useState<Array<{
     installmentNumber: number;
@@ -93,49 +99,87 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
     }
 
     if (!name.trim() || !creditorName.trim() || !openingPrincipalBalance) {
-      setToast({ message: "Complete los campos obligatorios (Nombre, Acreedor, Principal de apertura).", type: "error" });
+      setToast({ message: "Complete los campos obligatorios (Nombre, Acreedor, Saldo inicial).", type: "error" });
       return;
+    }
+
+    if (debtKind === "credit_card") {
+      if (last4.trim() && !/^[0-9]{4}$/.test(last4.trim())) {
+        setToast({ message: "Los últimos 4 dígitos deben contener exactamente 4 números.", type: "error" });
+        return;
+      }
+      if (closingDay && (Number(closingDay) < 1 || Number(closingDay) > 31)) {
+        setToast({ message: "El día de cierre debe estar entre 1 y 31.", type: "error" });
+        return;
+      }
+      if (dueDay && (Number(dueDay) < 1 || Number(dueDay) > 31)) {
+        setToast({ message: "El día de pago habitual debe estar entre 1 y 31.", type: "error" });
+        return;
+      }
+      if (creditLimit && Number(creditLimit) <= 0) {
+        setToast({ message: "El límite de crédito debe ser un monto positivo.", type: "error" });
+        return;
+      }
     }
 
     setSubmitting(true);
     try {
-      await createDebt({
-        debtId,
-        name: name.trim(),
-        creditorName: creditorName.trim(),
-        debtKind,
-        currencyCode: currencyCode.trim() || "PEN",
-        originDate: originDate || null,
-        trackingStartDate,
-        originalPrincipal: originalPrincipal ? Number(originalPrincipal) : null,
-        openingPrincipalBalance: Number(openingPrincipalBalance),
-        plannedInstallmentCount: plannedInstallmentCount ? Number(plannedInstallmentCount) : null,
-        plannedInstallmentAmount: plannedInstallmentAmount ? Number(plannedInstallmentAmount) : null,
-        installmentAmountMode,
-        paymentFrequency: paymentFrequency || null,
-        customFrequencyDays: customFrequencyDays ? Number(customFrequencyDays) : null,
-        firstDueDate: firstDueDate || null,
-        teaPercent: teaPercent ? Number(teaPercent) : null,
-        tceaPercent: tceaPercent ? Number(tceaPercent) : null,
-        notes,
-        installments: installments.map((i) => ({
-          installmentNumber: i.installmentNumber,
-          dueDate: i.dueDate,
-          expectedAmount: i.expectedAmount ? Number(i.expectedAmount) : null,
-          expectedPrincipal: i.expectedPrincipal ? Number(i.expectedPrincipal) : null,
-          expectedInterest: i.expectedInterest ? Number(i.expectedInterest) : null,
-          expectedFees: i.expectedFees ? Number(i.expectedFees) : null,
-          expectedInsurance: i.expectedInsurance ? Number(i.expectedInsurance) : null,
-        })),
-        collaterals: collaterals.map((c) => ({
-          description: c.description.trim(),
-          pledgedValue: c.pledgedValue ? Number(c.pledgedValue) : null,
-          estimatedValue: c.estimatedValue ? Number(c.estimatedValue) : null,
-          redemptionDeadline: c.redemptionDeadline || null,
-        })),
-      });
-
-      setToast({ message: "Deuda registrada exitosamente.", type: "success" });
+      if (debtKind === "credit_card") {
+        await createCreditCardDebt({
+          debtId,
+          name: name.trim(),
+          creditorName: creditorName.trim(),
+          currencyCode: currencyCode.trim() || "PEN",
+          originDate: originDate || null,
+          trackingStartDate,
+          openingBalance: Number(openingPrincipalBalance),
+          creditLimit: creditLimit ? Number(creditLimit) : null,
+          closingDay: closingDay ? Number(closingDay) : null,
+          dueDay: dueDay ? Number(dueDay) : null,
+          last4: last4.trim() || null,
+          teaPercent: teaPercent ? Number(teaPercent) : null,
+          tceaPercent: tceaPercent ? Number(tceaPercent) : null,
+          notes,
+        });
+        setToast({ message: "Tarjeta de crédito registrada exitosamente.", type: "success" });
+      } else {
+        await createDebt({
+          debtId,
+          name: name.trim(),
+          creditorName: creditorName.trim(),
+          debtKind,
+          currencyCode: currencyCode.trim() || "PEN",
+          originDate: originDate || null,
+          trackingStartDate,
+          originalPrincipal: originalPrincipal ? Number(originalPrincipal) : null,
+          openingPrincipalBalance: Number(openingPrincipalBalance),
+          plannedInstallmentCount: plannedInstallmentCount ? Number(plannedInstallmentCount) : null,
+          plannedInstallmentAmount: plannedInstallmentAmount ? Number(plannedInstallmentAmount) : null,
+          installmentAmountMode,
+          paymentFrequency: paymentFrequency || null,
+          customFrequencyDays: customFrequencyDays ? Number(customFrequencyDays) : null,
+          firstDueDate: firstDueDate || null,
+          teaPercent: teaPercent ? Number(teaPercent) : null,
+          tceaPercent: tceaPercent ? Number(tceaPercent) : null,
+          notes,
+          installments: installments.map((i) => ({
+            installmentNumber: i.installmentNumber,
+            dueDate: i.dueDate,
+            expectedAmount: i.expectedAmount ? Number(i.expectedAmount) : null,
+            expectedPrincipal: i.expectedPrincipal ? Number(i.expectedPrincipal) : null,
+            expectedInterest: i.expectedInterest ? Number(i.expectedInterest) : null,
+            expectedFees: i.expectedFees ? Number(i.expectedFees) : null,
+            expectedInsurance: i.expectedInsurance ? Number(i.expectedInsurance) : null,
+          })),
+          collaterals: collaterals.map((c) => ({
+            description: c.description.trim(),
+            pledgedValue: c.pledgedValue ? Number(c.pledgedValue) : null,
+            estimatedValue: c.estimatedValue ? Number(c.estimatedValue) : null,
+            redemptionDeadline: c.redemptionDeadline || null,
+          })),
+        });
+        setToast({ message: "Deuda registrada exitosamente.", type: "success" });
+      }
       onSaved();
     } catch (err) {
       setToast({ message: translateDebtError(err), type: "error" });
@@ -143,6 +187,8 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
       setSubmitting(false);
     }
   };
+
+  const isCard = debtKind === "credit_card";
 
   return (
     <section className="mx-auto max-w-4xl rounded-3xl bg-white p-6 shadow-xl lg:p-8">
@@ -152,8 +198,8 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">Registrar nueva deuda</h2>
-            <p className="text-sm text-slate-500">Incorpora una obligación financiera al sistema</p>
+            <h2 className="text-2xl font-bold text-slate-900">{isCard ? "Registrar tarjeta de crédito" : "Registrar nueva deuda"}</h2>
+            <p className="text-sm text-slate-500">{isCard ? "Configura la tarjeta de crédito y su saldo inicial adeudado" : "Incorpora una obligación financiera al sistema"}</p>
           </div>
         </div>
       </div>
@@ -161,24 +207,24 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <label className="block text-sm font-semibold text-slate-700">Nombre de la deuda *</label>
+            <label className="block text-sm font-semibold text-slate-700">{isCard ? "Nombre de la tarjeta *" : "Nombre de la deuda *"}</label>
             <input
               type="text"
               required
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Ej. Préstamo personal BCP"
+              placeholder={isCard ? "Ej. Visa Black Interbank" : "Ej. Préstamo personal BCP"}
               className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-700">Acreedor *</label>
+            <label className="block text-sm font-semibold text-slate-700">{isCard ? "Acreedor / banco *" : "Acreedor *"}</label>
             <input
               type="text"
               required
               value={creditorName}
               onChange={(e) => setCreditorName(e.target.value)}
-              placeholder="Ej. Banco de Crédito del Perú"
+              placeholder={isCard ? "Ej. Interbank" : "Ej. Banco de Crédito del Perú"}
               className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
             />
           </div>
@@ -207,7 +253,7 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold text-slate-700">Saldo principal inicial *</label>
+            <label className="block text-sm font-semibold text-slate-700">{isCard ? "Saldo inicial adeudado *" : "Saldo principal inicial *"}</label>
             <input
               type="number"
               step="0.01"
@@ -230,84 +276,168 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
           </div>
         </div>
 
-        {/* Progressive disclosure for advanced details (Requirement 13) */}
+        {/* Progressive disclosure for advanced details */}
         <div className="pt-2">
           <button
             type="button"
             onClick={() => setShowAdvanced(!showAdvanced)}
             className="text-sm font-bold text-blue-600 hover:text-blue-800"
           >
-            {showAdvanced ? "Ocultar detalles avanzados y cronograma opcional ▲" : "Mostrar detalles avanzados y cronograma opcional ▼"}
+            {showAdvanced ? "Ocultar datos adicionales y avanzados ▲" : "Mostrar datos adicionales y avanzados ▼"}
           </button>
         </div>
 
         {showAdvanced && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-2 border-t border-slate-100">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700">Principal original</label>
-              <input
-                type="number"
-                step="0.01"
-                value={originalPrincipal}
-                onChange={(e) => setOriginalPrincipal(e.target.value)}
-                placeholder="0.00"
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700">Fecha de origen</label>
-              <input
-                type="date"
-                value={originDate}
-                onChange={(e) => setOriginDate(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700">Frecuencia de pago</label>
-              <select
-                value={paymentFrequency ?? ""}
-                onChange={(e) => setPaymentFrequency((e.target.value || null) as DebtPaymentFrequency | null)}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-              >
-                <option value="">No especificada</option>
-                <option value="monthly">Mensual</option>
-                <option value="biweekly">Quincenal</option>
-                <option value="weekly">Semanal</option>
-                <option value="custom">Personalizada</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700">Primera fecha de vencimiento</label>
-              <input
-                type="date"
-                value={firstDueDate}
-                onChange={(e) => setFirstDueDate(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700">TEA % (Tasa Efectiva Anual)</label>
-              <input
-                type="number"
-                step="0.01"
-                value={teaPercent}
-                onChange={(e) => setTeaPercent(e.target.value)}
-                placeholder="0.00"
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700">TCEA %</label>
-              <input
-                type="number"
-                step="0.01"
-                value={tceaPercent}
-                onChange={(e) => setTceaPercent(e.target.value)}
-                placeholder="0.00"
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-              />
-            </div>
+            {isCard ? (
+              <>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Límite de crédito (Opcional)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={creditLimit}
+                    onChange={(e) => setCreditLimit(e.target.value)}
+                    placeholder="Ej. 5000.00"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Día de cierre (1 - 31)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={closingDay}
+                    onChange={(e) => setClosingDay(e.target.value)}
+                    placeholder="Ej. 20"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Día de pago habitual (1 - 31)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={dueDay}
+                    onChange={(e) => setDueDay(e.target.value)}
+                    placeholder="Ej. 5"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Últimos 4 dígitos</label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={last4}
+                    onChange={(e) => setLast4(e.target.value)}
+                    placeholder="Ej. 1234"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Fecha de origen</label>
+                  <input
+                    type="date"
+                    value={originDate}
+                    onChange={(e) => setOriginDate(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">TEA % (Tasa Efectiva Anual)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={teaPercent}
+                    onChange={(e) => setTeaPercent(e.target.value)}
+                    placeholder="0.00"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">TCEA %</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={tceaPercent}
+                    onChange={(e) => setTceaPercent(e.target.value)}
+                    placeholder="0.00"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Principal original</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={originalPrincipal}
+                    onChange={(e) => setOriginalPrincipal(e.target.value)}
+                    placeholder="0.00"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Fecha de origen</label>
+                  <input
+                    type="date"
+                    value={originDate}
+                    onChange={(e) => setOriginDate(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Frecuencia de pago</label>
+                  <select
+                    value={paymentFrequency ?? ""}
+                    onChange={(e) => setPaymentFrequency((e.target.value || null) as DebtPaymentFrequency | null)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  >
+                    <option value="">No especificada</option>
+                    <option value="monthly">Mensual</option>
+                    <option value="biweekly">Quincenal</option>
+                    <option value="weekly">Semanal</option>
+                    <option value="custom">Personalizada</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Primera fecha de vencimiento</label>
+                  <input
+                    type="date"
+                    value={firstDueDate}
+                    onChange={(e) => setFirstDueDate(e.target.value)}
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">TEA % (Tasa Efectiva Anual)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={teaPercent}
+                    onChange={(e) => setTeaPercent(e.target.value)}
+                    placeholder="0.00"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">TCEA %</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={tceaPercent}
+                    onChange={(e) => setTceaPercent(e.target.value)}
+                    placeholder="0.00"
+                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                  />
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -321,155 +451,159 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
           />
         </div>
 
-        {/* Optional Schedule / Installments */}
-        <div className="rounded-2xl border border-slate-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-bold text-slate-800">Cronograma inicial de cuotas (Opcional)</h3>
-            <button
-              type="button"
-              onClick={addInstallment}
-              className="flex items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 hover:bg-blue-100"
-            >
-              <Plus className="h-4 w-4" /> Agregar cuota
-            </button>
-          </div>
-          {installments.length === 0 ? (
-            <p className="text-sm text-slate-500 italic">No se han agregado cuotas iniciales (puede gestionarse sin cronograma estricto).</p>
-          ) : (
-            <div className="space-y-3">
-              {installments.map((inst, idx) => (
-                <div key={idx} className="grid grid-cols-1 gap-2 sm:grid-cols-6 items-center bg-slate-50 p-3 rounded-xl">
-                  <div className="text-sm font-bold text-slate-700">#{inst.installmentNumber}</div>
-                  <div>
-                    <label className="block text-xs text-slate-500">Vencimiento</label>
-                    <input
-                      type="date"
-                      value={inst.dueDate}
-                      onChange={(e) => {
-                        const copy = [...installments];
-                        copy[idx].dueDate = e.target.value;
-                        setInstallments(copy);
-                      }}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500">Monto esperado</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={inst.expectedAmount}
-                      onChange={(e) => {
-                        const copy = [...installments];
-                        copy[idx].expectedAmount = e.target.value;
-                        setInstallments(copy);
-                      }}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500">Principal</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={inst.expectedPrincipal}
-                      onChange={(e) => {
-                        const copy = [...installments];
-                        copy[idx].expectedPrincipal = e.target.value;
-                        setInstallments(copy);
-                      }}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500">Interés</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={inst.expectedInterest}
-                      onChange={(e) => {
-                        const copy = [...installments];
-                        copy[idx].expectedInterest = e.target.value;
-                        setInstallments(copy);
-                      }}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setInstallments(installments.filter((_, i) => i !== idx))}
-                      className="rounded-lg p-2 text-red-600 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+        {/* Optional Schedule / Installments (Only for non-card debts) */}
+        {!isCard && (
+          <div className="rounded-2xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold text-slate-800">Cronograma inicial de cuotas (Opcional)</h3>
+              <button
+                type="button"
+                onClick={addInstallment}
+                className="flex items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 hover:bg-blue-100"
+              >
+                <Plus className="h-4 w-4" /> Agregar cuota
+              </button>
             </div>
-          )}
-        </div>
+            {installments.length === 0 ? (
+              <p className="text-sm text-slate-500 italic">No se han agregado cuotas iniciales (puede gestionarse sin cronograma estricto).</p>
+            ) : (
+              <div className="space-y-3">
+                {installments.map((inst, idx) => (
+                  <div key={idx} className="grid grid-cols-1 gap-2 sm:grid-cols-6 items-center bg-slate-50 p-3 rounded-xl">
+                    <div className="text-sm font-bold text-slate-700">#{inst.installmentNumber}</div>
+                    <div>
+                      <label className="block text-xs text-slate-500">Vencimiento</label>
+                      <input
+                        type="date"
+                        value={inst.dueDate}
+                        onChange={(e) => {
+                          const copy = [...installments];
+                          copy[idx].dueDate = e.target.value;
+                          setInstallments(copy);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500">Monto esperado</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={inst.expectedAmount}
+                        onChange={(e) => {
+                          const copy = [...installments];
+                          copy[idx].expectedAmount = e.target.value;
+                          setInstallments(copy);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500">Principal</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={inst.expectedPrincipal}
+                        onChange={(e) => {
+                          const copy = [...installments];
+                          copy[idx].expectedPrincipal = e.target.value;
+                          setInstallments(copy);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500">Interés</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={inst.expectedInterest}
+                        onChange={(e) => {
+                          const copy = [...installments];
+                          copy[idx].expectedInterest = e.target.value;
+                          setInstallments(copy);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setInstallments(installments.filter((_, i) => i !== idx))}
+                        className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
-        {/* Optional Collaterals */}
-        <div className="rounded-2xl border border-slate-200 p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-bold text-slate-800">Garantías / Colaterales (Opcional)</h3>
-            <button
-              type="button"
-              onClick={addCollateral}
-              className="flex items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 hover:bg-blue-100"
-            >
-              <Plus className="h-4 w-4" /> Agregar garantía
-            </button>
-          </div>
-          {collaterals.length === 0 ? (
-            <p className="text-sm text-slate-500 italic">No se han registrado garantías para esta deuda.</p>
-          ) : (
-            <div className="space-y-3">
-              {collaterals.map((col, idx) => (
-                <div key={idx} className="grid grid-cols-1 gap-2 sm:grid-cols-4 items-center bg-slate-50 p-3 rounded-xl">
-                  <div className="sm:col-span-2">
-                    <label className="block text-xs text-slate-500">Descripción</label>
-                    <input
-                      type="text"
-                      value={col.description}
-                      onChange={(e) => {
-                        const copy = [...collaterals];
-                        copy[idx].description = e.target.value;
-                        setCollaterals(copy);
-                      }}
-                      placeholder="Ej. Vehículo / Inmueble"
-                      className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-500">Valor estimado</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={col.estimatedValue}
-                      onChange={(e) => {
-                        const copy = [...collaterals];
-                        copy[idx].estimatedValue = e.target.value;
-                        setCollaterals(copy);
-                      }}
-                      className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setCollaterals(collaterals.filter((_, i) => i !== idx))}
-                      className="rounded-lg p-2 text-red-600 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+        {/* Optional Collaterals (Only for non-card debts) */}
+        {!isCard && (
+          <div className="rounded-2xl border border-slate-200 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold text-slate-800">Garantías / Colaterales (Opcional)</h3>
+              <button
+                type="button"
+                onClick={addCollateral}
+                className="flex items-center gap-1.5 rounded-xl bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 hover:bg-blue-100"
+              >
+                <Plus className="h-4 w-4" /> Agregar garantía
+              </button>
             </div>
-          )}
-        </div>
+            {collaterals.length === 0 ? (
+              <p className="text-sm text-slate-500 italic">No se han registrado garantías para esta deuda.</p>
+            ) : (
+              <div className="space-y-3">
+                {collaterals.map((col, idx) => (
+                  <div key={idx} className="grid grid-cols-1 gap-2 sm:grid-cols-4 items-center bg-slate-50 p-3 rounded-xl">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs text-slate-500">Descripción</label>
+                      <input
+                        type="text"
+                        value={col.description}
+                        onChange={(e) => {
+                          const copy = [...collaterals];
+                          copy[idx].description = e.target.value;
+                          setCollaterals(copy);
+                        }}
+                        placeholder="Ej. Vehículo / Inmueble"
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500">Valor estimado</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={col.estimatedValue}
+                        onChange={(e) => {
+                          const copy = [...collaterals];
+                          copy[idx].estimatedValue = e.target.value;
+                          setCollaterals(copy);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                      />
+                    </div>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setCollaterals(collaterals.filter((_, i) => i !== idx))}
+                        className="rounded-lg p-2 text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
           <button
@@ -484,7 +618,7 @@ export function DebtForm({ currentMember, canWriteDebt = true, onSaved, onCancel
             disabled={submitting}
             className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50"
           >
-            {submitting ? "Registrando..." : "Registrar deuda"}
+            {submitting ? "Registrando..." : isCard ? "Registrar tarjeta" : "Registrar deuda"}
           </button>
         </div>
       </form>

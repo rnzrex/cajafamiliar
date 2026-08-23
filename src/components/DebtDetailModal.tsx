@@ -10,6 +10,9 @@ import type {
   FinancialAccount,
   Category,
   HouseholdMember,
+  CreditCardProfile,
+  CreditCardEntry,
+  CreditCardStatement,
 } from "../types";
 import type { DebtIntelligenceItem } from "../utils/debtIntelligence";
 import { currentDebtScheduleVersion, effectiveDebtEvents } from "../utils/debtCalculations";
@@ -24,6 +27,7 @@ import {
 import { formatDebtMoney } from "../utils/debtPresentation";
 import { setDebtArchived, updateDebtMetadata } from "../services/dataRepository";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
+import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 
 interface DebtDetailModalProps {
   debt: Debt;
@@ -36,6 +40,10 @@ interface DebtDetailModalProps {
   accounts: FinancialAccount[];
   categories: Category[];
   currentMember?: HouseholdMember;
+  creditCardProfiles?: CreditCardProfile[];
+  creditCardEntries?: CreditCardEntry[];
+  cardStatements?: CreditCardStatement[];
+  allDebts?: Debt[];
   canWriteDebt?: boolean;
   onClose: () => void;
   onOpenOperation: (
@@ -54,6 +62,13 @@ export function DebtDetailModal({
   installments,
   allocations,
   collaterals,
+  accounts,
+  categories,
+  currentMember,
+  creditCardProfiles,
+  creditCardEntries,
+  cardStatements,
+  allDebts,
   canWriteDebt = true,
   onClose,
   onOpenOperation,
@@ -66,6 +81,42 @@ export function DebtDetailModal({
   const [editCreditor, setEditCreditor] = useState(debt.creditorName);
   const [editNotes, setEditNotes] = useState(debt.notes);
   const [submitting, setSubmitting] = useState(false);
+
+  if (debt.debtKind === "credit_card") {
+    const cardProfile = creditCardProfiles?.find((p) => p.debtId === debt.id) ?? null;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
+        <button type="button" className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} />
+        <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col rounded-3xl bg-white shadow-2xl overflow-y-auto p-6">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
+            <h2 className="text-xl font-bold text-slate-900">Detalle de Tarjeta de Crédito</h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200 transition"
+            >
+              <X className="h-6 w-6" />
+            </button>
+          </div>
+          <CreditCardDetailPanel
+            debt={debt}
+            profile={cardProfile}
+            cardEntries={creditCardEntries ?? []}
+            cardStatements={cardStatements ?? []}
+            allDebts={allDebts ?? [debt]}
+            accounts={accounts}
+            categories={categories}
+            currentMember={currentMember}
+            canWriteDebt={canWriteDebt}
+            onRefreshData={async () => {
+              await onRefresh();
+            }}
+            setToast={setToast}
+          />
+        </div>
+      </div>
+    );
+  }
 
   const currentSchedule = currentDebtScheduleVersion(debt.id, scheduleVersions);
   const debtInstallments = installments.filter(

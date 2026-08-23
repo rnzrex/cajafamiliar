@@ -1462,6 +1462,10 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               accounts={data.financialAccounts}
               categories={data.categories}
               currentMember={currentMember}
+              creditCardProfiles={data.creditCardProfiles}
+              creditCardEntries={data.creditCardEntries}
+              cardStatements={data.creditCardStatements}
+              allDebts={data.debts}
               canWriteDebt={canWriteDebt}
               onClose={() => setSelectedDebtId(null)}
               onOpenOperation={(opType, targetEvId) => {
