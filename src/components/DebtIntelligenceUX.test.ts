@@ -5,13 +5,16 @@ import type {
   CreditCardProfile,
   CreditCardStatement,
   Debt,
+  DebtInstallment,
+  DebtScheduleVersion,
 } from "../types.js";
 import { DebtsManager } from "./DebtsManager.js";
 import { DebtAttentionPanel } from "./DebtAttentionPanel.js";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel.js";
 import { DebtDetailModal } from "./DebtDetailModal.js";
 import { buildAllDebtNextActions } from "../utils/debtAttention.js";
-import { buildDebtStrategyResults } from "../utils/debtStrategy.js";
+import { buildDebtStrategies } from "../utils/debtStrategy.js";
+import { buildDebtIntelligenceItems } from "../utils/debtIntelligence.js";
 import type { DebtIntelligenceItem } from "../utils/debtIntelligence.js";
 
 function sampleLoanDebt(overrides: Partial<Debt> = {}): Debt {
@@ -72,14 +75,42 @@ function sampleCardDebt(overrides: Partial<Debt> = {}): Debt {
   };
 }
 
-import { buildDebtIntelligenceItems } from "../utils/debtIntelligence.js";
+const defaultScheduleVersion: DebtScheduleVersion = {
+  id: "s-1",
+  debtId: "loan-1",
+  versionNumber: 1,
+  scheduleReason: "initial",
+  effectiveDate: "2026-01-01",
+  notes: "",
+  createdByUserId: "u1",
+  createdAt: "2026-01-01T00:00:00Z",
+  updatedAt: "2026-01-01T00:00:00Z",
+};
 
-function sampleLoanIntelligence(loan: Debt = sampleLoanDebt()): DebtIntelligenceItem {
+const defaultInstallment: DebtInstallment = {
+  id: "inst-1",
+  debtId: "loan-1",
+  scheduleVersionId: "s-1",
+  installmentNumber: 1,
+  dueDate: "2026-08-10",
+  expectedAmount: 1000,
+  isAmountUnknown: false,
+  notes: "",
+  createdByUserId: "u1",
+  createdAt: "2026-01-01T00:00:00Z",
+  updatedAt: "2026-01-01T00:00:00Z",
+};
+
+function sampleLoanIntelligence(
+  loan: Debt = sampleLoanDebt(),
+  versions: DebtScheduleVersion[] = [defaultScheduleVersion],
+  installments: DebtInstallment[] = [defaultInstallment]
+): DebtIntelligenceItem {
   return buildDebtIntelligenceItems({
     debts: [loan],
     debtEvents: [],
-    debtScheduleVersions: [],
-    debtInstallments: [],
+    debtScheduleVersions: versions,
+    debtInstallments: installments,
     debtCollaterals: [],
   })[0];
 }
@@ -87,7 +118,7 @@ function sampleLoanIntelligence(loan: Debt = sampleLoanDebt()): DebtIntelligence
 describe("DEBT-5F-B: Debt Intelligence UX Real Component Tests", () => {
   it("renders DebtAttentionPanel with urgent overdue items when actionable", () => {
     const loan = sampleLoanDebt();
-    const intel = sampleLoanIntelligence();
+    const intel = sampleLoanIntelligence(loan);
     const actions = buildAllDebtNextActions({
       debts: [loan],
       intelligenceItems: [intel],
@@ -108,12 +139,12 @@ describe("DEBT-5F-B: Debt Intelligence UX Real Component Tests", () => {
   });
 
   it("renders DebtAttentionPanel healthy empty state when no urgent items exist", () => {
-    const healthyLoan = sampleLoanDebt({ firstDueDate: "2026-09-30" });
-    const healthyIntel = sampleLoanIntelligence(healthyLoan);
+    const paidOffLoan = sampleLoanDebt({ status: "paid_off" });
+    const paidOffIntel = sampleLoanIntelligence(paidOffLoan, [], []);
 
     const actions = buildAllDebtNextActions({
-      debts: [healthyLoan],
-      intelligenceItems: [healthyIntel],
+      debts: [paidOffLoan],
+      intelligenceItems: [paidOffIntel],
       todayKey: "2026-08-23",
     });
 
@@ -131,14 +162,14 @@ describe("DEBT-5F-B: Debt Intelligence UX Real Component Tests", () => {
   it("renders DebtsManager distinguishing 'Saldo actual' for cards and 'Saldo principal' for loans", () => {
     const loan = sampleLoanDebt();
     const card = sampleCardDebt();
-    const loanIntel = sampleLoanIntelligence();
+    const loanIntel = sampleLoanIntelligence(loan);
 
     const html = renderToStaticMarkup(
       React.createElement(DebtsManager, {
         debts: [loan, card],
         debtEvents: [],
-        scheduleVersions: [],
-        installments: [],
+        scheduleVersions: [defaultScheduleVersion],
+        installments: [defaultInstallment],
         allocations: [],
         collaterals: [],
         accounts: [],
@@ -153,7 +184,7 @@ describe("DEBT-5F-B: Debt Intelligence UX Real Component Tests", () => {
           debtsWithUnknownInstallmentsCount: 0,
           debtsWithActiveCollateralCount: 0,
         },
-        debtStrategies: buildDebtStrategyResults([loanIntel]),
+        debtStrategies: buildDebtStrategies([loanIntel]),
         intelligenceItems: [loanIntel],
         onOpenNewDebt: () => {},
         onSelectDebt: () => {},
@@ -235,15 +266,15 @@ describe("DEBT-5F-B: Debt Intelligence UX Real Component Tests", () => {
 
   it("preserves DebtDetailModal loan experience with Registrar pago, Prepago, Liquidar deuda, Cronograma, Garantías, Historial", () => {
     const loan = sampleLoanDebt();
-    const intel = sampleLoanIntelligence();
+    const intel = sampleLoanIntelligence(loan);
 
     const html = renderToStaticMarkup(
       React.createElement(DebtDetailModal, {
         debt: loan,
         debtIntelligence: intel,
         debtEvents: [],
-        scheduleVersions: [],
-        installments: [],
+        scheduleVersions: [defaultScheduleVersion],
+        installments: [defaultInstallment],
         allocations: [],
         collaterals: [],
         accounts: [],
