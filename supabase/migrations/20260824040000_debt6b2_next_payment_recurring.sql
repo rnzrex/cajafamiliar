@@ -14,6 +14,10 @@ alter table public.debts
   add constraint debts_minimum_principal_payment_check
     check (minimum_principal_payment is null or minimum_principal_payment > 0);
 
+-- Ensure recurring_payments.id is text type
+alter table public.recurring_payments
+  alter column id type text using id::text;
+
 -- Extend recurring_payments with link and start-date fields
 alter table public.recurring_payments
   add column if not exists linked_debt_id uuid null references public.debts(id) on delete cascade,
@@ -49,8 +53,11 @@ declare
   v_event_month integer;
   v_event_year integer;
   v_is_paid boolean := false;
-  v_rec_id uuid;
+  v_rec_id text;
 begin
+  -- Set transaction-local flag for authorized internal debt sync
+  perform set_config('app.internal_sync', 'true', true);
+
   select d.*
     into v_debt
     from public.debts as d
@@ -63,13 +70,7 @@ begin
     return;
   end if;
 
-  select id into v_rec_id
-    from public.recurring_payments
-   where linked_debt_id = p_debt_id;
-
-  if v_rec_id is null then
-    v_rec_id := gen_random_uuid();
-  end if;
+  v_rec_id := 'debt:' || p_debt_id::text;
 
   v_should_be_active := (
     v_debt.debt_kind <> 'credit_card'
@@ -102,12 +103,12 @@ begin
          from public.debt_events as r
         where r.reversal_of_event_id = e.id
      )
-   order by e.event_date desc, e.created_at desc
+   order by e.event_date desc, e.created_at desc, e.id desc
    limit 1;
 
   if v_latest_event_date is not null then
-    v_event_month := extract(month from v_latest_event_date)::integer;
-    v_event_year := extract(year from v_latest_event_date)::integer;
+    v_event_month := extract(month from (v_latest_event_date at time zone 'America/Lima'))::integer;
+    v_event_year := extract(year from (v_latest_event_date at time zone 'America/Lima'))::integer;
 
     if (v_event_year > v_now_year) or (v_event_year = v_now_year and v_event_month >= v_now_month) then
       v_is_paid := true;
@@ -123,8 +124,14 @@ begin
     due_day,
     due_date,
     category,
+    status,
     recurrence_type,
     total_installments,
+    paid_installments,
+    is_active,
+    last_paid_month,
+    last_paid_year,
+    paid_at,
     linked_debt_id,
     starts_on,
     currency_code
@@ -137,13 +144,19 @@ begin
     v_due_day,
     null,
     'Deudas',
+    case when v_is_paid then 'pagado' else 'pendiente' end,
     'indefinite',
     null,
+    0,
+    true,
+    case when v_is_paid then v_event_month else null end,
+    case when v_is_paid then v_event_year else null end,
+    case when v_is_paid then v_latest_event_created else null end,
     v_debt.id,
     v_debt.first_due_date,
     coalesce(v_debt.currency_code, 'PEN')
   )
-  on conflict (id) do update set
+  on conflict (linked_debt_id) where linked_debt_id is not null do update set
     household_id = excluded.household_id,
     name = excluded.name,
     amount = null,
@@ -151,7 +164,12 @@ begin
     due_day = excluded.due_day,
     due_date = null,
     category = 'Deudas',
+    status = excluded.status,
     recurrence_type = 'indefinite',
+    is_active = true,
+    last_paid_month = excluded.last_paid_month,
+    last_paid_year = excluded.last_paid_year,
+    paid_at = excluded.paid_at,
     starts_on = excluded.starts_on,
     currency_code = excluded.currency_code;
 end;
@@ -200,6 +218,40 @@ create trigger trg_sync_debt_events_recurring_trigger
   after insert or update or delete on public.debt_events
   for each row
   execute function public.trg_sync_debt_events_recurring();
+
+-- Protection trigger for manual writes to debt-linked recurring payments
+create or replace function public.trg_protect_debt_linked_recurring()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+begin
+  if current_setting('app.internal_sync', true) = 'true' or pg_trigger_depth() > 1 then
+    return case when tg_op = 'DELETE' then old else new end;
+  end if;
+
+  if tg_op = 'INSERT' and new.linked_debt_id is not null then
+    raise exception 'LINKED_DEBT_RECURRING_DIRECT_WRITE_PROHIBITED';
+  end if;
+
+  if tg_op = 'UPDATE' and (old.linked_debt_id is not null or new.linked_debt_id is not null) then
+    raise exception 'LINKED_DEBT_RECURRING_DIRECT_WRITE_PROHIBITED';
+  end if;
+
+  if tg_op = 'DELETE' and old.linked_debt_id is not null then
+    raise exception 'LINKED_DEBT_RECURRING_DIRECT_WRITE_PROHIBITED';
+  end if;
+
+  return case when tg_op = 'DELETE' then old else new end;
+end;
+$function$;
+
+drop trigger if exists trg_protect_debt_linked_recurring_trigger on public.recurring_payments;
+create trigger trg_protect_debt_linked_recurring_trigger
+  before insert or update or delete on public.recurring_payments
+  for each row
+  execute function public.trg_protect_debt_linked_recurring();
 
 -- ============================================================
 -- 3. CREATE_DEBT_V2 (26-ARGUMENT RPC)
@@ -355,7 +407,7 @@ end;
 $function$;
 
 -- ============================================================
--- 5. UPDATE COMPLETE_RECURRING_PAYMENT_V2 (BLOCK LINKED DEBT EXPENSES)
+-- 5. COMPLETE_RECURRING_PAYMENT_V2 (RESTORED STABLE SEMANTICS + LINKED GUARD)
 -- ============================================================
 
 create or replace function public.complete_recurring_payment_v2(
@@ -396,7 +448,7 @@ begin
   select rp.*
     into v_payment
     from public.recurring_payments as rp
-   where rp.id = p_payment_id::uuid
+   where rp.id = p_payment_id
    for update;
 
   if not found then
@@ -435,79 +487,149 @@ begin
     and v_payment.last_paid_year = v_cycle_year
   ) then
     if p_create_expense then
-      raise exception 'PAYMENT_ALREADY_PAID';
+      if p_movement_id is not null and pg_catalog.btrim(p_movement_id) <> '' then
+        select m.*
+          into v_movement
+          from public.movements as m
+         where m.id = p_movement_id
+           and m.household_id = v_payment.household_id
+           and m.type = 'egreso'
+           and m.registered_by_user_id = v_user_id
+           and m.date is not distinct from p_movement_date
+           and m.amount is not distinct from cast(p_movement_amount as numeric(12, 2))
+           and m.description is not distinct from p_movement_description
+           and m.method is not distinct from p_movement_method
+           and m.category is not distinct from p_movement_category
+           and m.person is not distinct from v_display_name
+           and (
+             p_account_id is null
+             or m.account_id is not distinct from p_account_id
+           );
+
+        if found then
+          v_has_movement := true;
+        else
+          raise exception 'PAYMENT_ALREADY_PAID';
+        end if;
+      else
+        raise exception 'PAYMENT_ALREADY_PAID';
+      end if;
     end if;
+
+    return pg_catalog.jsonb_build_object(
+      'payment', pg_catalog.to_jsonb(v_payment),
+      'movement', case when v_has_movement then pg_catalog.to_jsonb(v_movement) else 'null'::jsonb end
+    );
   end if;
 
-  if p_create_expense then
-    if p_movement_id is null
-       or p_movement_date is null
-       or p_movement_amount is null
-       or p_movement_amount <= 0
-       or p_movement_description is null
-       or pg_catalog.btrim(p_movement_description) = ''
-       or p_movement_method is null
-       or pg_catalog.btrim(p_movement_method) = ''
-       or p_movement_category is null
-       or pg_catalog.btrim(p_movement_category) = ''
-       or p_account_id is null then
-      raise exception 'INVALID_MOVEMENT';
-    end if;
+  if not v_payment.is_active then
+    raise exception 'PAYMENT_INACTIVE';
+  end if;
 
+  if p_create_expense and (
+    p_movement_id is null
+    or pg_catalog.btrim(p_movement_id) = ''
+    or p_movement_date is null
+    or p_movement_amount is null
+    or p_movement_amount <= 0
+    or p_movement_description is null
+    or pg_catalog.btrim(p_movement_description) = ''
+    or p_movement_method is null
+    or p_movement_method not in ('efectivo', 'Yape', 'transferencia', 'tarjeta')
+    or p_movement_category is null
+    or pg_catalog.btrim(p_movement_category) = ''
+  ) then
+    raise exception 'INVALID_MOVEMENT';
+  end if;
+
+  if p_create_expense and p_account_id is not null then
     select fa.*
       into v_account
       from public.financial_accounts as fa
      where fa.id = p_account_id
-       and fa.household_id = v_payment.household_id;
+       and fa.household_id = v_payment.household_id
+       and fa.is_active = true;
 
     if not found then
-      raise exception 'ACCOUNT_NOT_FOUND';
+      raise exception 'ACCOUNT_NOT_AVAILABLE';
     end if;
 
-    if not v_account.is_active then
-      raise exception 'ACCOUNT_INACTIVE';
+    if v_account.reconciliation_type = 'cash'
+       and p_movement_method is distinct from 'efectivo' then
+      raise exception 'ACCOUNT_METHOD_MISMATCH';
     end if;
 
-    begin
-      insert into public.movements (
-        id, household_id, date, amount, type, description, method, category,
-        person, account_id, movement_context, registered_by_user_id
-      ) values (
-        p_movement_id, v_payment.household_id, p_movement_date, p_movement_amount, 'egreso',
-        pg_catalog.btrim(p_movement_description), pg_catalog.btrim(p_movement_method),
-        pg_catalog.btrim(p_movement_category), v_display_name, p_account_id,
-        'standard_expense', v_user_id
-      ) returning * into v_movement;
-      v_has_movement := true;
-    exception
-      when check_violation or foreign_key_violation or unique_violation or not_null_violation then
-        raise exception 'INVALID_MOVEMENT';
-    end;
+    if v_account.reconciliation_type = 'balance'
+       and p_movement_method = 'efectivo' then
+      raise exception 'ACCOUNT_METHOD_MISMATCH';
+    end if;
   end if;
 
-  if v_payment.recurrence_type = 'one_time' then
-    update public.recurring_payments as rp
-       set status = 'pagado',
-           paid_at = pg_catalog.now()
-     where rp.id = p_payment_id
-     returning * into v_payment;
-  else
-    update public.recurring_payments as rp
-       set status = 'pagado',
-           last_paid_month = v_cycle_month,
-           last_paid_year = v_cycle_year,
-           paid_installments = case
-             when rp.recurrence_type = 'fixed' then rp.paid_installments + 1
-             else rp.paid_installments
-           end,
-           paid_at = pg_catalog.now()
-     where rp.id = p_payment_id
-     returning * into v_payment;
+  if p_create_expense then
+    if exists (
+      select 1
+        from public.movements as m
+       where m.id = p_movement_id
+         and m.household_id = v_payment.household_id
+    ) then
+      raise exception 'INVALID_MOVEMENT';
+    end if;
+
+    insert into public.movements (
+      id,
+      household_id,
+      type,
+      date,
+      amount,
+      description,
+      method,
+      category,
+      person,
+      registered_by_user_id,
+      account_id,
+      created_at
+    ) values (
+      p_movement_id,
+      v_payment.household_id,
+      'egreso',
+      p_movement_date,
+      p_movement_amount,
+      p_movement_description,
+      p_movement_method,
+      p_movement_category,
+      v_display_name,
+      v_user_id,
+      p_account_id,
+      pg_catalog.now()
+    )
+    returning * into v_movement;
+
+    v_has_movement := true;
+  end if;
+
+  update public.recurring_payments as rp
+     set status = 'pagado',
+         paid_at = pg_catalog.now(),
+         last_paid_month = v_cycle_month,
+         last_paid_year = v_cycle_year,
+         paid_installments = case when rp.recurrence_type = 'fixed' then rp.paid_installments + 1 else rp.paid_installments end,
+         is_active = case
+           when rp.recurrence_type = 'one_time' then false
+           when rp.recurrence_type = 'fixed'
+             and rp.total_installments is not null
+             and rp.paid_installments + 1 >= rp.total_installments then false
+           else true
+         end
+   where rp.id = v_payment.id
+   returning * into v_payment;
+
+  if not found then
+    raise exception 'PAYMENT_NOT_FOUND';
   end if;
 
   return pg_catalog.jsonb_build_object(
     'payment', pg_catalog.to_jsonb(v_payment),
-    'movement', case when v_has_movement then pg_catalog.to_jsonb(v_movement) else 'null'::pg_catalog.jsonb end
+    'movement', case when v_has_movement then pg_catalog.to_jsonb(v_movement) else 'null'::jsonb end
   );
 end;
 $function$;
@@ -516,6 +638,20 @@ $function$;
 -- 6. SECURITY & PERMISSIONS
 -- ============================================================
 
+-- Internal sync helpers & triggers: REVOKE ALL EXECUTE
+revoke all privileges on function public.sync_linked_recurring_payment(uuid)
+  from public, anon, authenticated, service_role;
+
+revoke all privileges on function public.trg_sync_debt_recurring()
+  from public, anon, authenticated, service_role;
+
+revoke all privileges on function public.trg_sync_debt_events_recurring()
+  from public, anon, authenticated, service_role;
+
+revoke all privileges on function public.trg_protect_debt_linked_recurring()
+  from public, anon, authenticated, service_role;
+
+-- Public versioned RPCs: AUTHENTICATED ONLY
 revoke all privileges on function public.create_debt_v2(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, jsonb, jsonb, text, text, numeric, text, numeric)
   from public, anon, service_role;
 
@@ -526,6 +662,12 @@ revoke all privileges on function public.update_debt_terms_v2(uuid, uuid, text, 
   from public, anon, service_role;
 
 grant execute on function public.update_debt_terms_v2(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, boolean, boolean, boolean, boolean, date, boolean, numeric, boolean)
+  to authenticated;
+
+revoke all privileges on function public.complete_recurring_payment_v2(text, boolean, text, date, numeric, text, text, text, uuid)
+  from public, anon, service_role;
+
+grant execute on function public.complete_recurring_payment_v2(text, boolean, text, date, numeric, text, text, text, uuid)
   to authenticated;
 
 comment on function public.create_debt_v2(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, jsonb, jsonb, text, text, numeric, text, numeric) is

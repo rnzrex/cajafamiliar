@@ -1405,6 +1405,8 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               payments={data.recurringPayments}
               categories={data.categories}
               alertSummary={urgentPaymentSummary}
+              debts={data.debts}
+              debtEvents={data.debtEvents}
               focusedPaymentId={focusedPaymentId}
               currentMember={currentMember}
               isBrowserOnline={isBrowserOnline}

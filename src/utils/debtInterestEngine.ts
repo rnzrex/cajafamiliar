@@ -143,12 +143,8 @@ export function calculateAssistedInterestSuggestion(params: {
       }
     }
   }
-  // Priority 3: TEA Estimate (requires mode === 'tea_estimate' or explicit TEA > 0, requires elapsed days > 0)
-  else if (
-    (debt.interestCalculationMode === "tea_estimate" || (debt.teaPercent != null && debt.teaPercent > 0)) &&
-    debt.interestCalculationMode !== "manual" &&
-    debt.interestCalculationMode !== "unknown"
-  ) {
+  // Priority 3: TEA Estimate (requires mode === 'tea_estimate')
+  else if (debt.interestCalculationMode === "tea_estimate") {
     if (debt.teaPercent == null || debt.teaPercent <= 0) {
       certainty = "insufficient_info";
       calculationExplanation = "No tenemos un porcentaje de TEA válido para proponer la estimación.";

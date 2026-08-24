@@ -1,6 +1,7 @@
-import type { Debt, RecurringPayment } from "../types.js";
+import type { Debt, DebtEvent, RecurringPayment } from "../types.js";
 import { isPaymentFinished, isPaymentPaidThisMonth, monthlyDueDate } from "./calculations.js";
 import { formatLocalDate, localDateString } from "./date.js";
+import { calculateNextPayment } from "./debtNextPayment.js";
 import type { DebtInstallmentPlanningItem } from "./debtPlanning.js";
 import { formatMonthKeyLabel, getNextMonthKey } from "./debtPlanning.js";
 import { dueDateStatus } from "./dueDates.js";
@@ -64,6 +65,7 @@ export interface BuildObligationProjectionInput {
   recurringPayments: RecurringPayment[];
   debts: Debt[];
   debtPlanningItems: DebtInstallmentPlanningItem[];
+  debtEvents?: DebtEvent[];
   todayKey?: string;
 }
 
@@ -80,6 +82,7 @@ export function buildObligationProjection({
   recurringPayments,
   debts,
   debtPlanningItems,
+  debtEvents = [],
   todayKey = localDateString(),
 }: BuildObligationProjectionInput): ObligationProjectionResult {
   const currentMonth = todayKey.slice(0, 7);
@@ -96,17 +99,86 @@ export function buildObligationProjection({
   const activeRecurring = recurringPayments.filter((p) => p.is_active);
 
   for (const payment of activeRecurring) {
-    const isVariable = payment.amount_mode === "variable";
-    const amountKind: ProjectionAmountKind = payment.amount == null
-      ? "unknown"
-      : isVariable
-        ? "estimated"
-        : "known";
-
     const linkedDebtId = payment.linked_debt_id ?? payment.linkedDebtId ?? null;
     const linkedDebt = linkedDebtId ? debts.find((d) => d.id === linkedDebtId) ?? null : null;
-    const currencyCode = linkedDebt ? linkedDebt.currencyCode : (payment.currency_code ?? payment.currencyCode ?? "PEN");
-    const startsOn = payment.starts_on ?? payment.startsOn ?? linkedDebt?.firstDueDate ?? null;
+
+    if (linkedDebt) {
+      // Fixed-schedule debts are already covered by debtPlanningItems -> skip linked recurring duplicate
+      if (linkedDebt.repaymentStructure === "fixed_schedule") {
+        continue;
+      }
+
+      // Compute canonical current principal for linked debt
+      const debtEventsForLinked = debtEvents.filter((e) => e.debtId === linkedDebt.id);
+      const reversedIds = new Set(
+        debtEventsForLinked
+          .filter((e) => e.eventType === "reversal" && e.reversalOfEventId)
+          .map((e) => e.reversalOfEventId!)
+      );
+      const effectiveEvents = debtEventsForLinked.filter(
+        (e) => !reversedIds.has(e.id) && e.eventType !== "reversal"
+      );
+      const principalPaidSum = effectiveEvents
+        .filter(
+          (e) =>
+            e.eventType === "payment" ||
+            e.eventType === "payoff" ||
+            e.eventType === "principal_prepayment"
+        )
+        .reduce((sum, e) => sum + (e.principalDelta < 0 ? Math.abs(e.principalDelta) : 0), 0);
+      const currentPrincipal = Math.max(
+        0,
+        (linkedDebt.openingPrincipalBalance ?? 0) - principalPaidSum
+      );
+
+      const nextPayRes = calculateNextPayment({
+        debt: linkedDebt,
+        debtEvents: debtEventsForLinked,
+        currentPrincipal,
+        todayKey,
+      });
+
+      if (nextPayRes.nextDueDate) {
+        const mKey = nextPayRes.nextDueDate.slice(0, 7);
+        const status = dueDateStatus(nextPayRes.nextDueDate, todayKey).kind;
+        const amountKind: ProjectionAmountKind = nextPayRes.minimumPaymentKnown
+          ? nextPayRes.certainty === "exact_contract" || nextPayRes.certainty === "exact_rate"
+            ? "known"
+            : "estimated"
+          : "unknown";
+
+        const item: ObligationProjectionItem = {
+          id: `rec:${payment.id}:${nextPayRes.nextDueDate}`,
+          source: "recurring",
+          sourceId: payment.id,
+          recurringPaymentId: payment.id,
+          debtId: linkedDebt.id,
+          installmentId: null,
+          label: payment.name,
+          detail: "Deuda vinculada",
+          dueDate: nextPayRes.nextDueDate,
+          monthKey: mKey,
+          currencyCode: linkedDebt.currencyCode || "PEN",
+          amount: nextPayRes.minimumPaymentAmount,
+          amountKind,
+          dueStatus: status,
+          isOverduePrior: mKey < currentMonth,
+        };
+
+        if (mKey < currentMonth) {
+          overduePriorItems.push(item);
+        } else if (horizonMonths.includes(mKey)) {
+          items.push(item);
+        }
+      }
+      continue;
+    }
+
+    const isVariable = payment.amount_mode === "variable";
+    const amountKind: ProjectionAmountKind =
+      payment.amount == null ? "unknown" : isVariable ? "estimated" : "known";
+    const currencyCode = payment.currency_code ?? payment.currencyCode ?? "PEN";
+    const startsOn = payment.starts_on ?? payment.startsOn ?? null;
 
     if (payment.recurrence_type === "one_time") {
       if (payment.status === "pagado") continue;
@@ -122,7 +194,7 @@ export function buildObligationProjection({
           source: "recurring",
           sourceId: payment.id,
           recurringPaymentId: payment.id,
-          debtId: linkedDebtId,
+          debtId: null,
           installmentId: null,
           label: payment.name,
           detail: `Pago único · ${payment.category}`,
@@ -162,10 +234,10 @@ export function buildObligationProjection({
             source: "recurring",
             sourceId: payment.id,
             recurringPaymentId: payment.id,
-            debtId: linkedDebtId,
+            debtId: null,
             installmentId: null,
             label: payment.name,
-            detail: linkedDebtId ? "Deuda vinculada" : `Pago recurrente · ${payment.category}`,
+            detail: `Pago recurrente · ${payment.category}`,
             dueDate,
             monthKey: mKey,
             currencyCode,
@@ -177,7 +249,10 @@ export function buildObligationProjection({
         }
       }
     } else if (payment.recurrence_type === "fixed") {
-      const remainingInst = Math.max(0, (payment.total_installments ?? 0) - (payment.paid_installments ?? 0));
+      const remainingInst = Math.max(
+        0,
+        (payment.total_installments ?? 0) - (payment.paid_installments ?? 0)
+      );
       if (remainingInst === 0 || isPaymentFinished(payment)) continue;
 
       if (payment.dueDay == null) {
@@ -203,10 +278,13 @@ export function buildObligationProjection({
             debtId: null,
             installmentId: null,
             label: payment.name,
-            detail: totalInst > 0 ? `Cuota ${projectedInstallmentNumber} de ${totalInst}` : `Cuota ${projectedInstallmentNumber}`,
+            detail:
+              totalInst > 0
+                ? `Cuota ${projectedInstallmentNumber} de ${totalInst}`
+                : `Cuota ${projectedInstallmentNumber}`,
             dueDate,
             monthKey: mKey,
-            currencyCode: "PEN",
+            currencyCode,
             amount: payment.amount,
             amountKind,
             dueStatus: status,

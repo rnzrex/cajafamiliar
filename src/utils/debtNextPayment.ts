@@ -18,7 +18,7 @@ export interface DebtNextPaymentResult {
   minimumPaymentKnown: boolean;
   principalAfterPayment: number | null;
   currencyCode: string;
-  certainty: InterestSuggestionCertainty;
+  certainty: InterestSuggestionCertainty | "estimate";
 }
 
 function round2(val: number): number {
@@ -70,7 +70,10 @@ export function getDerivedNextDueDate(
 
   effectivePayments.sort((a, b) => {
     if (a.eventDate !== b.eventDate) return a.eventDate.localeCompare(b.eventDate);
-    return (a.createdAt || "").localeCompare(b.createdAt || "");
+    if ((a.createdAt || "") !== (b.createdAt || "")) {
+      return (a.createdAt || "").localeCompare(b.createdAt || "");
+    }
+    return (a.id || "").localeCompare(b.id || "");
   });
 
   const lastPayment = effectivePayments[effectivePayments.length - 1];
@@ -128,23 +131,32 @@ export function calculateNextPayment(params: {
   });
 
   let interestKnown = suggestion.certainty !== "insufficient_info";
-  let interestAmount = interestKnown ? suggestion.calcInterest : null;
+  let interestAmount: number | null = interestKnown ? suggestion.calcInterest : null;
   let interestSource = suggestion.calculationSource;
   let interestExplanation = suggestion.calculationExplanation;
-  let certainty = suggestion.certainty;
+  let certainty: InterestSuggestionCertainty | "estimate" = suggestion.certainty;
 
-  if (!interestKnown && debt.interestCalculationMode === "contract_periodic_rate" && debt.periodicRatePercent != null && debt.periodicRatePercent > 0) {
+  const isFullMonthPawnPledgeEstimate =
+    debt.repaymentStructure === "open_ended" &&
+    debt.interestCalculationMode === "contract_periodic_rate" &&
+    debt.periodicRatePercent != null &&
+    debt.periodicRatePercent > 0 &&
+    (debt.periodicRateBasis || "monthly") === "monthly" &&
+    (debt.paymentFrequency || "monthly") === "monthly" &&
+    Boolean(debt.firstDueDate);
+
+  if (!interestKnown && isFullMonthPawnPledgeEstimate) {
     interestKnown = true;
-    interestAmount = round2(principal * (debt.periodicRatePercent / 100));
+    interestAmount = round2(principal * (debt.periodicRatePercent! / 100));
     interestSource = "contract_periodic_rate";
-    certainty = "exact_rate";
-    interestExplanation = `Tasa contractual de ${debt.periodicRatePercent}% mensual sobre el principal actual.`;
+    certainty = "estimate";
+    interestExplanation = `Estimación mensual con tasa contractual de ${debt.periodicRatePercent}% mensual.`;
   }
 
   const rawMinPrincipal = debt.minimumPrincipalPayment;
   const minimumPrincipalKnown = rawMinPrincipal != null && rawMinPrincipal > 0;
-  const minimumPrincipalAmount = minimumPrincipalKnown ? round2(rawMinPrincipal!) : null;
-  const effectiveMinPrincipal = minimumPrincipalKnown ? Math.min(minimumPrincipalAmount!, principal) : 0;
+  const minimumPrincipalAmount = minimumPrincipalKnown ? round2(Math.min(rawMinPrincipal!, principal)) : null;
+  const effectiveMinPrincipal = minimumPrincipalKnown ? minimumPrincipalAmount! : 0;
 
   let minimumPaymentKnown = false;
   let minimumPaymentAmount: number | null = null;
