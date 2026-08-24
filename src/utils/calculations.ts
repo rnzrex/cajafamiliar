@@ -113,6 +113,11 @@ export function paymentStatus(payment: RecurringPayment): PaymentStatus {
   if (isPaymentFinished(payment)) return { kind: "completed", label: "Finalizado", tone: "green", days: 999 };
   if (!payment.is_active) return { kind: "inactive", label: "Archivado", tone: "slate", days: 999 };
 
+  const startsOn = payment.starts_on ?? payment.startsOn;
+  if (startsOn && todayKey < startsOn) {
+    return dueDateStatus(startsOn, today);
+  }
+
   const dueDate = monthlyDueDate(payment.dueDay, todayKey);
   if (!dueDate) return { kind: "later", label: "Fecha por confirmar", tone: "blue", days: 999 };
   if (isPaymentPaidThisMonth(payment)) return { kind: "paid", label: "Pagado este mes", tone: "green", days: 0, dueDate };

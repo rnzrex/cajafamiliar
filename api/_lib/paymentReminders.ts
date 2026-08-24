@@ -116,9 +116,13 @@ export function buildObligationReminderPayload({
         numRecurring === 1
           ? "Tienes 1 pago que requiere atención."
           : `Tienes ${numRecurring} pagos que requieren atención.`;
+      const singleRec = urgentRecurringPayments[0];
+      const linkedId = singleRec?.linked_debt_id ?? (singleRec as any)?.linkedDebtId;
       url =
         numRecurring === 1
-          ? `/?view=pagos&payment=${encodeURIComponent(urgentRecurringPayments[0].id)}`
+          ? linkedId
+            ? `/?view=deudas&debt=${encodeURIComponent(linkedId)}`
+            : `/?view=pagos&payment=${encodeURIComponent(singleRec.id)}`
           : "/?view=pagos";
     } else if (numDebt > 0 && numRecurring === 0) {
       body =

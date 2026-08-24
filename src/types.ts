@@ -85,6 +85,7 @@ export interface Debt {
   periodicRatePercent?: number | null;
   periodicRateBasis?: PeriodicRateBasis | null;
   interestAccrualAnchorDate?: string | null;
+  minimumPrincipalPayment?: number | null;
 }
 
 export interface DebtEvent {
@@ -497,6 +498,12 @@ export interface RecurringPayment {
   last_paid_month: number | null;
   last_paid_year: number | null;
   paidAt?: string | null;
+  linked_debt_id?: string | null;
+  linkedDebtId?: string | null;
+  starts_on?: string | null;
+  startsOn?: string | null;
+  currency_code?: string;
+  currencyCode?: string;
 }
 
 export interface AppData {

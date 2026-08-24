@@ -1412,6 +1412,10 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               onMarkPaid={markPaymentPaid}
               onDeactivate={deactivatePayment}
               onReactivate={reactivatePayment}
+              onOpenDebt={(debtId) => {
+                setSelectedDebtId(debtId);
+                setView("deudas");
+              }}
             />
           )}
           {view === "reportes" && (

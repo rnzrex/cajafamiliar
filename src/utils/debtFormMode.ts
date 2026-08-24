@@ -100,6 +100,7 @@ export interface DebtOnboardingInputParams {
   interestCalculationMode?: DebtInterestCalculationMode;
   periodicRatePercent?: string | number | null;
   periodicRateBasis?: PeriodicRateBasis | null;
+  minimumPrincipalPayment?: string | number | null;
 }
 
 export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): DebtCreateInput {
@@ -159,7 +160,7 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
     installmentAmountMode: params.installmentAmountMode || "unknown",
     paymentFrequency: params.paymentFrequency || null,
     customFrequencyDays: params.customFrequencyDays ? Number(params.customFrequencyDays) : null,
-    firstDueDate: params.repaymentStructure === "open_ended" ? null : (params.firstDueDate || null),
+    firstDueDate: params.firstDueDate || null,
     teaPercent: params.teaPercent ? Number(params.teaPercent) : null,
     tceaPercent: params.tceaPercent ? Number(params.tceaPercent) : null,
     notes: params.notes || "",
@@ -175,10 +176,11 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
           expectedInsurance: i.expectedInsurance ? Number(i.expectedInsurance) : null,
         })),
     collaterals,
-    repaymentStructure: params.repaymentStructure ?? "unknown",
-    interestCalculationMode: params.interestCalculationMode ?? "unknown",
+    repaymentStructure: params.repaymentStructure || "unknown",
+    interestCalculationMode: params.interestCalculationMode || "unknown",
     periodicRatePercent: params.periodicRatePercent ? Number(params.periodicRatePercent) : null,
-    periodicRateBasis: params.periodicRateBasis ?? null,
+    periodicRateBasis: params.periodicRateBasis || null,
+    minimumPrincipalPayment: params.minimumPrincipalPayment ? Number(params.minimumPrincipalPayment) : null,
   };
 }
 

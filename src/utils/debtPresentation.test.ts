@@ -453,11 +453,11 @@ describe("DEBT-4D Debt Intelligence, Strategy & Simulator UX", () => {
   // 5. SIMULATION UX (Tests 27-32)
   // -------------------------------------------------------------------------
   describe("Simulation UX", () => {
-    it("27. valid prepayment shows simulated principal balance", () => {
+    it("27. simulator section removed from DebtAnalysisPanel per DEBT-6B.2", () => {
       const item = mockIntelligenceItem({ currentPrincipal: 10000 });
       const html = renderToStaticMarkup(createElement(DebtAnalysisPanel, { intelligence: item }));
 
-      expect(html).toContain("Simular abono al capital");
+      expect(html).not.toContain("Simular abono al capital");
     });
 
     it("28. payoff candidate disclaimer warns that real payoff amount may differ", () => {

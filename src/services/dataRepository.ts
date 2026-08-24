@@ -485,6 +485,10 @@ export interface CompleteRecurringPaymentResult {
 export async function completeRecurringPayment(payment: RecurringPayment, movement: Movement | null): Promise<CompleteRecurringPaymentResult | null> {
   if (!isSupabaseConfigured || !supabase) return null;
 
+  if (payment.linked_debt_id || payment.linkedDebtId) {
+    throw new Error("No se puede registrar un gasto directo para un pago de deuda vinculada.");
+  }
+
   const { data, error } = await supabase.rpc("complete_recurring_payment_v2", {
     p_payment_id: payment.id,
     p_create_expense: movement !== null,
@@ -611,6 +615,7 @@ export interface DebtCreateInput {
   interestCalculationMode?: DebtInterestCalculationMode;
   periodicRatePercent?: number | null;
   periodicRateBasis?: PeriodicRateBasis | null;
+  minimumPrincipalPayment?: number | null;
 }
 
 export interface DebtUpdateMetadataInput {
@@ -636,6 +641,10 @@ export interface DebtUpdateTermsInput {
   clearTcea?: boolean;
   clearFrequency?: boolean;
   clearAnchor?: boolean;
+  firstDueDate?: string | null;
+  clearFirstDueDate?: boolean;
+  minimumPrincipalPayment?: number | null;
+  clearMinimumPrincipalPayment?: boolean;
 }
 
 export interface DebtSetArchivedInput {
@@ -682,14 +691,15 @@ export function toCreateDebtRpcArgs(input: DebtCreateInput) {
     p_interest_calculation_mode: input.interestCalculationMode ?? "unknown",
     p_periodic_rate_percent: input.periodicRatePercent ?? null,
     p_periodic_rate_basis: input.periodicRateBasis ?? null,
+    p_minimum_principal_payment: input.minimumPrincipalPayment ?? null,
   };
 }
 
 export async function createDebt(input: DebtCreateInput): Promise<DebtCreateResult> {
   if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
-  const { data, error } = await supabase.rpc("create_debt_v1", toCreateDebtRpcArgs(input));
+  const { data, error } = await supabase.rpc("create_debt_v2", toCreateDebtRpcArgs(input));
   if (error) throw mapDebtOperationError(error.message) ?? error;
-  if (!data || typeof data !== "object") throw new Error("La RPC create_debt_v1 no devolvió un resultado válido.");
+  if (!data || typeof data !== "object") throw new Error("La RPC create_debt_v2 no devolvió un resultado válido.");
   const row = data as Record<string, any>;
   return {
     debt: fromDebtRow(row.debt),
@@ -715,7 +725,7 @@ export async function updateDebtMetadata(input: DebtUpdateMetadataInput): Promis
 
 export async function updateDebtTerms(input: DebtUpdateTermsInput): Promise<Debt> {
   if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
-  const { data, error } = await supabase.rpc("update_debt_terms_v1", {
+  const { data, error } = await supabase.rpc("update_debt_terms_v2", {
     p_household_id: householdId,
     p_debt_id: input.debtId,
     p_repayment_structure: input.repaymentStructure ?? null,
@@ -730,9 +740,13 @@ export async function updateDebtTerms(input: DebtUpdateTermsInput): Promise<Debt
     p_clear_tea: Boolean(input.clearTea),
     p_clear_tcea: Boolean(input.clearTcea),
     p_clear_frequency: Boolean(input.clearFrequency),
+    p_first_due_date: input.firstDueDate ?? null,
+    p_clear_first_due_date: Boolean(input.clearFirstDueDate),
+    p_minimum_principal_payment: input.minimumPrincipalPayment ?? null,
+    p_clear_minimum_principal_payment: Boolean(input.clearMinimumPrincipalPayment),
   });
   if (error) throw mapDebtOperationError(error.message) ?? error;
-  if (!data || typeof data !== "object") throw new Error("La RPC update_debt_terms_v1 no devolvió un resultado válido.");
+  if (!data || typeof data !== "object") throw new Error("La RPC update_debt_terms_v2 no devolvió un resultado válido.");
   return fromDebtRow(data);
 }
 
@@ -1500,6 +1514,7 @@ function fromDebtRow(row: Record<string, any>): Debt {
     interestCalculationMode: row.interest_calculation_mode ?? "unknown",
     periodicRatePercent: row.periodic_rate_percent == null ? null : Number(row.periodic_rate_percent),
     periodicRateBasis: row.periodic_rate_basis ?? null,
+    minimumPrincipalPayment: row.minimum_principal_payment == null ? null : Number(row.minimum_principal_payment),
   };
 }
 
@@ -1661,6 +1676,9 @@ function toRecurringPaymentRow(payment: RecurringPayment) {
     last_paid_month: payment.last_paid_month,
     last_paid_year: payment.last_paid_year,
     paid_at: payment.paidAt,
+    linked_debt_id: payment.linked_debt_id ?? payment.linkedDebtId ?? null,
+    starts_on: payment.starts_on ?? payment.startsOn ?? null,
+    currency_code: payment.currency_code ?? payment.currencyCode ?? "PEN",
   };
 }
 
@@ -1682,6 +1700,12 @@ function fromRecurringPaymentRow(row: RecurringPaymentRow): RecurringPayment {
     last_paid_month: row.last_paid_month == null ? null : Number(row.last_paid_month),
     last_paid_year: row.last_paid_year == null ? null : Number(row.last_paid_year),
     paidAt: row.paid_at ?? null,
+    linked_debt_id: row.linked_debt_id ?? null,
+    linkedDebtId: row.linked_debt_id ?? null,
+    starts_on: row.starts_on ?? null,
+    startsOn: row.starts_on ?? null,
+    currency_code: row.currency_code ?? "PEN",
+    currencyCode: row.currency_code ?? "PEN",
   };
 }
 
@@ -1702,6 +1726,9 @@ interface RecurringPaymentRow {
   last_paid_month: number | string | null;
   last_paid_year: number | string | null;
   paid_at: string | null;
+  linked_debt_id?: string | null;
+  starts_on?: string | null;
+  currency_code?: string | null;
 }
 
 export function fromAccountReconciliationRow(row: Record<string, any>): AccountReconciliation {

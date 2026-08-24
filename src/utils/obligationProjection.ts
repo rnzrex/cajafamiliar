@@ -103,6 +103,11 @@ export function buildObligationProjection({
         ? "estimated"
         : "known";
 
+    const linkedDebtId = payment.linked_debt_id ?? payment.linkedDebtId ?? null;
+    const linkedDebt = linkedDebtId ? debts.find((d) => d.id === linkedDebtId) ?? null : null;
+    const currencyCode = linkedDebt ? linkedDebt.currencyCode : (payment.currency_code ?? payment.currencyCode ?? "PEN");
+    const startsOn = payment.starts_on ?? payment.startsOn ?? linkedDebt?.firstDueDate ?? null;
+
     if (payment.recurrence_type === "one_time") {
       if (payment.status === "pagado") continue;
 
@@ -117,13 +122,13 @@ export function buildObligationProjection({
           source: "recurring",
           sourceId: payment.id,
           recurringPaymentId: payment.id,
-          debtId: null,
+          debtId: linkedDebtId,
           installmentId: null,
           label: payment.name,
           detail: `Pago único · ${payment.category}`,
           dueDate: payment.dueDate,
           monthKey: mKey,
-          currencyCode: "PEN",
+          currencyCode,
           amount: payment.amount,
           amountKind,
           dueStatus: status,
@@ -144,7 +149,12 @@ export function buildObligationProjection({
         const targetMonths = paidThisMonth ? [month1, month2] : [currentMonth, month1, month2];
 
         for (const mKey of targetMonths) {
-          const dueDate = monthlyDueDate(payment.dueDay, `${mKey}-01`);
+          if (startsOn && `${mKey}-31` < startsOn) continue;
+
+          let dueDate = monthlyDueDate(payment.dueDay, `${mKey}-01`);
+          if (startsOn && dueDate && dueDate < startsOn) {
+            dueDate = startsOn;
+          }
           const status = dueDate ? dueDateStatus(dueDate, todayKey).kind : "upcoming";
 
           items.push({
@@ -152,13 +162,13 @@ export function buildObligationProjection({
             source: "recurring",
             sourceId: payment.id,
             recurringPaymentId: payment.id,
-            debtId: null,
+            debtId: linkedDebtId,
             installmentId: null,
             label: payment.name,
-            detail: `Pago recurrente · ${payment.category}`,
+            detail: linkedDebtId ? "Deuda vinculada" : `Pago recurrente · ${payment.category}`,
             dueDate,
             monthKey: mKey,
-            currencyCode: "PEN",
+            currencyCode,
             amount: payment.amount,
             amountKind,
             dueStatus: status,
