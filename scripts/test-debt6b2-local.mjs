@@ -80,7 +80,6 @@ function withRole(sql, roleName = "anon") {
 async function applyMigrationsInOrder() {
   console.log("--> Performing clean DB reset and applying all migrations in order...");
 
-  // Recreate public schema clean
   await execSql(`
     drop schema if exists public cascade;
     create schema public;
@@ -260,7 +259,7 @@ async function runLocalSmokeTest() {
     }
   }
 
-  // 6. Test direct manual write to linked recurring payment blocked by protection trigger
+  // 6. Test direct manual write protection trigger on linked recurring payment
   console.log("--> Testing direct manual write protection trigger on linked recurring payment...");
   try {
     const directUpdateSql = withUser(`
@@ -278,8 +277,40 @@ async function runLocalSmokeTest() {
     }
   }
 
-  // 7. Test Prepayment Exclusion & Payment Sync
-  console.log("--> Testing prepayment exclusion and qualifying payment sync...");
+  // 7. Test Same-Transaction Attack Bypass Regression (NO GUC bypass leakage!)
+  console.log("--> Testing same-transaction attack bypass regression...");
+  try {
+    const sameTxAttackSql = `
+      begin;
+      select set_config('request.jwt.claim.sub', '${ids.user}', true);
+      select set_config('request.jwt.claim.role', 'authenticated', true);
+
+      -- Legitimate terms update
+      select public.update_debt_terms_v2(
+        p_household_id := '${ids.household}'::uuid,
+        p_debt_id := '${ids.debt1}'::uuid,
+        p_minimum_principal_payment := 120
+      );
+
+      -- Attack: immediate direct update on linked row in same transaction
+      update public.recurring_payments
+         set notes = 'Malicious attack note'
+       where id = 'debt:${ids.debt1}';
+
+      commit;
+    `;
+    await execSql(sameTxAttackSql);
+    throw new Error("FAIL: Direct write after update_debt_terms_v2 in same transaction should have been blocked!");
+  } catch (err) {
+    if (err.message.includes("LINKED_DEBT_RECURRING_DIRECT_WRITE_PROHIBITED")) {
+      console.log("✓ SUCCESS: Attack regression test passed (no GUC bypass leaked in transaction)!");
+    } else {
+      throw err;
+    }
+  }
+
+  // 8. Test Prepayment Exclusion & Contractual Cycle Payment Sync
+  console.log("--> Testing prepayment exclusion and contractual cycle payment sync...");
   // Insert principal_prepayment -> should NOT mark linked recurring as 'pagado'
   await execSql(withUser(`
     insert into public.debt_events (
@@ -295,38 +326,46 @@ async function runLocalSmokeTest() {
   console.log("✓ Status after principal_prepayment:", statusAfterPrepayment);
   if (statusAfterPrepayment !== "pendiente") throw new Error("principal_prepayment should NOT mark monthly recurring payment as pagado!");
 
-  // Insert qualifying payment -> should mark linked recurring as 'pagado'
+  // Insert late qualifying payment on 2026-09-01 for first due 2026-08-15 -> covered cycle is AUGUST (8)
   await execSql(withUser(`
     insert into public.debt_events (
       id, household_id, debt_id, event_date, event_type, cash_amount, principal_delta,
       interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete, registered_by_user_id
     ) values (
-      '${ids.event2}', '${ids.household}', '${ids.debt1}', '2026-08-15', 'payment',
+      '${ids.event2}', '${ids.household}', '${ids.debt1}', '2026-09-01', 'payment',
       300, -100, 200, 0, 0, 0, true, '${ids.user}'
     );
   `));
 
-  const statusAfterPayment = await execSql(`select status from public.recurring_payments where linked_debt_id = '${ids.debt1}';`);
-  console.log("✓ Status after qualifying payment:", statusAfterPayment);
-  if (statusAfterPayment !== "pagado") throw new Error("qualifying payment SHOULD mark monthly recurring payment as pagado!");
+  const cycleAfterLatePayment = await execSql(`
+    select last_paid_month, last_paid_year
+    from public.recurring_payments
+    where linked_debt_id = '${ids.debt1}';
+  `);
+  console.log("✓ Covered contractual cycle after late 01/09 payment:", cycleAfterLatePayment);
+  if (cycleAfterLatePayment !== "8|2026") throw new Error(`Expected covered cycle to be 8|2026, got ${cycleAfterLatePayment}`);
 
-  // 8. Test Reversal Recomputation
+  // 9. Test Reversal Recomputation
   console.log("--> Testing reversal recomputation...");
   await execSql(withUser(`
     insert into public.debt_events (
       id, household_id, debt_id, event_date, event_type, cash_amount, principal_delta,
       interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete, registered_by_user_id, reversal_of_event_id
     ) values (
-      '${ids.eventReversal}', '${ids.household}', '${ids.debt1}', '2026-08-16', 'reversal',
+      '${ids.eventReversal}', '${ids.household}', '${ids.debt1}', '2026-09-02', 'reversal',
       0, 0, 0, 0, 0, 0, false, '${ids.user}', '${ids.event2}'
     );
   `));
 
-  const statusAfterReversal = await execSql(`select status from public.recurring_payments where linked_debt_id = '${ids.debt1}';`);
-  console.log("✓ Status after payment reversal:", statusAfterReversal);
-  if (statusAfterReversal !== "pendiente") throw new Error("Reversal should restore status to pendiente!");
+  const cycleAfterReversal = await execSql(`
+    select last_paid_month, status
+    from public.recurring_payments
+    where linked_debt_id = '${ids.debt1}';
+  `);
+  console.log("✓ Status and cycle after payment reversal:", cycleAfterReversal);
+  if (!cycleAfterReversal.endsWith("pendiente")) throw new Error("Reversal should restore status to pendiente!");
 
-  // 9. Test update_debt_terms_v2
+  // 10. Test update_debt_terms_v2
   console.log("--> Testing update_debt_terms_v2...");
   const updateTermsSql = withUser(`
     select public.update_debt_terms_v2(
@@ -360,7 +399,7 @@ async function runLocalSmokeTest() {
   console.log("✓ Updated linked recurring payment via trigger:", updatedRecRow);
   if (!updatedRecRow.includes("2026-09-20|20")) throw new Error("Trigger did not sync updated due date to recurring payments");
 
-  // 10. Test Normal MANUAL Recurring Payment completion (MUST STILL WORK)
+  // 11. Test Normal MANUAL Recurring Payment completion (MUST STILL WORK)
   console.log("--> Testing normal MANUAL recurring payment completion via complete_recurring_payment_v2...");
   await execSql(`
     insert into public.recurring_payments (
@@ -390,7 +429,7 @@ async function runLocalSmokeTest() {
   const movContext = await execSql(`select movement_context from public.movements where id = '${ids.mov2}';`);
   console.log("✓ Movement context for manual recurring payment:", movContext);
 
-  // 11. Test EXECUTE Security Permissions on internal sync helper
+  // 12. Test EXECUTE Security Permissions on internal sync helper
   console.log("--> Testing security lockdown on internal sync helper...");
   try {
     const lockTestSql = withRole(`

@@ -1,4 +1,5 @@
 import type { Debt, DebtEvent, DebtInterestCalculationMode } from "../types";
+import { effectiveDebtEvents } from "./debtCalculations";
 import {
   calculateAssistedInterestSuggestion,
   getLastEffectiveDebtPaymentDate,
@@ -33,7 +34,8 @@ export function getDaysInMonth(year: number, month: number): number {
 }
 
 /**
- * Derives the next monthly due date for open-ended debt using contractual day and last payment date.
+ * Derives the next monthly due date for open-ended debt by advancing contractual monthly cycles
+ * from firstDueDate for each effective qualifying regular payment event.
  * Correctly handles days 28–31 in shorter months without timezone shift.
  */
 export function getDerivedNextDueDate(
@@ -46,62 +48,30 @@ export function getDerivedNextDueDate(
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(firstDueDateStr.trim());
   if (!match) return firstDueDateStr;
 
-  const firstYear = parseInt(match[1], 10);
-  const firstMonth = parseInt(match[2], 10);
+  const startYear = parseInt(match[1], 10);
+  const startMonth = parseInt(match[2], 10);
   const dueDay = parseInt(match[3], 10);
 
-  const debtScopedEvents = debtEvents.filter((e) => e.debtId === debtId);
-  const reversedIds = new Set(
-    debtScopedEvents
-      .filter((e) => e.eventType === "reversal" && e.reversalOfEventId)
-      .map((e) => e.reversalOfEventId!)
+  // Effective regular payment events (eventType === 'payment', not reversed)
+  const effectivePayments = effectiveDebtEvents(debtEvents, debtId).filter(
+    (e) => e.eventType === "payment"
   );
 
-  const effectivePayments = debtScopedEvents.filter(
-    (e) =>
-      !reversedIds.has(e.id) &&
-      e.eventType !== "reversal" &&
-      (e.eventType === "payment" || e.eventType === "payoff")
-  );
+  const cyclesCovered = effectivePayments.length;
 
-  if (effectivePayments.length === 0) {
-    return firstDueDateStr;
+  let targetMonth = startMonth + cyclesCovered;
+  let targetYear = startYear;
+  while (targetMonth > 12) {
+    targetMonth -= 12;
+    targetYear += 1;
   }
 
-  effectivePayments.sort((a, b) => {
-    if (a.eventDate !== b.eventDate) return a.eventDate.localeCompare(b.eventDate);
-    if ((a.createdAt || "") !== (b.createdAt || "")) {
-      return (a.createdAt || "").localeCompare(b.createdAt || "");
-    }
-    return (a.id || "").localeCompare(b.id || "");
-  });
+  const daysInTargetMonth = getDaysInMonth(targetYear, targetMonth);
+  const actualDay = Math.min(dueDay, daysInTargetMonth);
 
-  const lastPayment = effectivePayments[effectivePayments.length - 1];
-  const lastDateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(lastPayment.eventDate);
-  if (!lastDateMatch) return firstDueDateStr;
-
-  const lastYear = parseInt(lastDateMatch[1], 10);
-  const lastMonth = parseInt(lastDateMatch[2], 10);
-
-  // If last payment was before first due month/year, next due date remains first due date
-  if (lastYear < firstYear || (lastYear === firstYear && lastMonth < firstMonth)) {
-    return firstDueDateStr;
-  }
-
-  // Next due month is one month after last payment month
-  let nextMonth = lastMonth + 1;
-  let nextYear = lastYear;
-  if (nextMonth > 12) {
-    nextMonth = 1;
-    nextYear += 1;
-  }
-
-  const daysInNextMonth = getDaysInMonth(nextYear, nextMonth);
-  const actualDay = Math.min(dueDay, daysInNextMonth);
-
-  const mm = String(nextMonth).padStart(2, "0");
+  const mm = String(targetMonth).padStart(2, "0");
   const dd = String(actualDay).padStart(2, "0");
-  return `${nextYear}-${mm}-${dd}`;
+  return `${targetYear}-${mm}-${dd}`;
 }
 
 /**

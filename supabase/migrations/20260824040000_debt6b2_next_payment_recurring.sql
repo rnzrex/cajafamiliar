@@ -45,19 +45,16 @@ declare
   v_debt public.debts%rowtype;
   v_should_be_active boolean := false;
   v_due_day integer;
-  v_latest_event_date date;
-  v_latest_event_created timestamptz;
+  v_payment_count integer := 0;
+  v_covered_date date;
   v_now_date date := (pg_catalog.now() at time zone 'America/Lima')::date;
   v_now_month integer := extract(month from v_now_date)::integer;
   v_now_year integer := extract(year from v_now_date)::integer;
-  v_event_month integer;
-  v_event_year integer;
+  v_covered_month integer;
+  v_covered_year integer;
   v_is_paid boolean := false;
   v_rec_id text;
 begin
-  -- Set transaction-local flag for authorized internal debt sync
-  perform set_config('app.internal_sync', 'true', true);
-
   select d.*
     into v_debt
     from public.debts as d
@@ -92,25 +89,25 @@ begin
   if v_due_day < 1 then v_due_day := 1; end if;
   if v_due_day > 31 then v_due_day := 31; end if;
 
-  -- Find latest effective qualifying payment (payment or payoff not reversed)
-  select e.event_date, e.created_at
-    into v_latest_event_date, v_latest_event_created
+  -- Count effective qualifying regular payment events (event_type = 'payment' and not reversed)
+  select count(*)
+    into v_payment_count
     from public.debt_events as e
    where e.debt_id = p_debt_id
-     and e.event_type in ('payment', 'payoff')
+     and e.event_type = 'payment'
      and not exists (
        select 1
          from public.debt_events as r
         where r.reversal_of_event_id = e.id
-     )
-   order by e.event_date desc, e.created_at desc, e.id desc
-   limit 1;
+     );
 
-  if v_latest_event_date is not null then
-    v_event_month := extract(month from (v_latest_event_date at time zone 'America/Lima'))::integer;
-    v_event_year := extract(year from (v_latest_event_date at time zone 'America/Lima'))::integer;
+  if v_payment_count > 0 then
+    -- Derive covered contractual cycle: first_due_date + (v_payment_count - 1) months
+    v_covered_date := v_debt.first_due_date + ((v_payment_count - 1) || ' month')::interval;
+    v_covered_month := extract(month from v_covered_date)::integer;
+    v_covered_year := extract(year from v_covered_date)::integer;
 
-    if (v_event_year > v_now_year) or (v_event_year = v_now_year and v_event_month >= v_now_month) then
+    if (v_covered_year > v_now_year) or (v_covered_year = v_now_year and v_covered_month >= v_now_month) then
       v_is_paid := true;
     end if;
   end if;
@@ -149,9 +146,9 @@ begin
     null,
     0,
     true,
-    case when v_is_paid then v_event_month else null end,
-    case when v_is_paid then v_event_year else null end,
-    case when v_is_paid then v_latest_event_created else null end,
+    v_covered_month,
+    v_covered_year,
+    case when v_is_paid then pg_catalog.now() else null end,
     v_debt.id,
     v_debt.first_due_date,
     coalesce(v_debt.currency_code, 'PEN')
@@ -219,15 +216,16 @@ create trigger trg_sync_debt_events_recurring_trigger
   for each row
   execute function public.trg_sync_debt_events_recurring();
 
--- Protection trigger for manual writes to debt-linked recurring payments
+-- Protection trigger for manual writes to debt-linked recurring payments (SECURITY INVOKER)
 create or replace function public.trg_protect_debt_linked_recurring()
 returns trigger
 language plpgsql
-security definer
+security invoker
 set search_path = ''
 as $function$
 begin
-  if current_setting('app.internal_sync', true) = 'true' or pg_trigger_depth() > 1 then
+  -- Allow internal SECURITY DEFINER sync path (running as trusted DB owner) or nested triggers
+  if current_user in ('postgres', 'supabase_admin') or pg_trigger_depth() > 1 then
     return case when tg_op = 'DELETE' then old else new end;
   end if;
 

@@ -11,6 +11,7 @@ import {
   paymentStatus,
 } from "../utils/calculations";
 import { isValidLocalDate } from "../utils/date";
+import { currentDebtPrincipal } from "../utils/debtCalculations";
 import { calculateNextPayment } from "../utils/debtNextPayment";
 import { enablePushNotifications, getPushNotificationState, PushNotificationState, unregisterPushSubscription } from "../services/pushNotifications";
 
@@ -245,26 +246,7 @@ export function RecurringPayments({
     let linkedNextDueDate = "";
     if (linkedDebt) {
       const debtEventsForLinked = debtEvents.filter((e) => e.debtId === linkedDebt.id);
-      const reversedIds = new Set(
-        debtEventsForLinked
-          .filter((e) => e.eventType === "reversal" && e.reversalOfEventId)
-          .map((e) => e.reversalOfEventId!)
-      );
-      const effectiveEvents = debtEventsForLinked.filter(
-        (e) => !reversedIds.has(e.id) && e.eventType !== "reversal"
-      );
-      const principalPaidSum = effectiveEvents
-        .filter(
-          (e) =>
-            e.eventType === "payment" ||
-            e.eventType === "payoff" ||
-            e.eventType === "principal_prepayment"
-        )
-        .reduce((sum, e) => sum + (e.principalDelta < 0 ? Math.abs(e.principalDelta) : 0), 0);
-      const currentPrincipal = Math.max(
-        0,
-        (linkedDebt.openingPrincipalBalance ?? 0) - principalPaidSum
-      );
+      const currentPrincipal = currentDebtPrincipal(linkedDebt, debtEventsForLinked);
 
       const nextPayRes = calculateNextPayment({
         debt: linkedDebt,

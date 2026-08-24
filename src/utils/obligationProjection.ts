@@ -1,6 +1,7 @@
 import type { Debt, DebtEvent, RecurringPayment } from "../types.js";
 import { isPaymentFinished, isPaymentPaidThisMonth, monthlyDueDate } from "./calculations.js";
 import { formatLocalDate, localDateString } from "./date.js";
+import { currentDebtPrincipal } from "./debtCalculations.js";
 import { calculateNextPayment } from "./debtNextPayment.js";
 import type { DebtInstallmentPlanningItem } from "./debtPlanning.js";
 import { formatMonthKeyLabel, getNextMonthKey } from "./debtPlanning.js";
@@ -110,26 +111,7 @@ export function buildObligationProjection({
 
       // Compute canonical current principal for linked debt
       const debtEventsForLinked = debtEvents.filter((e) => e.debtId === linkedDebt.id);
-      const reversedIds = new Set(
-        debtEventsForLinked
-          .filter((e) => e.eventType === "reversal" && e.reversalOfEventId)
-          .map((e) => e.reversalOfEventId!)
-      );
-      const effectiveEvents = debtEventsForLinked.filter(
-        (e) => !reversedIds.has(e.id) && e.eventType !== "reversal"
-      );
-      const principalPaidSum = effectiveEvents
-        .filter(
-          (e) =>
-            e.eventType === "payment" ||
-            e.eventType === "payoff" ||
-            e.eventType === "principal_prepayment"
-        )
-        .reduce((sum, e) => sum + (e.principalDelta < 0 ? Math.abs(e.principalDelta) : 0), 0);
-      const currentPrincipal = Math.max(
-        0,
-        (linkedDebt.openingPrincipalBalance ?? 0) - principalPaidSum
-      );
+      const currentPrincipal = currentDebtPrincipal(linkedDebt, debtEventsForLinked);
 
       const nextPayRes = calculateNextPayment({
         debt: linkedDebt,

@@ -336,8 +336,9 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         recurringPayments: data.recurringPayments,
         debts: data.debts,
         debtPlanningItems,
+        debtEvents: data.debtEvents,
       }),
-    [data.recurringPayments, data.debts, debtPlanningItems]
+    [data.recurringPayments, data.debts, debtPlanningItems, data.debtEvents]
   );
 
   const debtPlanningAlertSummary = useMemo(() => summarizeDebtPlanningAlerts(debtPlanningItems), [debtPlanningItems]);
