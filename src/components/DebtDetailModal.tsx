@@ -803,37 +803,47 @@ export function DebtDetailModal({
                 <p className="text-sm text-slate-500 italic">No hay eventos registrados.</p>
               ) : (
                 <div className="space-y-3">
-                  {allEventsForDebt.map((e) => (
-                    <div
-                      key={e.id}
-                      className={`flex items-center justify-between rounded-2xl border p-4 ${
-                        e.isReversed ? "border-slate-200 bg-slate-100 opacity-60" : "border-slate-200 bg-slate-50"
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900">{formatEventType(e.eventType)}</span>
-                          <span className="text-xs text-slate-500">Fecha: {formatReviewDate(e.eventDate)}</span>
-                          {e.isReversed && (
-                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800">Revertido</span>
+                  {(() => {
+                    const reversedEventIds = new Set(
+                      allEventsForDebt
+                        .filter((e) => e.eventType === "reversal" && e.reversalOfEventId)
+                        .map((e) => e.reversalOfEventId!)
+                    );
+                    return allEventsForDebt.map((e) => {
+                      const isReversed = reversedEventIds.has(e.id);
+                      return (
+                        <div
+                          key={e.id}
+                          className={`flex items-center justify-between rounded-2xl border p-4 ${
+                            isReversed ? "border-slate-200 bg-slate-100 opacity-60" : "border-slate-200 bg-slate-50"
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-900">{formatEventType(e.eventType)}</span>
+                              <span className="text-xs text-slate-500">Fecha: {formatReviewDate(e.eventDate)}</span>
+                              {isReversed && (
+                                <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-800">Revertido</span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Cash: {currencySymbol} {e.cashAmount.toFixed(2)} | Principal Δ: {currencySymbol} {e.principalDelta.toFixed(2)} | Interés: {currencySymbol} {e.interestPaid.toFixed(2)}
+                            </p>
+                            {e.description && <p className="mt-1 text-xs text-slate-600">{e.description}</p>}
+                          </div>
+                          {!isReversed && e.eventType !== "reversal" && canWriteDebt && debt.status === "active" && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenOperation("reversal", e.id)}
+                              className="flex items-center gap-1 rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 shadow-sm"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" /> Revertir
+                            </button>
                           )}
                         </div>
-                        <p className="mt-1 text-xs text-slate-500">
-                          Cash: {currencySymbol} {e.cashAmount.toFixed(2)} | Principal Δ: {currencySymbol} {e.principalDelta.toFixed(2)} | Interés: {currencySymbol} {e.interestPaid.toFixed(2)}
-                        </p>
-                        {e.notes && <p className="mt-1 text-xs text-slate-600">{e.notes}</p>}
-                      </div>
-                      {!e.isReversed && e.eventType !== "reversal" && canWriteDebt && debt.status === "active" && (
-                        <button
-                          type="button"
-                          onClick={() => onOpenOperation("reversal", e.id)}
-                          className="flex items-center gap-1 rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 shadow-sm"
-                        >
-                          <RotateCcw className="h-3.5 w-3.5" /> Revertir
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                      );
+                    });
+                  })()}
                 </div>
               )}
             </div>

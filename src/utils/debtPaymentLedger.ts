@@ -17,7 +17,7 @@ export interface DebtLedgerItem {
   isReversed: boolean;
   isReversal: boolean;
   breakdownComplete: boolean;
-  notes: string;
+  description: string;
 }
 
 export interface DebtProgressSummary {
@@ -45,6 +45,7 @@ function getEventTypeLabel(eventType: string): string {
   switch (eventType) {
     case "payment":
       return "Pago de cuota";
+    case "principal_prepayment":
     case "prepayment":
       return "Amortización de capital";
     case "payoff":
@@ -57,6 +58,14 @@ function getEventTypeLabel(eventType: string): string {
 }
 
 export function buildDebtPaymentLedger(debt: Debt, events: DebtEvent[]): DebtPaymentLedgerResult {
+  // Derive reversed event IDs using real schema reversalOfEventId
+  const reversedIds = new Set<string>();
+  for (const e of events) {
+    if (e.eventType === "reversal" && e.reversalOfEventId) {
+      reversedIds.add(e.reversalOfEventId);
+    }
+  }
+
   // Sort events by eventDate ASC, then createdAt ASC, then id ASC
   const sortedEvents = [...events].sort((a, b) => {
     if (a.eventDate !== b.eventDate) return a.eventDate.localeCompare(b.eventDate);
@@ -74,11 +83,12 @@ export function buildDebtPaymentLedger(debt: Debt, events: DebtEvent[]): DebtPay
 
   for (const event of sortedEvents) {
     const isReversal = event.eventType === "reversal";
-    const isReversed = Boolean(event.isReversed);
+    const isReversed = reversedIds.has(event.id);
     const effective = !isReversal && !isReversed;
 
     if (effective) {
-      runningPrincipal = round2(Math.max(0, runningPrincipal - event.principalDelta));
+      // Production Debt contract: runningPrincipal += principalDelta (where principalDelta is negative for reduction)
+      runningPrincipal = round2(Math.max(0, runningPrincipal + event.principalDelta));
       totalCashPaid = round2(totalCashPaid + event.cashAmount);
       totalInterestPaid = round2(totalInterestPaid + event.interestPaid);
       const otherCosts = round2(event.feesPaid + event.insurancePaid + event.otherCostPaid);
@@ -89,6 +99,7 @@ export function buildDebtPaymentLedger(debt: Debt, events: DebtEvent[]): DebtPay
     }
 
     const totalOtherCostsItem = round2(event.feesPaid + event.insurancePaid + event.otherCostPaid);
+    const userPrincipalReduction = round2(Math.max(0, -event.principalDelta));
 
     items.push({
       id: event.id,
@@ -96,7 +107,7 @@ export function buildDebtPaymentLedger(debt: Debt, events: DebtEvent[]): DebtPay
       formattedDate: formatReviewDate(event.eventDate),
       eventType: getEventTypeLabel(event.eventType),
       cashAmount: event.cashAmount,
-      principalDelta: event.principalDelta,
+      principalDelta: userPrincipalReduction,
       interestPaid: event.interestPaid,
       feesPaid: event.feesPaid,
       insurancePaid: event.insurancePaid,
@@ -106,7 +117,7 @@ export function buildDebtPaymentLedger(debt: Debt, events: DebtEvent[]): DebtPay
       isReversed,
       isReversal,
       breakdownComplete: event.breakdownComplete,
-      notes: event.notes || "",
+      description: event.description || "",
     });
   }
 
@@ -125,7 +136,7 @@ export function buildDebtPaymentLedger(debt: Debt, events: DebtEvent[]): DebtPay
       totalCashPaid,
       totalInterestPaid,
       totalOtherCosts,
-      eventCount: sortedEvents.filter((e) => e.eventType !== "reversal" && !e.isReversed).length,
+      eventCount: sortedEvents.filter((e) => e.eventType !== "reversal" && !reversedIds.has(e.id)).length,
       hasIncompleteBreakdown,
     },
   };

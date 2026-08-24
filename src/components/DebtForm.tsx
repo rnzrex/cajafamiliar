@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ArrowLeft, Check, Plus, Trash2, Shield, CreditCard, Banknote, Building2, Home, PackageCheck, HelpCircle } from "lucide-react";
-import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category } from "../types";
+import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis } from "../types";
 import {
   isCreditCardDebtKind,
   DEBT_KIND_OPTIONS,
@@ -57,6 +57,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [firstDueDate, setFirstDueDate] = useState("");
   const [teaPercent, setTeaPercent] = useState("");
   const [tceaPercent, setTceaPercent] = useState("");
+  const [repaymentStructure, setRepaymentStructure] = useState<DebtRepaymentStructure>("unknown");
+  const [interestCalculationMode, setInterestCalculationMode] = useState<DebtInterestCalculationMode>("unknown");
+  const [periodicRatePercent, setPeriodicRatePercent] = useState("");
+  const [periodicRateBasis, setPeriodicRateBasis] = useState<PeriodicRateBasis>("monthly");
   const [notes, setNotes] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -220,6 +224,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           pledgePledgedValue,
           installments,
           extraCollaterals: collaterals,
+          repaymentStructure,
+          interestCalculationMode,
+          periodicRatePercent,
+          periodicRateBasis,
         });
 
         await createDebt(payload);
@@ -659,6 +667,154 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   </select>
                 </div>
               </div>
+            </div>
+          )}
+
+          {!isCard && (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-bold text-slate-800 mb-1">¿Cómo funciona el pago de esta deuda / empeño?</label>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setRepaymentStructure("open_ended")}
+                    className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                      repaymentStructure === "open_ended"
+                        ? "border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-600/20"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <p className="font-bold text-sm mb-0.5">Sin plazo fijo</p>
+                    <p className="text-[11px] text-slate-500 font-normal">Pago intereses periódicamente y puedo amortizar capital cuando quiera.</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRepaymentStructure("fixed_schedule")}
+                    className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                      repaymentStructure === "fixed_schedule"
+                        ? "border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-600/20"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <p className="font-bold text-sm mb-0.5">Con cuotas / fecha final</p>
+                    <p className="text-[11px] text-slate-500 font-normal">Tengo un cronograma o cuotas fijas programadas.</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setRepaymentStructure("unknown")}
+                    className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                      repaymentStructure === "unknown"
+                        ? "border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-600/20"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <p className="font-bold text-sm mb-0.5">No estoy seguro</p>
+                    <p className="text-[11px] text-slate-500 font-normal">Registraré los detalles más adelante.</p>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-800 mb-1">¿Cómo se calculan los intereses?</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setInterestCalculationMode("contract_periodic_rate")}
+                    className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                      interestCalculationMode === "contract_periodic_rate"
+                        ? "border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-600/20"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <p className="font-bold text-sm mb-0.5">Tasa por período</p>
+                    <p className="text-[11px] text-slate-500 font-normal">Ej. 4% mensual sobre saldo.</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setInterestCalculationMode("tea_estimate")}
+                    className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                      interestCalculationMode === "tea_estimate"
+                        ? "border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-600/20"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <p className="font-bold text-sm mb-0.5">Tasa Efectiva Anual (TEA)</p>
+                    <p className="text-[11px] text-slate-500 font-normal">Estimación según días transcurridos.</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setInterestCalculationMode("manual")}
+                    className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                      interestCalculationMode === "manual"
+                        ? "border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-600/20"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <p className="font-bold text-sm mb-0.5">Registro manual</p>
+                    <p className="text-[11px] text-slate-500 font-normal">Indicaré el interés en cada pago.</p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setInterestCalculationMode("unknown")}
+                    className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                      interestCalculationMode === "unknown"
+                        ? "border-blue-600 bg-blue-50 text-blue-900 ring-2 ring-blue-600/20"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                    }`}
+                  >
+                    <p className="font-bold text-sm mb-0.5">No lo sé</p>
+                    <p className="text-[11px] text-slate-500 font-normal">No calcular sugerencia.</p>
+                  </button>
+                </div>
+              </div>
+
+              {interestCalculationMode === "contract_periodic_rate" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700">Tasa contractual % *</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={periodicRatePercent}
+                      onChange={(e) => setPeriodicRatePercent(e.target.value)}
+                      placeholder="Ej. 4.00"
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700">Periodo de la tasa *</label>
+                    <select
+                      value={periodicRateBasis}
+                      onChange={(e) => setPeriodicRateBasis(e.target.value as PeriodicRateBasis)}
+                      className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                    >
+                      <option value="monthly">Mensual</option>
+                      <option value="biweekly">Quincenal</option>
+                      <option value="weekly">Semanal</option>
+                      <option value="daily">Diario</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              {interestCalculationMode === "tea_estimate" && (
+                <div className="pt-2">
+                  <label className="block text-xs font-bold text-slate-700">TEA % (Tasa Efectiva Anual)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={teaPercent}
+                    onChange={(e) => setTeaPercent(e.target.value)}
+                    placeholder="Ej. 60.10"
+                    className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm sm:w-64"
+                  />
+                </div>
+              )}
             </div>
           )}
 

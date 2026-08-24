@@ -1,6 +1,6 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DebtForm } from "./DebtForm";
 import { DebtDetailModal } from "./DebtDetailModal";
 import { DebtOperationForm } from "./DebtOperationForm";
@@ -93,25 +93,25 @@ describe("DEBT-6B Flexible Debt Management UX Tests", () => {
     currencyCode: flexDebt.currencyCode,
     status: flexDebt.status,
     isArchived: false,
-    currentPrincipal: 4550,
+    currentPrincipal: 4750,
     originalPrincipal: 5000,
     openingPrincipalBalance: 5000,
-    recordedFundPrincipalReduction: 450,
+    recordedFundPrincipalReduction: 250,
     nonFundPrincipalDelta: 0,
-    balanceReductionFromOriginal: 450,
-    balanceReductionPercentFromOriginal: 9,
+    balanceReductionFromOriginal: 250,
+    balanceReductionPercentFromOriginal: 5,
     historicalEconomics: {
-      cashOutflow: 840,
-      principalReduction: 450,
-      economicExpense: 390,
-      interestPaid: 390,
+      cashOutflow: 450,
+      principalReduction: 250,
+      economicExpense: 200,
+      interestPaid: 200,
       feesPaid: 0,
       insurancePaid: 0,
       otherCostPaid: 0,
-      knownDetailedCosts: 390,
+      knownDetailedCosts: 200,
       unclassifiedDebtCost: 0,
-      fundEventCount: 2,
-      paymentCount: 2,
+      fundEventCount: 1,
+      paymentCount: 1,
       prepaymentCount: 0,
       payoffCount: 0,
       inconsistentEventCount: 0,
@@ -164,25 +164,24 @@ describe("DEBT-6B Flexible Debt Management UX Tests", () => {
       eventDate: "2026-02-01",
       eventType: "payment",
       cashAmount: 450,
-      principalDelta: 250,
+      principalDelta: -250, // Real production negative principalDelta
       interestPaid: 200,
       feesPaid: 0,
       insurancePaid: 0,
       otherCostPaid: 0,
       breakdownComplete: true,
-      isReversed: false,
-      reversedByEventId: null,
-      reversesEventId: null,
-      notes: "",
-      createdByUserId: "user-1",
+      movementId: "mov-1",
+      reversalOfEventId: null,
+      description: "Pago cuota 1",
+      registeredByUserId: "user-1",
       createdAt: "2026-02-01T10:00:00Z",
-      updatedAt: "2026-02-01T10:00:00Z",
     },
   ];
 
-  it("1. DebtForm onboarding allows selecting repayment structure and hides installment count for open_ended", () => {
+  it("1. DebtForm onboarding allows selecting repayment structure and interest terms", () => {
     const html = renderToStaticMarkup(
       <DebtForm
+        initialStep="details"
         accounts={mockAccounts}
         categories={mockCategories}
         onSaved={vi.fn()}
@@ -191,7 +190,8 @@ describe("DEBT-6B Flexible Debt Management UX Tests", () => {
       />
     );
 
-    expect(html).toContain("¿Esta deuda ya existía antes de registrarla aquí?");
+    expect(html).toContain("¿Cómo funciona el pago de esta deuda / empeño?");
+    expect(html).toContain("Sin plazo fijo");
   });
 
   it("2. DebtDetailModal renders 'Avance y pagos' tab for open-ended debt with summary cards and ledger history", () => {
@@ -219,7 +219,7 @@ describe("DEBT-6B Flexible Debt Management UX Tests", () => {
     expect(html).toContain("referencia de costo total efectivo");
   });
 
-  it("3. DebtOperationForm uses 'Registrar pago' wording for open-ended debt", () => {
+  it("3. DebtOperationForm uses 'Registrar pago' wording and renders assisted interest suggestion", () => {
     const html = renderToStaticMarkup(
       <DebtOperationForm
         debt={flexDebt}
@@ -238,6 +238,6 @@ describe("DEBT-6B Flexible Debt Management UX Tests", () => {
     );
 
     expect(html).toContain("Registrar pago");
-    expect(html).not.toContain("Pago de cuota — Empeño Laptop Lenovo");
+    expect(html).toContain("¿Cuánto pagaste en total?");
   });
 });

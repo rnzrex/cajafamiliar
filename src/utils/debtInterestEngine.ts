@@ -23,6 +23,7 @@ function round2(val: number): number {
 function parseDaysBetween(startDateStr: string, endDateStr: string): number {
   const start = new Date(startDateStr);
   const end = new Date(endDateStr);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
   const diffTime = end.getTime() - start.getTime();
   const diffDays = Math.floor(diffTime / (1000 * 3600 * 24));
   return Math.max(0, diffDays);
@@ -66,46 +67,71 @@ export function calculateAssistedInterestSuggestion(params: {
   ) {
     const basis = debt.periodicRateBasis || "monthly";
     const ratePercent = debt.periodicRatePercent;
+    const anchorDate = debt.interestAccrualAnchorDate || lastEventDate || debt.trackingStartDate || debt.originDate;
 
-    if (basis === "monthly") {
-      calcInterest = round2(principal * (ratePercent / 100));
-      calculationExplanation = `Calculado con tasa contractual de ${ratePercent}% mensual sobre el saldo pendiente.`;
-    } else if (basis === "biweekly") {
-      calcInterest = round2(principal * (ratePercent / 100));
-      calculationExplanation = `Calculado con tasa contractual de ${ratePercent}% quincenal sobre el saldo pendiente.`;
-    } else if (basis === "weekly") {
-      calcInterest = round2(principal * (ratePercent / 100));
-      calculationExplanation = `Calculado con tasa contractual de ${ratePercent}% semanal sobre el saldo pendiente.`;
-    } else if (basis === "daily") {
-      const anchorDate = lastEventDate || debt.trackingStartDate || debt.originDate || paymentDate;
-      const days = Math.max(1, parseDaysBetween(anchorDate, paymentDate));
-      calcInterest = round2(principal * (ratePercent / 100) * days);
-      calculationExplanation = `Calculado con tasa contractual de ${ratePercent}% diaria sobre el saldo pendiente (${days} días).`;
+    if (basis === "daily") {
+      if (anchorDate && paymentDate && paymentDate > anchorDate) {
+        const days = parseDaysBetween(anchorDate, paymentDate);
+        if (days > 0) {
+          calcInterest = round2(principal * (ratePercent / 100) * days);
+          calculationSource = "contract_periodic_rate";
+          certainty = "exact_rate";
+          calculationExplanation = `Calculado con tasa contractual de ${ratePercent}% diaria sobre el saldo pendiente (${days} días).`;
+        } else {
+          certainty = "insufficient_info";
+          calculationExplanation = "No se puede calcular el período para tasa diaria sin fecha anterior válida.";
+        }
+      } else {
+        certainty = "insufficient_info";
+        calculationExplanation = "No se puede calcular el período para tasa diaria sin fecha anterior válida.";
+      }
+    } else {
+      // Monthly, biweekly, weekly
+      const expectedDays = basis === "monthly" ? 30 : basis === "biweekly" ? 14 : 7;
+      const elapsedDays = anchorDate && paymentDate && paymentDate > anchorDate ? parseDaysBetween(anchorDate, paymentDate) : null;
+
+      if (elapsedDays === null || (elapsedDays >= Math.floor(expectedDays * 0.7) && elapsedDays <= Math.ceil(expectedDays * 1.5)) || nextInstallment) {
+        calcInterest = round2(principal * (ratePercent / 100));
+        calculationSource = "contract_periodic_rate";
+        certainty = "exact_rate";
+        calculationExplanation = `Calculado con tasa contractual de ${ratePercent}% ${basis === "monthly" ? "mensual" : basis === "biweekly" ? "quincenal" : "semanal"} sobre el saldo pendiente.`;
+      } else {
+        // Irregular or ambiguous elapsed period -> downgrade to insufficient_info
+        certainty = "insufficient_info";
+        calculationExplanation = `El período transcurrido (${elapsedDays} días) no coincide con un período contractual regular (${basis}).`;
+      }
     }
-    calculationSource = "contract_periodic_rate";
-    certainty = "exact_rate";
   }
-  // Priority 3: TEA Estimate
+  // Priority 3: TEA Estimate (requires explicit known elapsed days > 0)
   else if (
     (debt.interestCalculationMode === "tea_estimate" || (debt.teaPercent != null && debt.teaPercent > 0)) &&
     debt.interestCalculationMode !== "manual"
   ) {
-    const anchorDate = lastEventDate || debt.trackingStartDate || debt.originDate || paymentDate;
-    const days = parseDaysBetween(anchorDate, paymentDate);
-    const effectiveDays = days > 0 ? days : 30; // default 30 days if same day or missing
-    const teaDecimal = (debt.teaPercent || 0) / 100;
-    const periodRate = Math.pow(1 + teaDecimal, effectiveDays / 365) - 1;
-    calcInterest = round2(principal * periodRate);
-    calculationSource = "tea_estimate";
-    certainty = "tea_estimate";
-    calculationExplanation = `Estimación calculada con TEA (${debt.teaPercent}% anual) para ${effectiveDays} días. TCEA no se utiliza para calcular el interés del pago.`;
+    const anchorDate = debt.interestAccrualAnchorDate || lastEventDate || debt.trackingStartDate || debt.originDate;
+    if (anchorDate && paymentDate && paymentDate > anchorDate) {
+      const days = parseDaysBetween(anchorDate, paymentDate);
+      if (days > 0) {
+        const teaDecimal = (debt.teaPercent || 0) / 100;
+        const periodRate = Math.pow(1 + teaDecimal, days / 365) - 1;
+        calcInterest = round2(principal * periodRate);
+        calculationSource = "tea_estimate";
+        certainty = "tea_estimate";
+        calculationExplanation = `Estimación calculada con TEA (${debt.teaPercent}% anual) para ${days} días. TCEA no se utiliza para calcular el interés del pago.`;
+      } else {
+        certainty = "insufficient_info";
+        calculationExplanation = "No se puede calcular estimación TEA sin un período transcurrido de días válido.";
+      }
+    } else {
+      certainty = "insufficient_info";
+      calculationExplanation = "No se puede calcular estimación TEA sin un período transcurrido de días válido.";
+    }
   }
-  // Priority 4: Manual / Unknown
+  // Priority 4: Manual / Unknown / Insufficient Info
   else {
     calcInterest = 0;
     calculationSource = "manual";
     certainty = "insufficient_info";
-    calculationExplanation = "No tenemos suficiente información para calcular el interés automáticamente.";
+    calculationExplanation = "No tenemos suficiente información contractual para proponer una distribución de interés y capital.";
   }
 
   // Waterfall logic
@@ -115,19 +141,20 @@ export function calculateAssistedInterestSuggestion(params: {
   let warningMessage: string | null = null;
 
   if (certainty === "insufficient_info") {
+    // REQUIREMENT 4: NEVER FABRICATE PRINCIPAL WHEN INTEREST IS UNKNOWN
     suggestedInterest = 0;
-    suggestedPrincipal = cashPaid;
-    principalAfterPayment = round2(Math.max(0, principal - cashPaid));
+    suggestedPrincipal = 0;
+    principalAfterPayment = principal;
   } else if (cashPaid >= calcInterest) {
     suggestedInterest = calcInterest;
     suggestedPrincipal = round2(cashPaid - calcInterest);
     principalAfterPayment = round2(Math.max(0, principal - suggestedPrincipal));
   } else {
-    // Payment is smaller than calculated interest
+    // Underpaid interest: payment does not cover calculated interest
     suggestedInterest = cashPaid;
     suggestedPrincipal = 0;
     principalAfterPayment = principal;
-    warningMessage = `El pago ingresado (${currencySymbol} ${cashPaid.toFixed(2)}) no cubre el interés calculado (${currencySymbol} ${calcInterest.toFixed(2)}).`;
+    warningMessage = `El pago ingresado (${currencySymbol} ${cashPaid.toFixed(2)}) no cubre el interés calculado (${currencySymbol} ${calcInterest.toFixed(2)}). El capital no se reduce.`;
   }
 
   return {

@@ -152,7 +152,9 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
     trackingStartDate: params.trackingStartDate || todayStr,
     originalPrincipal: finalOriginalPrincipal,
     openingPrincipalBalance: numOwed,
-    plannedInstallmentCount: params.plannedInstallmentCount ? Number(params.plannedInstallmentCount) : null,
+    plannedInstallmentCount: params.repaymentStructure === "open_ended"
+      ? null
+      : (params.plannedInstallmentCount ? Number(params.plannedInstallmentCount) : null),
     plannedInstallmentAmount: params.plannedInstallmentAmount ? Number(params.plannedInstallmentAmount) : null,
     installmentAmountMode: params.installmentAmountMode || "unknown",
     paymentFrequency: params.paymentFrequency || null,

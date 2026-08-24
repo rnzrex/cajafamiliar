@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Debt, DebtEvent } from "../types";
 import { buildDebtPaymentLedger } from "./debtPaymentLedger";
+import { currentDebtPrincipal } from "./debtCalculations";
 
 describe("DEBT-6B Debt Payment Ledger Tests", () => {
   const baseDebt: Debt = {
@@ -33,7 +34,7 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
     periodicRateBasis: "monthly",
   };
 
-  it("1. calculates running principal balance and summary stats for sequential payments", () => {
+  it("1. calculates running principal balance using negative principalDelta and matches currentDebtPrincipal invariant", () => {
     const events: DebtEvent[] = [
       {
         id: "evt-1",
@@ -41,19 +42,17 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
         eventDate: "2026-02-01",
         eventType: "payment",
         cashAmount: 450,
-        principalDelta: 250,
+        principalDelta: -250, // Real production negative principalDelta
         interestPaid: 200,
         feesPaid: 0,
         insurancePaid: 0,
         otherCostPaid: 0,
         breakdownComplete: true,
-        isReversed: false,
-        reversedByEventId: null,
-        reversesEventId: null,
-        notes: "",
-        createdByUserId: "user-1",
+        movementId: "mov-1",
+        reversalOfEventId: null,
+        description: "Pago de cuota 1",
+        registeredByUserId: "user-1",
         createdAt: "2026-02-01T10:00:00Z",
-        updatedAt: "2026-02-01T10:00:00Z",
       },
       {
         id: "evt-2",
@@ -61,19 +60,17 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
         eventDate: "2026-03-01",
         eventType: "payment",
         cashAmount: 390,
-        principalDelta: 200,
+        principalDelta: -200, // Real production negative principalDelta
         interestPaid: 190,
         feesPaid: 0,
         insurancePaid: 0,
         otherCostPaid: 0,
         breakdownComplete: true,
-        isReversed: false,
-        reversedByEventId: null,
-        reversesEventId: null,
-        notes: "",
-        createdByUserId: "user-1",
+        movementId: "mov-2",
+        reversalOfEventId: null,
+        description: "Pago de cuota 2",
+        registeredByUserId: "user-1",
         createdAt: "2026-03-01T10:00:00Z",
-        updatedAt: "2026-03-01T10:00:00Z",
       },
     ];
 
@@ -81,6 +78,7 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
 
     expect(ledger.items).toHaveLength(2);
     expect(ledger.items[0].principalBalanceAfter).toBe(4750);
+    expect(ledger.items[0].principalDelta).toBe(250); // Display positive user reduction
     expect(ledger.items[0].formattedDate).toBe("01/02/2026");
     expect(ledger.items[1].principalBalanceAfter).toBe(4550);
     expect(ledger.items[1].formattedDate).toBe("01/03/2026");
@@ -91,6 +89,9 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
     expect(ledger.summary.pctReduced).toBe(9);
     expect(ledger.summary.totalCashPaid).toBe(840);
     expect(ledger.summary.totalInterestPaid).toBe(390);
+
+    // Invariant requirement check: ledger currentPrincipal MUST equal currentDebtPrincipal(debt, events)
+    expect(ledger.summary.currentPrincipal).toBe(currentDebtPrincipal(baseDebt, events));
   });
 
   it("2. sorts backdated events chronologically by eventDate", () => {
@@ -101,19 +102,17 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
         eventDate: "2026-03-01",
         eventType: "payment",
         cashAmount: 300,
-        principalDelta: 100,
+        principalDelta: -100,
         interestPaid: 200,
         feesPaid: 0,
         insurancePaid: 0,
         otherCostPaid: 0,
         breakdownComplete: true,
-        isReversed: false,
-        reversedByEventId: null,
-        reversesEventId: null,
-        notes: "",
-        createdByUserId: "user-1",
+        movementId: "mov-late",
+        reversalOfEventId: null,
+        description: "Pago marzo",
+        registeredByUserId: "user-1",
         createdAt: "2026-03-05T10:00:00Z",
-        updatedAt: "2026-03-05T10:00:00Z",
       },
       {
         id: "evt-early-added",
@@ -121,19 +120,17 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
         eventDate: "2026-02-01",
         eventType: "payment",
         cashAmount: 400,
-        principalDelta: 200,
+        principalDelta: -200,
         interestPaid: 200,
         feesPaid: 0,
         insurancePaid: 0,
         otherCostPaid: 0,
         breakdownComplete: true,
-        isReversed: false,
-        reversedByEventId: null,
-        reversesEventId: null,
-        notes: "",
-        createdByUserId: "user-1",
-        createdAt: "2026-03-06T10:00:00Z", // Added later in real time but has earlier eventDate
-        updatedAt: "2026-03-06T10:00:00Z",
+        movementId: "mov-early",
+        reversalOfEventId: null,
+        description: "Pago febrero",
+        registeredByUserId: "user-1",
+        createdAt: "2026-03-06T10:00:00Z",
       },
     ];
 
@@ -143,15 +140,35 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
     expect(ledger.items[0].principalBalanceAfter).toBe(4800);
     expect(ledger.items[1].id).toBe("evt-late-added");
     expect(ledger.items[1].principalBalanceAfter).toBe(4700);
+
+    expect(ledger.summary.currentPrincipal).toBe(currentDebtPrincipal(baseDebt, events));
   });
 
-  it("3. excludes reversed events from running principal and cash totals", () => {
+  it("3. excludes reversed events from running principal using real reversalOfEventId reversal event", () => {
     const events: DebtEvent[] = [
       {
-        id: "evt-reversed",
+        id: "evt-target",
         debtId: "debt-ledger-1",
         eventDate: "2026-02-01",
         eventType: "payment",
+        cashAmount: 1000,
+        principalDelta: -800,
+        interestPaid: 200,
+        feesPaid: 0,
+        insurancePaid: 0,
+        otherCostPaid: 0,
+        breakdownComplete: true,
+        movementId: "mov-target",
+        reversalOfEventId: null,
+        description: "Pago inicial",
+        registeredByUserId: "user-1",
+        createdAt: "2026-02-01T10:00:00Z",
+      },
+      {
+        id: "evt-reversal",
+        debtId: "debt-ledger-1",
+        eventDate: "2026-02-02",
+        eventType: "reversal",
         cashAmount: 1000,
         principalDelta: 800,
         interestPaid: 200,
@@ -159,13 +176,11 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
         insurancePaid: 0,
         otherCostPaid: 0,
         breakdownComplete: true,
-        isReversed: true,
-        reversedByEventId: "evt-reversal",
-        reversesEventId: null,
-        notes: "",
-        createdByUserId: "user-1",
-        createdAt: "2026-02-01T10:00:00Z",
-        updatedAt: "2026-02-01T10:00:00Z",
+        movementId: "mov-reversal",
+        reversalOfEventId: "evt-target", // Points to reversed event ID
+        description: "Reversión por error",
+        registeredByUserId: "user-1",
+        createdAt: "2026-02-02T10:00:00Z",
       },
     ];
 
@@ -174,6 +189,8 @@ describe("DEBT-6B Debt Payment Ledger Tests", () => {
     expect(ledger.summary.currentPrincipal).toBe(5000);
     expect(ledger.summary.totalCashPaid).toBe(0);
     expect(ledger.summary.totalPrincipalAmortized).toBe(0);
-    expect(ledger.items[0].isReversed).toBe(true);
+    expect(ledger.items.find((i) => i.id === "evt-target")?.isReversed).toBe(true);
+
+    expect(ledger.summary.currentPrincipal).toBe(currentDebtPrincipal(baseDebt, events));
   });
 });

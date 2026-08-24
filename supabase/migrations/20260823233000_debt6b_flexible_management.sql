@@ -9,7 +9,8 @@ alter table public.debts
   add column if not exists repayment_structure text not null default 'unknown',
   add column if not exists interest_calculation_mode text not null default 'unknown',
   add column if not exists periodic_rate_percent numeric null,
-  add column if not exists periodic_rate_basis text null;
+  add column if not exists periodic_rate_basis text null,
+  add column if not exists interest_accrual_anchor_date date null;
 
 alter table public.debts
   drop constraint if exists debts_repayment_structure_check,
@@ -32,7 +33,7 @@ alter table public.debts
     check (periodic_rate_basis is null or periodic_rate_basis in ('monthly', 'biweekly', 'weekly', 'daily'));
 
 -- ============================================================
--- 2. CREATE_DEBT_V1 UPDATE (FLEXIBLE TERMS PARAMS)
+-- 2. CREATE_DEBT_V1 (EXTENDED 25-ARGUMENT IMPLEMENTATION)
 -- ============================================================
 
 create or replace function public.create_debt_v1(
@@ -57,10 +58,10 @@ create or replace function public.create_debt_v1(
   p_notes text,
   p_installments jsonb,
   p_collaterals jsonb,
-  p_repayment_structure text default 'unknown',
-  p_interest_calculation_mode text default 'unknown',
-  p_periodic_rate_percent numeric default null,
-  p_periodic_rate_basis text default null
+  p_repayment_structure text,
+  p_interest_calculation_mode text,
+  p_periodic_rate_percent numeric,
+  p_periodic_rate_basis text
 )
 returns pg_catalog.jsonb
 language plpgsql
@@ -83,7 +84,6 @@ declare
   v_expected_insurance numeric;
   v_installments_json jsonb := '[]'::jsonb;
   v_collaterals_json jsonb := '[]'::jsonb;
-  v_count integer;
   v_repayment_structure text := coalesce(p_repayment_structure, 'unknown');
   v_interest_calc_mode text := coalesce(p_interest_calculation_mode, 'unknown');
 begin
@@ -335,7 +335,49 @@ end;
 $function$;
 
 -- ============================================================
--- 3. UPDATE_DEBT_TERMS_V1 (SECURE TERMS UPDATE RPC)
+-- 2B. CREATE_DEBT_V1 (LEGACY 21-ARGUMENT BACKWARD COMPATIBLE WRAPPER)
+-- ============================================================
+
+create or replace function public.create_debt_v1(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_name text,
+  p_creditor_name text,
+  p_debt_kind text,
+  p_currency_code text,
+  p_origin_date date,
+  p_tracking_start_date date,
+  p_original_principal numeric,
+  p_opening_principal_balance numeric,
+  p_planned_installment_count integer,
+  p_planned_installment_amount numeric,
+  p_installment_amount_mode text,
+  p_payment_frequency text,
+  p_custom_frequency_days integer,
+  p_first_due_date date,
+  p_tea_percent numeric,
+  p_tcea_percent numeric,
+  p_notes text,
+  p_installments jsonb,
+  p_collaterals jsonb
+)
+returns pg_catalog.jsonb
+language sql
+security definer
+set search_path = ''
+as $$
+  select public.create_debt_v1(
+    p_household_id, p_debt_id, p_name, p_creditor_name, p_debt_kind, p_currency_code,
+    p_origin_date, p_tracking_start_date, p_original_principal, p_opening_principal_balance,
+    p_planned_installment_count, p_planned_installment_amount, p_installment_amount_mode,
+    p_payment_frequency, p_custom_frequency_days, p_first_due_date, p_tea_percent, p_tcea_percent,
+    p_notes, p_installments, p_collaterals,
+    'unknown', 'unknown', null, null
+  );
+$$;
+
+-- ============================================================
+-- 3. UPDATE_DEBT_TERMS_V1 (SECURE TERMS UPDATE RPC WITH EXPLICIT CLEAR FLAGS)
 -- ============================================================
 
 create or replace function public.update_debt_terms_v1(
@@ -348,7 +390,13 @@ create or replace function public.update_debt_terms_v1(
   p_tea_percent numeric default null,
   p_tcea_percent numeric default null,
   p_payment_frequency text default null,
-  p_custom_frequency_days integer default null
+  p_custom_frequency_days integer default null,
+  p_interest_accrual_anchor_date date default null,
+  p_clear_periodic_rate boolean default false,
+  p_clear_tea boolean default false,
+  p_clear_tcea boolean default false,
+  p_clear_frequency boolean default false,
+  p_clear_anchor boolean default false
 )
 returns pg_catalog.jsonb
 language plpgsql
@@ -409,12 +457,41 @@ begin
   update public.debts as d
      set repayment_structure = coalesce(p_repayment_structure, d.repayment_structure),
          interest_calculation_mode = coalesce(p_interest_calculation_mode, d.interest_calculation_mode),
-         periodic_rate_percent = case when p_periodic_rate_percent is not null then p_periodic_rate_percent else d.periodic_rate_percent end,
-         periodic_rate_basis = case when p_periodic_rate_basis is not null then p_periodic_rate_basis else d.periodic_rate_basis end,
-         tea_percent = case when p_tea_percent is not null then p_tea_percent else d.tea_percent end,
-         tcea_percent = case when p_tcea_percent is not null then p_tcea_percent else d.tcea_percent end,
-         payment_frequency = case when p_payment_frequency is not null then p_payment_frequency else d.payment_frequency end,
-         custom_frequency_days = case when p_custom_frequency_days is not null then p_custom_frequency_days else d.custom_frequency_days end,
+         periodic_rate_percent = case
+           when coalesce(p_clear_periodic_rate, false) then null
+           when p_periodic_rate_percent is not null then p_periodic_rate_percent
+           else d.periodic_rate_percent
+         end,
+         periodic_rate_basis = case
+           when coalesce(p_clear_periodic_rate, false) then null
+           when p_periodic_rate_basis is not null then p_periodic_rate_basis
+           else d.periodic_rate_basis
+         end,
+         tea_percent = case
+           when coalesce(p_clear_tea, false) then null
+           when p_tea_percent is not null then p_tea_percent
+           else d.tea_percent
+         end,
+         tcea_percent = case
+           when coalesce(p_clear_tcea, false) then null
+           when p_tcea_percent is not null then p_tcea_percent
+           else d.tcea_percent
+         end,
+         payment_frequency = case
+           when coalesce(p_clear_frequency, false) then null
+           when p_payment_frequency is not null then p_payment_frequency
+           else d.payment_frequency
+         end,
+         custom_frequency_days = case
+           when coalesce(p_clear_frequency, false) then null
+           when p_custom_frequency_days is not null then p_custom_frequency_days
+           else d.custom_frequency_days
+         end,
+         interest_accrual_anchor_date = case
+           when coalesce(p_clear_anchor, false) then null
+           when p_interest_accrual_anchor_date is not null then p_interest_accrual_anchor_date
+           else d.interest_accrual_anchor_date
+         end,
          updated_at = now()
    where d.id = p_debt_id
      and d.household_id = p_household_id
@@ -428,17 +505,26 @@ $function$;
 -- 4. PRIVILEGIOS Y SEGURIDAD
 -- ============================================================
 
+-- Revoke & Grant for legacy 21-argument create_debt_v1
+revoke all privileges on function public.create_debt_v1(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, jsonb, jsonb)
+  from public, anon, service_role;
+
+grant execute on function public.create_debt_v1(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, jsonb, jsonb)
+  to authenticated;
+
+-- Revoke & Grant for extended 25-argument create_debt_v1
 revoke all privileges on function public.create_debt_v1(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, jsonb, jsonb, text, text, numeric, text)
   from public, anon, service_role;
 
 grant execute on function public.create_debt_v1(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, jsonb, jsonb, text, text, numeric, text)
   to authenticated;
 
-revoke all privileges on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer)
+-- Revoke & Grant for update_debt_terms_v1
+revoke all privileges on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, date, boolean, boolean, boolean, boolean, boolean)
   from public, anon, service_role;
 
-grant execute on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer)
+grant execute on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, date, boolean, boolean, boolean, boolean, boolean)
   to authenticated;
 
-comment on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer) is
-  'DEBT-6B: Permite actualizar únicamente los términos financieros y estructura de pago de una deuda activa (repayment_structure, interest_calculation_mode, periodic_rate_percent, periodic_rate_basis, tea_percent, tcea_percent, payment_frequency, custom_frequency_days). No altera los eventos de deuda pasados ni crea movimientos.';
+comment on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, date, boolean, boolean, boolean, boolean, boolean) is
+  'DEBT-6B: Permite actualizar o limpiar los términos financieros y estructura de pago de una deuda activa (repayment_structure, interest_calculation_mode, periodic_rate_percent, periodic_rate_basis, tea_percent, tcea_percent, payment_frequency, custom_frequency_days, interest_accrual_anchor_date).';

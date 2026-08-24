@@ -84,6 +84,7 @@ export interface Debt {
   interestCalculationMode?: DebtInterestCalculationMode;
   periodicRatePercent?: number | null;
   periodicRateBasis?: PeriodicRateBasis | null;
+  interestAccrualAnchorDate?: string | null;
 }
 
 export interface DebtEvent {
@@ -98,17 +99,11 @@ export interface DebtEvent {
   insurancePaid: number;
   otherCostPaid: number;
   breakdownComplete: boolean;
-  movementId?: string | null;
-  reversalOfEventId?: string | null;
-  reversedByEventId?: string | null;
-  reversesEventId?: string | null;
-  isReversed?: boolean;
-  notes?: string;
-  description?: string;
-  registeredByUserId?: string;
-  createdByUserId?: string;
+  movementId: string | null;
+  reversalOfEventId: string | null;
+  description: string;
+  registeredByUserId: string;
   createdAt: string;
-  updatedAt?: string;
 }
 
 export interface DebtScheduleVersion {

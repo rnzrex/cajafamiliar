@@ -102,7 +102,26 @@ describe("DEBT-6B Assisted Interest Engine Tests", () => {
     expect(suggestion.calcInterest).toBeGreaterThan(0);
   });
 
-  it("4. manual/unknown fallback provides no fabricated suggestion", () => {
+  it("4. TEA without known period does NOT invent 30 days", () => {
+    const debt: Debt = {
+      ...baseDebt,
+      interestCalculationMode: "tea_estimate",
+      teaPercent: 60.1,
+    };
+
+    const suggestion = calculateAssistedInterestSuggestion({
+      debt,
+      currentPrincipal: 1000,
+      paymentDate: "2026-01-01", // payment date on same day as origin -> 0 days
+      cashAmount: 100,
+    });
+
+    expect(suggestion.certainty).toBe("insufficient_info");
+    expect(suggestion.suggestedInterest).toBe(0);
+    expect(suggestion.suggestedPrincipal).toBe(0);
+  });
+
+  it("5. manual/unknown fallback provides no fabricated suggestion (suggestedInterest = 0, suggestedPrincipal = 0)", () => {
     const suggestion = calculateAssistedInterestSuggestion({
       debt: baseDebt,
       currentPrincipal: 2000,
@@ -112,11 +131,12 @@ describe("DEBT-6B Assisted Interest Engine Tests", () => {
 
     expect(suggestion.certainty).toBe("insufficient_info");
     expect(suggestion.calcInterest).toBe(0);
+    expect(suggestion.suggestedInterest).toBe(0);
+    expect(suggestion.suggestedPrincipal).toBe(0);
     expect(suggestion.calculationExplanation).toContain("No tenemos suficiente información");
-    expect(suggestion.suggestedPrincipal).toBe(250);
   });
 
-  it("5. formats currency correctly for USD debt", () => {
+  it("6. formats currency correctly for USD debt", () => {
     const debt: Debt = {
       ...baseDebt,
       currencyCode: "USD",
@@ -129,6 +149,7 @@ describe("DEBT-6B Assisted Interest Engine Tests", () => {
       debt,
       currentPrincipal: 1000,
       paymentDate: "2026-03-01",
+      lastEventDate: "2026-02-01",
       cashAmount: 20,
     });
 
