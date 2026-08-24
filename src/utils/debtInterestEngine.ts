@@ -251,7 +251,7 @@ export function calculateAssistedInterestSuggestion(params: {
     suggestedInterest = cashPaid;
     suggestedPrincipal = 0;
     principalAfterPayment = principal;
-    warningMessage = `El pago ingresado (${currencySymbol} ${cashPaid.toFixed(2)}) no cubre el interés calculated (${currencySymbol} ${calcInterest.toFixed(2)}). El capital no se reduce.`;
+    warningMessage = `El pago ingresado (${currencySymbol} ${cashPaid.toFixed(2)}) no cubre el interés calculado (${currencySymbol} ${calcInterest.toFixed(2)}). El capital no se reduce.`;
   }
 
   return {
