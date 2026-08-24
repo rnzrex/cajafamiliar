@@ -46,35 +46,43 @@ begin
     select 1
       from public.debt_events as e
      where e.debt_id = p_debt_id
+       and e.household_id = p_household_id
   ) or exists (
     select 1
       from public.credit_card_entries as cce
      where cce.debt_id = p_debt_id
+       and cce.household_id = p_household_id
   ) or exists (
     select 1
       from public.credit_card_statements as ccs
      where ccs.debt_id = p_debt_id
+       and ccs.household_id = p_household_id
   ) then
     raise exception 'DEBT_HAS_HISTORY';
   end if;
 
   -- Clean up setup-only dependent records
   delete from public.debt_installments
-   where schedule_version_id in (
-     select id from public.debt_schedule_versions where debt_id = p_debt_id
-   );
+   where household_id = p_household_id
+     and schedule_version_id in (
+       select id from public.debt_schedule_versions where debt_id = p_debt_id and household_id = p_household_id
+     );
 
   delete from public.debt_schedule_versions
-   where debt_id = p_debt_id;
+   where debt_id = p_debt_id
+     and household_id = p_household_id;
 
   delete from public.debt_collaterals
-   where debt_id = p_debt_id;
+   where debt_id = p_debt_id
+     and household_id = p_household_id;
 
   delete from public.recurring_payments
-   where linked_debt_id = p_debt_id;
+   where linked_debt_id = p_debt_id
+     and household_id = p_household_id;
 
   delete from public.credit_card_profiles
-   where debt_id = p_debt_id;
+   where debt_id = p_debt_id
+     and household_id = p_household_id;
 
   delete from public.debts
    where id = p_debt_id

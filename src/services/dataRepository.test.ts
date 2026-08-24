@@ -295,4 +295,12 @@ describe("serializers de dataRepository", () => {
       expect(rangesQueried.account_reconciliation_movements).toEqual(["0..999", "1000..1999"]);
     });
   });
+
+  describe("deletePristineDebt contract validation", () => {
+    it("no cae a local cuando Supabase no está configurado", async () => {
+      const { deletePristineDebt } = await import("./dataRepository");
+      await expect(deletePristineDebt({ debtId: "d-1" })).rejects.toBeInstanceOf(DebtOperationUnavailableError);
+    });
+  });
 });
+

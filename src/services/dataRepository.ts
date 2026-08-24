@@ -773,7 +773,10 @@ export async function deletePristineDebt(input: DeletePristineDebtInput): Promis
     p_debt_id: input.debtId,
   });
   if (error) throw mapDebtOperationError(error.message) ?? error;
-  return Boolean(data && typeof data === "object" && (data as any).deleted);
+  if (!data || typeof data !== "object" || (data as any).deleted !== true || (data as any).success !== true) {
+    throw new Error("La RPC delete_pristine_debt_v1 no devolvió un resultado válido.");
+  }
+  return true;
 }
 
 export function toDebtPaymentRpcArgs(input: DebtPaymentInput) {
