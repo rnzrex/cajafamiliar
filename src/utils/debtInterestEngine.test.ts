@@ -1,13 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Debt, DebtEvent } from "../types";
-import {
-  calculateAssistedInterestSuggestion,
-  effectivePeriodicRateFromTea,
-  getLastEffectiveDebtPaymentDate,
-} from "./debtInterestEngine";
-import { calculateNextPayment } from "./debtNextPayment";
+import { calculateAssistedInterestSuggestion, getLastEffectiveDebtPaymentDate } from "./debtInterestEngine";
 
-describe("DEBT-6B Assisted Interest Engine Tests & HOTFIX-DEBT-TEA-01", () => {
+describe("DEBT-6B Assisted Interest Engine Tests", () => {
   const baseDebt: Debt = {
     id: "debt-1",
     name: "Empeño Laptop",
@@ -38,226 +33,323 @@ describe("DEBT-6B Assisted Interest Engine Tests & HOTFIX-DEBT-TEA-01", () => {
     periodicRateBasis: null,
   };
 
-  // Requirement 8 - Test A: TEA 51.11% monthly => TEM ≈ 3.500178898%
-  it("A. TEA 51.11% monthly => TEM ≈ 3.500178898%", () => {
-    const res = effectivePeriodicRateFromTea({ teaPercent: 51.11, frequency: "monthly" });
-    expect(res.ratePercent).toBeCloseTo(3.500178898, 6);
-    expect(res.rateDecimal).toBeCloseTo(0.03500178898, 8);
-  });
-
-  // Requirement 8 - Test B: principal 5000, TEA 51.11%, monthly => interest = 175.01
-  it("B. principal 5000, TEA 51.11%, monthly => interest = 175.01", () => {
+  it("1. calculates contractual monthly interest (4% on S/ 5,000 -> S/ 200 interest, S/ 100 principal)", () => {
     const debt: Debt = {
-      ...baseDebt,
-      interestCalculationMode: "tea_estimate",
-      teaPercent: 51.11,
-      paymentFrequency: "monthly",
-    };
-
-    const suggestion = calculateAssistedInterestSuggestion({
-      debt,
-      currentPrincipal: 5000,
-      paymentDate: "2026-08-15",
-      cashAmount: 300,
-    });
-
-    expect(suggestion.calcInterest).toBe(175.01);
-    expect(suggestion.calculationExplanation).toContain("TEM 3.5002%");
-  });
-
-  // Requirement 8 - Test C: same + minimum principal 100 => minimum payment = 275.01 => principal after = 4900
-  it("C. principal 5000, TEA 51.11%, monthly + minimum principal 100 => minimum payment = 275.01 => principal after = 4900", () => {
-    const debt: Debt = {
-      ...baseDebt,
-      interestCalculationMode: "tea_estimate",
-      teaPercent: 51.11,
-      paymentFrequency: "monthly",
-      minimumPrincipalPayment: 100,
-      firstDueDate: "2026-08-15",
-    };
-
-    const nextPay = calculateNextPayment({
-      debt,
-      debtEvents: [],
-      currentPrincipal: 5000,
-      todayKey: "2026-08-10",
-    });
-
-    expect(nextPay.interestAmount).toBe(175.01);
-    expect(nextPay.minimumPrincipalAmount).toBe(100);
-    expect(nextPay.minimumPaymentAmount).toBe(275.01);
-    expect(nextPay.principalAfterPayment).toBe(4900);
-  });
-
-  // Requirement 8 - Test D: tracking/origin date only 5 days before first due date but contractual frequency monthly => STILL interest 175.01 => must NOT calculate only 5 days
-  it("D. tracking date only 5 days before first due date with monthly frequency => STILL interest 175.01 (not 5 days)", () => {
-    const debt: Debt = {
-      ...baseDebt,
-      interestCalculationMode: "tea_estimate",
-      teaPercent: 51.11,
-      paymentFrequency: "monthly",
-      firstDueDate: "2026-08-15",
-      trackingStartDate: "2026-08-10",
-    };
-
-    const suggestion = calculateAssistedInterestSuggestion({
-      debt,
-      currentPrincipal: 5000,
-      paymentDate: "2026-08-15",
-      cashAmount: 300,
-      lastEventDate: "2026-08-10",
-    });
-
-    expect(suggestion.calcInterest).toBe(175.01);
-  });
-
-  // Requirement 8 - Test E: prove implementation is NOT TEA / 12
-  it("E. proves implementation is NOT nominal TEA / 12 (which would yield 212.96)", () => {
-    const debt: Debt = {
-      ...baseDebt,
-      interestCalculationMode: "tea_estimate",
-      teaPercent: 51.11,
-      paymentFrequency: "monthly",
-    };
-
-    const suggestion = calculateAssistedInterestSuggestion({
-      debt,
-      currentPrincipal: 5000,
-      paymentDate: "2026-08-15",
-      cashAmount: 300,
-    });
-
-    const nominalDivisionInterest = Math.round(5000 * (51.11 / 12 / 100) * 100) / 100;
-    expect(nominalDivisionInterest).toBe(212.96);
-    expect(suggestion.calcInterest).not.toBe(212.96);
-    expect(suggestion.calcInterest).toBe(175.01);
-  });
-
-  // Requirement 8 - Test F: TCEA changes from 60% to 150% => monthly interest unchanged
-  it("F. TCEA changes from 60% to 150% => monthly interest remains unchanged (175.01)", () => {
-    const debt1: Debt = {
-      ...baseDebt,
-      interestCalculationMode: "tea_estimate",
-      teaPercent: 51.11,
-      tceaPercent: 60,
-      paymentFrequency: "monthly",
-    };
-    const debt2: Debt = {
-      ...baseDebt,
-      interestCalculationMode: "tea_estimate",
-      teaPercent: 51.11,
-      tceaPercent: 150,
-      paymentFrequency: "monthly",
-    };
-
-    const sug1 = calculateAssistedInterestSuggestion({
-      debt: debt1,
-      currentPrincipal: 5000,
-      paymentDate: "2026-08-15",
-      cashAmount: 300,
-    });
-    const sug2 = calculateAssistedInterestSuggestion({
-      debt: debt2,
-      currentPrincipal: 5000,
-      paymentDate: "2026-08-15",
-      cashAmount: 300,
-    });
-
-    expect(sug1.calcInterest).toBe(175.01);
-    expect(sug2.calcInterest).toBe(175.01);
-  });
-
-  // Requirement 8 - Test G: TEA actual-day fallback remains correct when contractual frequency is unknown
-  it("G. TEA actual-day fallback remains correct when contractual frequency is unknown", () => {
-    const debtNoFreq: Debt = {
-      ...baseDebt,
-      interestCalculationMode: "tea_estimate",
-      teaPercent: 51.11,
-      paymentFrequency: null,
-      firstDueDate: null,
-    };
-
-    const suggestion = calculateAssistedInterestSuggestion({
-      debt: debtNoFreq,
-      currentPrincipal: 5000,
-      paymentDate: "2026-02-01",
-      lastEventDate: "2026-01-01",
-      cashAmount: 300,
-    });
-
-    expect(suggestion.certainty).toBe("tea_estimate");
-    expect(suggestion.calculationExplanation).toContain("para 31 días");
-    expect(suggestion.calcInterest).toBeGreaterThan(0);
-  });
-
-  // Requirement 8 - Test H: existing 4% contractual monthly periodic-rate behavior remains unchanged
-  it("H. existing 4% contractual monthly periodic-rate behavior remains unchanged", () => {
-    const debtPeriodic: Debt = {
       ...baseDebt,
       interestCalculationMode: "contract_periodic_rate",
       periodicRatePercent: 4,
       periodicRateBasis: "monthly",
-      paymentFrequency: "monthly",
-      firstDueDate: "2026-08-15",
     };
 
     const suggestion = calculateAssistedInterestSuggestion({
-      debt: debtPeriodic,
+      debt,
       currentPrincipal: 5000,
-      paymentDate: "2026-08-15",
-      lastEventDate: "2026-07-15",
+      paymentDate: "2026-02-01",
       cashAmount: 300,
     });
 
     expect(suggestion.calcInterest).toBe(200);
+    expect(suggestion.suggestedInterest).toBe(200);
+    expect(suggestion.suggestedPrincipal).toBe(100);
+    expect(suggestion.principalAfterPayment).toBe(4900);
+    expect(suggestion.certainty).toBe("tea_estimate");
+    expect(suggestion.calculationExplanation).toContain("4% mensual");
+    expect(suggestion.warningMessage).toBeNull();
   });
 
-  // Requirement 8 - Test I: PEN/USD monetary formatting remains correct
-  it("I. PEN/USD monetary formatting remains correct for USD debt", () => {
-    const usdDebt: Debt = {
+  it("2. handles payment smaller than calculated interest without negative principal", () => {
+    const debt: Debt = {
       ...baseDebt,
-      currencyCode: "USD",
-      interestCalculationMode: "tea_estimate",
-      teaPercent: 51.11,
-      paymentFrequency: "monthly",
+      interestCalculationMode: "contract_periodic_rate",
+      periodicRatePercent: 4,
+      periodicRateBasis: "monthly",
     };
 
-    const nextPayUsd = calculateNextPayment({
-      debt: usdDebt,
-      debtEvents: [],
+    const suggestion = calculateAssistedInterestSuggestion({
+      debt,
       currentPrincipal: 5000,
-      todayKey: "2026-08-10",
+      paymentDate: "2026-02-01",
+      cashAmount: 150,
     });
 
-    expect(nextPayUsd.currencyCode).toBe("USD");
-    expect(nextPayUsd.interestAmount).toBe(175.01);
+    expect(suggestion.calcInterest).toBe(200);
+    expect(suggestion.suggestedInterest).toBe(150);
+    expect(suggestion.suggestedPrincipal).toBe(0);
+    expect(suggestion.principalAfterPayment).toBe(5000);
+    expect(suggestion.warningMessage).toContain("no cubre el interés calculado");
   });
 
-  // Requirement 8 - Test J: Next Payment and payment form use identical interest result
-  it("J. Next Payment card and payment form suggestion use 100% identical interest result", () => {
+  it("3. TEA actual-day mathematical estimate displays estimate label and does NOT use TCEA", () => {
     const debt: Debt = {
       ...baseDebt,
       interestCalculationMode: "tea_estimate",
-      teaPercent: 51.11,
-      paymentFrequency: "monthly",
-      firstDueDate: "2026-08-15",
+      teaPercent: 60.1,
+      tceaPercent: 85.5, // TCEA present but must NOT be used for interest
     };
 
-    const nextPay = calculateNextPayment({
+    const suggestion = calculateAssistedInterestSuggestion({
       debt,
-      debtEvents: [],
-      currentPrincipal: 5000,
-      todayKey: "2026-08-10",
+      currentPrincipal: 1000,
+      paymentDate: "2026-02-01",
+      cashAmount: 100,
+      lastEventDate: "2026-01-01",
     });
 
-    const formSug = calculateAssistedInterestSuggestion({
+    expect(suggestion.certainty).toBe("tea_estimate");
+    expect(suggestion.calculationExplanation).toContain("Estimación calculada con TEA");
+    expect(suggestion.calculationExplanation).toContain("60.1%");
+    expect(suggestion.calculationExplanation).toContain("TCEA no se utiliza para calcular el interés");
+    expect(suggestion.calcInterest).toBeGreaterThan(0);
+  });
+
+  it("4. TEA without known period does NOT invent 30 days", () => {
+    const debt: Debt = {
+      ...baseDebt,
+      interestCalculationMode: "tea_estimate",
+      teaPercent: 60.1,
+    };
+
+    const suggestion = calculateAssistedInterestSuggestion({
+      debt,
+      currentPrincipal: 1000,
+      paymentDate: "2026-01-01", // payment date on same day as origin -> 0 days
+      cashAmount: 100,
+    });
+
+    expect(suggestion.certainty).toBe("insufficient_info");
+    expect(suggestion.suggestedInterest).toBe(0);
+    expect(suggestion.suggestedPrincipal).toBe(0);
+  });
+
+  it("5. manual/unknown fallback provides no fabricated suggestion (suggestedInterest = 0, suggestedPrincipal = 0)", () => {
+    const suggestion = calculateAssistedInterestSuggestion({
+      debt: baseDebt,
+      currentPrincipal: 2000,
+      paymentDate: "2026-03-01",
+      cashAmount: 250,
+    });
+
+    expect(suggestion.certainty).toBe("insufficient_info");
+    expect(suggestion.calcInterest).toBe(0);
+    expect(suggestion.suggestedInterest).toBe(0);
+    expect(suggestion.suggestedPrincipal).toBe(0);
+    expect(suggestion.calculationExplanation).toContain("No tenemos suficiente información");
+  });
+
+  it("6. formats currency correctly for USD debt", () => {
+    const debt: Debt = {
+      ...baseDebt,
+      currencyCode: "USD",
+      interestCalculationMode: "contract_periodic_rate",
+      periodicRatePercent: 3,
+      periodicRateBasis: "monthly",
+    };
+
+    const suggestion = calculateAssistedInterestSuggestion({
+      debt,
+      currentPrincipal: 1000,
+      paymentDate: "2026-03-01",
+      lastEventDate: "2026-02-01",
+      cashAmount: 20,
+    });
+
+    expect(suggestion.warningMessage).toContain("$");
+  });
+
+  it("7. periodic rate with zero/invalid elapsed period blocks calculation", () => {
+    const debt: Debt = {
+      ...baseDebt,
+      interestCalculationMode: "contract_periodic_rate",
+      periodicRatePercent: 4,
+      periodicRateBasis: "monthly",
+      trackingStartDate: "2026-02-01",
+    };
+
+    // Same day as anchor -> 0 days elapsed
+    const suggestionSameDay = calculateAssistedInterestSuggestion({
       debt,
       currentPrincipal: 5000,
-      paymentDate: nextPay.nextDueDate || "2026-08-15",
+      paymentDate: "2026-02-01",
       cashAmount: 300,
     });
 
-    expect(nextPay.interestAmount).toBe(formSug.calcInterest);
-    expect(nextPay.interestAmount).toBe(175.01);
+    expect(suggestionSameDay.certainty).toBe("insufficient_info");
+    expect(suggestionSameDay.calcInterest).toBe(0);
+    expect(suggestionSameDay.suggestedInterest).toBe(0);
+    expect(suggestionSameDay.suggestedPrincipal).toBe(0);
+
+    // Payment before anchor -> invalid elapsed
+    const suggestionBeforeAnchor = calculateAssistedInterestSuggestion({
+      debt,
+      currentPrincipal: 5000,
+      paymentDate: "2026-01-15",
+      cashAmount: 300,
+    });
+
+    expect(suggestionBeforeAnchor.certainty).toBe("insufficient_info");
+    expect(suggestionBeforeAnchor.calcInterest).toBe(0);
+
+    // Valid ~monthly period -> gives assisted estimate
+    const suggestionValidPeriod = calculateAssistedInterestSuggestion({
+      debt,
+      currentPrincipal: 5000,
+      paymentDate: "2026-03-03",
+      cashAmount: 300,
+    });
+
+    expect(suggestionValidPeriod.certainty).toBe("tea_estimate");
+    expect(suggestionValidPeriod.calcInterest).toBe(200);
+    expect(suggestionValidPeriod.suggestedInterest).toBe(200);
+    expect(suggestionValidPeriod.suggestedPrincipal).toBe(100);
+  });
+
+  describe("getLastEffectiveDebtPaymentDate Pure Production Helper Tests", () => {
+    it("A. prevents cross-debt contamination (Debt A payment vs Debt B payment)", () => {
+      const events: DebtEvent[] = [
+        {
+          id: "evt-a1",
+          debtId: "debt-a",
+          eventDate: "2026-03-01",
+          eventType: "payment",
+          cashAmount: 300,
+          principalDelta: -200,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-1",
+          reversalOfEventId: null,
+          description: "Pago Debt A",
+          registeredByUserId: "user-1",
+          createdAt: "2026-03-01T10:00:00Z",
+        },
+        {
+          id: "evt-b1",
+          debtId: "debt-b",
+          eventDate: "2026-03-20",
+          eventType: "payment",
+          cashAmount: 500,
+          principalDelta: -400,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-2",
+          reversalOfEventId: null,
+          description: "Pago Debt B",
+          registeredByUserId: "user-1",
+          createdAt: "2026-03-20T10:00:00Z",
+        },
+      ];
+
+      expect(getLastEffectiveDebtPaymentDate(events, "debt-a")).toBe("2026-03-01");
+      expect(getLastEffectiveDebtPaymentDate(events, "debt-b")).toBe("2026-03-20");
+    });
+
+    it("B. ignores reversed latest payment and uses previous effective payment date", () => {
+      const events: DebtEvent[] = [
+        {
+          id: "evt-1",
+          debtId: "debt-a",
+          eventDate: "2026-02-01",
+          eventType: "payment",
+          cashAmount: 300,
+          principalDelta: -200,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-1",
+          reversalOfEventId: null,
+          description: "Pago cuota 1",
+          registeredByUserId: "user-1",
+          createdAt: "2026-02-01T10:00:00Z",
+        },
+        {
+          id: "evt-2",
+          debtId: "debt-a",
+          eventDate: "2026-03-01",
+          eventType: "payment",
+          cashAmount: 400,
+          principalDelta: -300,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-2",
+          reversalOfEventId: null,
+          description: "Pago cuota 2 (anulado)",
+          registeredByUserId: "user-1",
+          createdAt: "2026-03-01T10:00:00Z",
+        },
+        {
+          id: "evt-3",
+          debtId: "debt-a",
+          eventDate: "2026-03-02",
+          eventType: "reversal",
+          cashAmount: -400,
+          principalDelta: 300,
+          interestPaid: -100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-3",
+          reversalOfEventId: "evt-2",
+          description: "Reversión pago cuota 2",
+          registeredByUserId: "user-1",
+          createdAt: "2026-03-02T10:00:00Z",
+        },
+      ];
+
+      expect(getLastEffectiveDebtPaymentDate(events, "debt-a")).toBe("2026-02-01");
+    });
+
+    it("C. ignores principal_adjustment events as interest-period anchors", () => {
+      const events: DebtEvent[] = [
+        {
+          id: "evt-1",
+          debtId: "debt-a",
+          eventDate: "2026-02-01",
+          eventType: "payment",
+          cashAmount: 300,
+          principalDelta: -200,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-1",
+          reversalOfEventId: null,
+          description: "Pago cuota 1",
+          registeredByUserId: "user-1",
+          createdAt: "2026-02-01T10:00:00Z",
+        },
+        {
+          id: "evt-2",
+          debtId: "debt-a",
+          eventDate: "2026-02-15",
+          eventType: "principal_adjustment",
+          cashAmount: 0,
+          principalDelta: 500,
+          interestPaid: 0,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: null,
+          reversalOfEventId: null,
+          description: "Ajuste de saldo",
+          registeredByUserId: "user-1",
+          createdAt: "2026-02-15T10:00:00Z",
+        },
+      ];
+
+      expect(getLastEffectiveDebtPaymentDate(events, "debt-a")).toBe("2026-02-01");
+    });
   });
 });

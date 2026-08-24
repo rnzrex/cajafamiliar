@@ -194,11 +194,10 @@ export function calculateAssistedInterestSuggestion(params: {
       const isContractualFrequencyKnown =
         frequency === "monthly" ||
         frequency === "biweekly" ||
-        frequency === "weekly" ||
-        (!frequency && Boolean(debt.firstDueDate));
+        frequency === "weekly";
 
       if (isContractualFrequencyKnown) {
-        const effectiveFreq = (frequency === "biweekly" || frequency === "weekly") ? frequency : "monthly";
+        const effectiveFreq = frequency!;
         const { rateDecimal, ratePercent } = effectivePeriodicRateFromTea({
           teaPercent: debt.teaPercent,
           frequency: effectiveFreq,
@@ -254,7 +253,7 @@ export function calculateAssistedInterestSuggestion(params: {
     suggestedInterest = cashPaid;
     suggestedPrincipal = 0;
     principalAfterPayment = principal;
-    warningMessage = `El pago ingresado (${currencySymbol} ${cashPaid.toFixed(2)}) no cubre el interés calculated (${currencySymbol} ${calcInterest.toFixed(2)}). El capital no se reduce.`;
+    warningMessage = `El pago ingresado (${currencySymbol} ${cashPaid.toFixed(2)}) no cubre el interés calculado (${currencySymbol} ${calcInterest.toFixed(2)}). El capital no se reduce.`;
   }
 
   return {
