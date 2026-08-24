@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, DollarSign, ArrowUpRight, CheckCircle2, RotateCcw, Settings, ShieldAlert } from "lucide-react";
+import { X, DollarSign, ArrowUpRight, CheckCircle2, RotateCcw, Settings, ShieldAlert, Trash2 } from "lucide-react";
 import type {
   Debt,
   DebtEvent,
@@ -29,7 +29,7 @@ import {
   translateDebtError,
 } from "../utils/debtViewModel";
 import { formatDebtMoney } from "../utils/debtPresentation";
-import { setDebtArchived, updateDebtMetadata, updateDebtTerms } from "../services/dataRepository";
+import { deletePristineDebt, setDebtArchived, updateDebtMetadata, updateDebtTerms } from "../services/dataRepository";
 import { buildDebtPaymentLedger } from "../utils/debtPaymentLedger";
 import { getCurrencySymbol, formatReviewDate, validateDebtFinancialTerms } from "../utils/debtFormMode";
 import { calculateNextPayment } from "../utils/debtNextPayment";
@@ -154,6 +154,14 @@ export function DebtDetailModal({
     currentPrincipal: debtIntelligence.currentPrincipal,
   });
 
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const canDeletePristine =
+    allEventsForDebt.length === 0 &&
+    (debt.debtKind !== "credit_card" ||
+      ((creditCardEntries || []).filter((e) => e.debtId === debt.id).length === 0 &&
+       (creditCardStatements || []).filter((s) => s.debtId === debt.id).length === 0));
+
   const handleToggleArchive = async () => {
     if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
       setToast({
@@ -177,6 +185,38 @@ export function DebtDetailModal({
           message: "Operación aplicada, pero falló la actualización de datos locales.",
           type: "error",
         });
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeletePristine = async () => {
+    if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
+      setToast({
+        message: "Las operaciones de deuda requieren conexión a internet y estado habilitado.",
+        type: "error",
+      });
+      return;
+    }
+    setSubmitting(true);
+    let success = false;
+    try {
+      await deletePristineDebt({ debtId: debt.id });
+      success = true;
+      setToast({ message: "Deuda eliminada definitivamente.", type: "success" });
+      onClose();
+      await onRefresh();
+    } catch (err) {
+      setShowDeleteConfirm(false);
+      if (!success) {
+        setToast({ message: translateDebtError(err), type: "error" });
+      } else {
+        setToast({
+          message: "Deuda eliminada, pero falló la actualización de datos locales.",
+          type: "error",
+        });
+        onClose();
       }
     } finally {
       setSubmitting(false);
@@ -380,6 +420,20 @@ export function DebtDetailModal({
             >
               {debt.isArchived ? "Reactivar" : "Archivar"}
             </button>
+            {canDeletePristine ? (
+              <button
+                type="button"
+                disabled={submitting || !canWriteDebt}
+                onClick={() => setShowDeleteConfirm(true)}
+                className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm font-bold text-rose-700 hover:bg-rose-100 disabled:opacity-50 shadow-sm"
+              >
+                <Trash2 className="h-4 w-4" /> Eliminar deuda
+              </button>
+            ) : (
+              <span className="text-xs text-slate-500 font-medium self-center">
+                Esta deuda tiene historial y no puede eliminarse.
+              </span>
+            )}
           </div>
         </div>
 
@@ -970,6 +1024,40 @@ export function DebtDetailModal({
           )}
         </div>
       </div>
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl space-y-4">
+            <div className="flex items-center gap-3 text-rose-600">
+              <div className="rounded-full bg-rose-100 p-2">
+                <Trash2 className="h-6 w-6" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">¿Eliminar esta deuda?</h3>
+            </div>
+            <p className="text-sm text-slate-600">
+              Esta deuda todavía no tiene movimientos registrados. Al eliminarla se borrará definitivamente su configuración y no aparecerá como archivada.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setShowDeleteConfirm(false)}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={handleDeletePristine}
+                className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50 shadow-sm"
+              >
+                {submitting ? "Eliminando..." : "Eliminar definitivamente"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
