@@ -799,7 +799,7 @@ describe("DEBT-3C Direct Debt Urgency Integration via selectUrgentDebtInstallmen
 
     mockInsertDeliveryResult = { data: { id: "del-qapaq" }, error: null };
 
-    const summary = await runPaymentReminderJob("2026-08-24");
+    const summary = await runPaymentReminderJob();
     expect(summary.subscriptions).toBe(1);
     expect(summary.debtUrgent).toBe(1);
     expect(summary.sent).toBe(1);
