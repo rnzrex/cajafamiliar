@@ -15,6 +15,7 @@ import type { DebtInstallmentPlanningItem } from "../../src/utils/debtPlanning.j
 import {
   buildObligationReminderPayload,
   fromCreditCardProfileRow,
+  fromDebtRow,
   NOTIFICATION_TYPE,
   runPaymentReminderJob,
   selectUrgentDebtInstallmentsForReminder,
@@ -725,5 +726,83 @@ describe("DEBT-3C Direct Debt Urgency Integration via selectUrgentDebtInstallmen
     expect(summary.sent).toBe(0);
     expect(summary.skipped).toBe(1);
     expect(mockSendNotification).not.toHaveBeenCalled();
+  });
+
+  it("correctly maps raw open-ended QAPAQ DB row and processes through push reminder pipeline", async () => {
+    const rawQapaqRow = {
+      id: "qapaq-db-1",
+      household_id: "h-qapaq",
+      name: "Empeño QAPAQ",
+      creditor_name: "QAPAQ",
+      debt_kind: "pledge",
+      currency_code: "PEN",
+      origin_date: "2026-07-31",
+      tracking_start_date: "2026-07-31",
+      original_principal: 6510,
+      opening_principal_balance: 6510,
+      planned_installment_count: null,
+      planned_installment_amount: null,
+      installment_amount_mode: "unknown",
+      payment_frequency: "monthly",
+      custom_frequency_days: null,
+      first_due_date: "2026-08-31",
+      tea_percent: 51.11,
+      tcea_percent: 51.11,
+      notes: "",
+      status: "active",
+      is_archived: false,
+      created_by_user_id: "u1",
+      created_at: "2026-08-24T00:00:00Z",
+      updated_at: "2026-08-24T00:00:00Z",
+      repayment_structure: "open_ended",
+      interest_calculation_mode: "tea_estimate",
+      minimum_principal_payment: 30,
+    };
+
+    // 1. Direct mapper check
+    const debt = fromDebtRow(rawQapaqRow);
+    expect(debt.repaymentStructure).toBe("open_ended");
+    expect(debt.interestCalculationMode).toBe("tea_estimate");
+    expect(debt.minimumPrincipalPayment).toBe(30);
+
+    const urgentItems = selectUrgentDebtInstallmentsForReminder([debt], [], [], [], [], "2026-08-24");
+    expect(urgentItems).toHaveLength(1);
+    expect(urgentItems[0].dueDate).toBe("2026-08-31");
+    expect(urgentItems[0].dueStatus).toBe("upcoming");
+    expect(urgentItems[0].expectedAmount).toBeCloseTo(257.86, 2);
+
+    // 2. Server path check via runPaymentReminderJob
+    mockTables = {
+      push_subscriptions: [
+        {
+          id: "sub-qapaq",
+          household_id: "h-qapaq",
+          user_id: "u-qapaq",
+          endpoint: "https://push.qapaq.test",
+          p256dh: "key",
+          auth: "auth",
+          is_active: true,
+          app_origin: "https://test.cajafamiliar.app",
+        },
+      ],
+      household_members: [
+        { household_id: "h-qapaq", user_id: "u-qapaq", display_name: "Renzo" },
+      ],
+      recurring_payments: [],
+      debts: [rawQapaqRow],
+      debt_schedule_versions: [],
+      debt_installments: [],
+      debt_events: [],
+      debt_event_installment_allocations: [],
+      push_notification_deliveries: [],
+    };
+
+    mockInsertDeliveryResult = { data: { id: "del-qapaq" }, error: null };
+
+    const summary = await runPaymentReminderJob("2026-08-24");
+    expect(summary.subscriptions).toBe(1);
+    expect(summary.debtUrgent).toBe(1);
+    expect(summary.sent).toBe(1);
+    expect(mockSendNotification).toHaveBeenCalled();
   });
 });

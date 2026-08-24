@@ -97,4 +97,23 @@ describe("debt service planning hotfix", () => {
     expect(source).toContain("Total estimado para cancelar este período");
     expect(source).toContain("nextPayment.settlementAmount");
   });
+
+  it("ensures fixed_schedule debt with known TEA returns settlementKnown false and settlementAmount null", () => {
+    const fixedDebt: Debt = {
+      ...qapaq,
+      id: "fixed-1",
+      repaymentStructure: "fixed_schedule",
+    };
+
+    const next = calculateNextPayment({
+      debt: fixedDebt,
+      debtEvents: [],
+      currentPrincipal: 6510,
+      todayKey: "2026-08-24",
+    });
+
+    expect(next.interestKnown).toBe(true);
+    expect(next.settlementKnown).toBe(false);
+    expect(next.settlementAmount).toBeNull();
+  });
 });

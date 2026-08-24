@@ -516,7 +516,7 @@ function toRecurringPayment(row: RecurringPaymentRow): RecurringPayment {
   };
 }
 
-function fromDebtRow(row: Record<string, any>): Debt {
+export function fromDebtRow(row: Record<string, any>): Debt {
   return {
     id: row.id,
     name: row.name,
@@ -541,6 +541,12 @@ function fromDebtRow(row: Record<string, any>): Debt {
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    repaymentStructure: row.repayment_structure ?? "unknown",
+    interestCalculationMode: row.interest_calculation_mode ?? "unknown",
+    periodicRatePercent: row.periodic_rate_percent == null ? null : Number(row.periodic_rate_percent),
+    periodicRateBasis: row.periodic_rate_basis ?? null,
+    minimumPrincipalPayment: row.minimum_principal_payment == null ? null : Number(row.minimum_principal_payment),
+    interestAccrualAnchorDate: row.interest_accrual_anchor_date ?? null,
   };
 }
 

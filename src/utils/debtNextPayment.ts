@@ -147,7 +147,8 @@ export function calculateNextPayment(params: {
   // For open-ended debts this is the best current-period payoff estimate we can
   // derive from the registered terms: outstanding principal + applicable period
   // interest. It intentionally does not invent unregistered fees/insurance.
-  const settlementKnown = interestKnown;
+  // Fixed-schedule debts are not open-ended and cannot be settled by principal + 1 period interest.
+  const settlementKnown = debt.repaymentStructure === "open_ended" && interestKnown;
   const settlementAmount = settlementKnown
     ? round2(principal + (interestAmount ?? 0))
     : null;

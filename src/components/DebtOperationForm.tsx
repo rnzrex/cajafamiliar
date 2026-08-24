@@ -48,10 +48,26 @@ export function DebtOperationForm({
 
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
   const initialNextPayment = calculateNextPayment({ debt, debtEvents, currentPrincipal });
-  const initialPayoffCash =
-    initialNextPayment.settlementKnown && initialNextPayment.settlementAmount != null
-      ? initialNextPayment.settlementAmount.toFixed(2)
-      : currentPrincipal.toFixed(2);
+
+  let initialPayoffCash = "";
+  let initialPayoffInterest = "0";
+
+  if (operationType === "payoff") {
+    if (isFlexOpenEnded) {
+      if (initialNextPayment.settlementKnown && initialNextPayment.settlementAmount != null) {
+        initialPayoffCash = initialNextPayment.settlementAmount.toFixed(2);
+        initialPayoffInterest = (initialNextPayment.interestAmount ?? 0).toString();
+      } else {
+        // Open-ended + settlement unknown: leave cash empty so user inputs real amount
+        initialPayoffCash = "";
+        initialPayoffInterest = "0";
+      }
+    } else {
+      // Fixed-schedule: preserve previous behavior (currentPrincipal)
+      initialPayoffCash = currentPrincipal > 0 ? currentPrincipal.toString() : "";
+      initialPayoffInterest = "0";
+    }
+  }
 
   const initialPrefillCash = (operationType === "payment" && isFlexOpenEnded && initialNextPayment.minimumPaymentKnown && initialNextPayment.minimumPaymentAmount != null)
     ? initialNextPayment.minimumPaymentAmount.toString()
@@ -59,9 +75,7 @@ export function DebtOperationForm({
 
   const initialPrefillInterest = (operationType === "payment" && isFlexOpenEnded && initialNextPayment.minimumPaymentKnown && initialNextPayment.interestAmount != null)
     ? initialNextPayment.interestAmount.toString()
-    : (operationType === "payoff" && initialNextPayment.interestKnown && initialNextPayment.interestAmount != null
-      ? initialNextPayment.interestAmount.toString()
-      : "0");
+    : (operationType === "payoff" ? initialPayoffInterest : "0");
 
   const initialPrefillPrincipal = (operationType === "payment" && isFlexOpenEnded && initialNextPayment.minimumPaymentKnown && initialNextPayment.minimumPrincipalAmount != null)
     ? initialNextPayment.minimumPrincipalAmount.toString()
