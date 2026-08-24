@@ -9,7 +9,7 @@ import { buildDebtIntelligenceItems } from "../utils/debtIntelligence";
 import { DebtForm } from "./DebtForm";
 import { DebtDetailModal } from "./DebtDetailModal";
 
-describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
+describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX & Final Cleanup", () => {
   // 1. DebtForm pledge/open-ended + monthly frequency => create payload paymentFrequency === "monthly"
   it("1. DebtForm pledge/open-ended + monthly frequency produces paymentFrequency 'monthly' in payload", () => {
     const payload = buildDebtCreateInputPayload({
@@ -32,8 +32,8 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
     expect(payload.teaPercent).toBe(51.11);
   });
 
-  // 2. Entering monthly due day => frequency remains/sets monthly
-  it("2. DebtForm renders Frecuencia de pago select and Día de pago mensual controls", () => {
+  // 2. DebtForm single authoritative frequency control and no duplicate controls
+  it("2. DebtForm renders exactly ONE 'Frecuencia de pago' label and NO duplicate '¿Cada cuánto pagas?'", () => {
     const html = renderToStaticMarkup(
       <DebtForm
         accounts={[]}
@@ -46,14 +46,33 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
       />
     );
 
-    expect(html).toContain("Frecuencia de pago");
-    expect(html).toContain("Mensual");
-    expect(html).toContain("Quincenal");
-    expect(html).toContain("Semanal");
+    const freqOccurrences = (html.match(/Frecuencia de pago/g) || []).length;
+    expect(freqOccurrences).toBe(1);
+    expect(html).not.toContain("¿Cada cuánto pagas?");
+    expect(html).toContain("Convierte la TEA a la tasa efectiva del período cuando la frecuencia está definida.");
   });
 
-  // 3. TEA 51.11 + monthly + 6510 => interest 227.86
-  it("3. TEA 51.11% with monthly frequency and principal 6510 yields interest 227.86", () => {
+  // 3. Single monthly due control when monthly frequency is active
+  it("3. DebtForm renders at most ONE 'Día de pago mensual (1–31)' control", () => {
+    const html = renderToStaticMarkup(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        canWriteDebt={true}
+        onSaved={vi.fn()}
+        onCancel={vi.fn()}
+        setToast={vi.fn()}
+        initialStep="details"
+      />
+    );
+
+    const monthlyDueOccurrences = (html.match(/Día de pago mensual/g) || []).length;
+    // Default form without selecting monthly has 0 occurrences; when monthly is selected it has exactly 1.
+    expect(monthlyDueOccurrences).toBeLessThanOrEqual(1);
+  });
+
+  // 4. TEA 51.11 + monthly + 6510 => interest 227.86
+  it("4. TEA 51.11% with monthly frequency and principal 6510 yields interest 227.86", () => {
     const debt: Debt = {
       id: "d1",
       createdByUserId: "u1",
@@ -98,8 +117,8 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
     expect(nextPayment.interestAmount).toBe(227.86);
   });
 
-  // 4. same + minimum principal 30 => minimum payment 257.86 => principal after 6480
-  it("4. Minimum principal 30 with interest 227.86 yields minimum payment 257.86 and principal after 6480.00", () => {
+  // 5. same + minimum principal 30 => minimum payment 257.86 => principal after 6480
+  it("5. Minimum principal 30 with interest 227.86 yields minimum payment 257.86 and principal after 6480.00", () => {
     const debt: Debt = {
       id: "d1",
       createdByUserId: "u1",
@@ -144,8 +163,8 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
     expect(nextPayment.principalAfterPayment).toBe(6480.0);
   });
 
-  // 5. 7-day first-due gap with monthly contractual frequency => still 227.86
-  it("5. 7-day first-due gap with explicit monthly paymentFrequency STILL calculates contractual TEM interest 227.86", () => {
+  // 6. 7-day first-due gap with monthly contractual frequency => still 227.86
+  it("6. 7-day first-due gap with explicit monthly paymentFrequency STILL calculates contractual TEM interest 227.86", () => {
     const debt: Debt = {
       id: "d1",
       createdByUserId: "u1",
@@ -188,8 +207,8 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
     expect(suggestion.calcInterest).toBe(227.86);
   });
 
-  // 6. frequency null + 7-day gap => actual-day fallback ≈ 51.75
-  it("6. frequency null with 7-day gap falls back to actual-day calculation (≈ 51.75)", () => {
+  // 7. frequency null + 7-day gap => actual-day fallback ≈ 51.75
+  it("7. frequency null with 7-day gap falls back to actual-day calculation (≈ 51.75)", () => {
     const debt: Debt = {
       id: "d1",
       createdByUserId: "u1",
@@ -232,8 +251,8 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
     expect(suggestion.calcInterest).toBeCloseTo(51.75, 1);
   });
 
-  // 7. Edit Terms renders Frecuencia de pago
-  it("7. Edit Terms form in DebtDetailModal renders Frecuencia and Editar términos", () => {
+  // 8. Edit Terms renders Frecuencia
+  it("8. Edit Terms form in DebtDetailModal renders Frecuencia and Editar términos", () => {
     const debt: Debt = {
       id: "d1",
       createdByUserId: "u1",
@@ -294,11 +313,6 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
 
     expect(html).toContain("Frecuencia");
     expect(html).toContain("Editar términos");
-  });
-
-  // 8. changing null -> monthly produces updateDebtTerms paymentFrequency monthly
-  it("8. Changing paymentFrequency from null to monthly in Edit Terms calls updateDebtTerms with paymentFrequency 'monthly'", async () => {
-    expect(true).toBe(true);
   });
 
   // 9. terms summary shows: Frecuencia Mensual, TEM 3.5002%
@@ -408,8 +422,8 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
     expect(nextPayment.interestAmount).toBe(227.86);
   });
 
-  // 11 & 12. Debt selected renders in-page detail and Volver a deudas button
-  it("11 & 12. DebtDetailModal renders in-page with Volver a deudas button", () => {
+  // 11. Debt selected renders in-page detail and Volver a deudas button
+  it("11. DebtDetailModal renders in-page with Volver a deudas button", () => {
     const onClose = vi.fn();
     const debt: Debt = {
       id: "d1",
