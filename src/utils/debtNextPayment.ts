@@ -1,10 +1,10 @@
-import type { Debt, DebtEvent, DebtInterestCalculationMode } from "../types";
-import { effectiveDebtEvents } from "./debtCalculations";
+import type { Debt, DebtEvent, DebtInterestCalculationMode } from "../types.js";
+import { effectiveDebtEvents } from "./debtCalculations.js";
 import {
   calculateAssistedInterestSuggestion,
   getLastEffectiveDebtPaymentDate,
   type InterestSuggestionCertainty,
-} from "./debtInterestEngine";
+} from "./debtInterestEngine.js";
 
 export interface DebtNextPaymentResult {
   nextDueDate: string | null;
@@ -17,6 +17,8 @@ export interface DebtNextPaymentResult {
   minimumPrincipalKnown: boolean;
   minimumPaymentAmount: number | null;
   minimumPaymentKnown: boolean;
+  settlementAmount: number | null;
+  settlementKnown: boolean;
   principalAfterPayment: number | null;
   currencyCode: string;
   certainty: InterestSuggestionCertainty | "estimate";
@@ -54,7 +56,7 @@ export function getDerivedNextDueDate(
 
   // Effective regular payment events (eventType === 'payment', not reversed)
   const effectivePayments = effectiveDebtEvents(debtEvents, debtId).filter(
-    (e) => e.eventType === "payment"
+    (e: DebtEvent) => e.eventType === "payment"
   );
 
   const cyclesCovered = effectivePayments.length;
@@ -142,6 +144,14 @@ export function calculateNextPayment(params: {
     principalAfterPayment = minimumPrincipalKnown ? round2(Math.max(0, principal - effectiveMinPrincipal)) : null;
   }
 
+  // For open-ended debts this is the best current-period payoff estimate we can
+  // derive from the registered terms: outstanding principal + applicable period
+  // interest. It intentionally does not invent unregistered fees/insurance.
+  const settlementKnown = interestKnown;
+  const settlementAmount = settlementKnown
+    ? round2(principal + (interestAmount ?? 0))
+    : null;
+
   return {
     nextDueDate,
     currentPrincipal: principal,
@@ -153,6 +163,8 @@ export function calculateNextPayment(params: {
     minimumPrincipalKnown,
     minimumPaymentAmount,
     minimumPaymentKnown,
+    settlementAmount,
+    settlementKnown,
     principalAfterPayment,
     currencyCode,
     certainty,

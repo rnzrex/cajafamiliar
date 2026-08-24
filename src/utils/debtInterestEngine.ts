@@ -1,5 +1,5 @@
-import type { Debt, DebtEvent, DebtInstallment, DebtInterestCalculationMode } from "../types";
-import { getCurrencySymbol } from "./debtFormMode";
+import type { Debt, DebtEvent, DebtInstallment, DebtInterestCalculationMode } from "../types.js";
+import { getCurrencySymbol } from "./debtFormMode.js";
 
 export type InterestSuggestionCertainty = "exact_contract" | "exact_rate" | "tea_estimate" | "insufficient_info";
 

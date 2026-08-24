@@ -7,9 +7,11 @@ import type {
 } from "../types.js";
 import {
   allocatedAmountForInstallment,
+  currentDebtPrincipal,
   currentDebtScheduleVersion,
   effectiveDebtEvents,
 } from "./debtCalculations.js";
+import { calculateNextPayment } from "./debtNextPayment.js";
 import { dueDateStatus } from "./dueDates.js";
 import type { DueDateKind, DueDateStatus } from "./dueDates.js";
 
@@ -89,12 +91,67 @@ export function buildDebtPlanningItems(
     if (debt.status !== "active" || debt.isArchived) continue;
 
     const currentSchedule = currentDebtScheduleVersion(debt.id, scheduleVersions);
-    if (!currentSchedule) continue; // No schedule — nothing to plan
 
-    // Only installments of the current schedule version
-    const debtInstallments = installments.filter(
-      (i) => i.scheduleVersionId === currentSchedule.id && i.debtId === debt.id
-    );
+    // Only installments of the current schedule version. Open-ended debts do
+    // not need a persisted schedule, so an empty list is valid for them.
+    const debtInstallments = currentSchedule
+      ? installments.filter(
+          (i) => i.scheduleVersionId === currentSchedule.id && i.debtId === debt.id
+        )
+      : [];
+
+    // Flexible/open-ended debts use calculateNextPayment as their canonical
+    // current obligation. Expose that next cycle as a derived planning item so
+    // Panorama, Próximos 30 días, alerts and Agenda all consume the same truth
+    // already used by the debt detail page. Nothing synthetic is persisted.
+    if (debt.repaymentStructure === "open_ended" && debtInstallments.length === 0) {
+      const currentPrincipal = Math.max(0, currentDebtPrincipal(debt, debtEvents));
+      const nextPayment = calculateNextPayment({
+        debt,
+        debtEvents,
+        currentPrincipal,
+        todayKey,
+      });
+
+      if (currentPrincipal > 0 && nextPayment.nextDueDate) {
+        const expectedAmount =
+          nextPayment.minimumPaymentKnown && nextPayment.minimumPaymentAmount != null
+            ? nextPayment.minimumPaymentAmount
+            : null;
+        const { amountKnown, remainingAmount, isCovered } = resolveAmounts(expectedAmount, 0);
+        const { dueStatus, dueLabel, dueTone, daysUntilDue } = resolveDueStatus(
+          nextPayment.nextDueDate,
+          isCovered,
+          todayKey
+        );
+        const paidCycles = effectiveDebtEvents(debtEvents, debt.id).filter(
+          (event) => event.eventType === "payment"
+        ).length;
+
+        items.push({
+          debtId: debt.id,
+          debtName: debt.name,
+          creditorName: debt.creditorName,
+          currencyCode: debt.currencyCode || "PEN",
+          installmentId: `derived-next-payment:${debt.id}:${nextPayment.nextDueDate}`,
+          installmentNumber: paidCycles + 1,
+          scheduleVersionId: currentSchedule?.id ?? `derived-open-ended:${debt.id}`,
+          dueDate: nextPayment.nextDueDate,
+          daysUntilDue,
+          dueStatus,
+          dueLabel,
+          dueTone,
+          expectedAmount,
+          allocatedAmount: 0,
+          remainingAmount,
+          amountKnown,
+          isCovered,
+        });
+      }
+      continue;
+    }
+
+    if (!currentSchedule) continue;
 
     for (const installment of debtInstallments) {
       const allocatedAmount = allocatedAmountForInstallment(

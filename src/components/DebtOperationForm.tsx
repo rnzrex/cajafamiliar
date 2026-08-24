@@ -35,7 +35,6 @@ export function DebtOperationForm({
   scheduleVersions,
   debtEvents,
   accounts,
-  categories,
   currentPrincipal,
   canWriteDebt = true,
   persistedAllocations,
@@ -49,14 +48,20 @@ export function DebtOperationForm({
 
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
   const initialNextPayment = calculateNextPayment({ debt, debtEvents, currentPrincipal });
+  const initialPayoffCash =
+    initialNextPayment.settlementKnown && initialNextPayment.settlementAmount != null
+      ? initialNextPayment.settlementAmount.toFixed(2)
+      : currentPrincipal.toFixed(2);
 
   const initialPrefillCash = (operationType === "payment" && isFlexOpenEnded && initialNextPayment.minimumPaymentKnown && initialNextPayment.minimumPaymentAmount != null)
     ? initialNextPayment.minimumPaymentAmount.toString()
-    : (operationType === "payoff" ? currentPrincipal.toString() : "");
+    : (operationType === "payoff" ? initialPayoffCash : "");
 
   const initialPrefillInterest = (operationType === "payment" && isFlexOpenEnded && initialNextPayment.minimumPaymentKnown && initialNextPayment.interestAmount != null)
     ? initialNextPayment.interestAmount.toString()
-    : "0";
+    : (operationType === "payoff" && initialNextPayment.interestKnown && initialNextPayment.interestAmount != null
+      ? initialNextPayment.interestAmount.toString()
+      : "0");
 
   const initialPrefillPrincipal = (operationType === "payment" && isFlexOpenEnded && initialNextPayment.minimumPaymentKnown && initialNextPayment.minimumPrincipalAmount != null)
     ? initialNextPayment.minimumPrincipalAmount.toString()
@@ -68,10 +73,17 @@ export function DebtOperationForm({
   const activeAccounts = accounts.filter((acc) => acc.isActive !== false);
   const [accountId, setAccountId] = useState(activeAccounts[0]?.id ?? "");
 
+  const formatDueDateDisplay = (isoDate: string) => {
+    const parts = isoDate.split("-");
+    return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : isoDate;
+  };
+
   const [description, setDescription] = useState(
     operationType === "payment"
       ? isFlexOpenEnded
-        ? `Pago de deuda — ${debt.name}`
+        ? initialNextPayment.nextDueDate
+          ? `Pago de deuda — ${debt.name} — vencimiento ${formatDueDateDisplay(initialNextPayment.nextDueDate)}`
+          : `Pago de deuda — ${debt.name}`
         : `Pago de cuota — ${debt.name}`
       : operationType === "prepayment"
         ? `Prepago de principal — ${debt.name}`
@@ -80,9 +92,10 @@ export function DebtOperationForm({
           : `Reversión de registro — ${debt.name}`
   );
 
-  const activeCategories = categories.filter((c) => c.is_active && (c.type === "egreso" || c.type === "ambos"));
-  const defaultCategory = activeCategories.find((c) => c.name.toLowerCase() === "préstamos")?.name ?? activeCategories[0]?.name ?? "";
-  const [category, setCategory] = useState(defaultCategory);
+  // Debt-service movements have a system-owned category. The economic
+  // split remains in DebtEvent (principal vs interest/costs), so this label
+  // cannot be changed into an unrelated household spending category.
+  const category = "Pago de deuda";
 
   const [principalAmount, setPrincipalAmount] = useState(initialPrefillPrincipal);
   const [interestPaid, setInterestPaid] = useState(initialPrefillInterest);
@@ -466,17 +479,10 @@ export function DebtOperationForm({
               </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700">Categoría</label>
-                <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                >
-                  {activeCategories.map((cat) => (
-                    <option key={cat.id} value={cat.name}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="mt-1 w-full rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 font-semibold text-blue-900">
+                  {category}
+                </div>
+                <p className="mt-1 text-xs text-slate-500">Vinculada automáticamente a esta deuda.</p>
               </div>
             </>
           )}
