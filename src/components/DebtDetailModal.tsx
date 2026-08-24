@@ -223,6 +223,10 @@ export function DebtDetailModal({
         teaPercent: editTeaPercent ? Number(editTeaPercent) : null,
         tceaPercent: editTceaPercent ? Number(editTceaPercent) : null,
         paymentFrequency: editPaymentFrequency ? (editPaymentFrequency as DebtPaymentFrequency) : null,
+        clearPeriodicRate: editInterestCalcMode !== "contract_periodic_rate" || !editPeriodicRatePercent,
+        clearTea: !editTeaPercent,
+        clearTcea: !editTceaPercent,
+        clearFrequency: !editPaymentFrequency,
       });
       success = true;
       setIsEditingTerms(false);

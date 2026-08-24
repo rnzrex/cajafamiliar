@@ -115,6 +115,29 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
       expect(payload.periodicRatePercent).toBe(5);
     });
 
+    it("A3. open_ended repaymentStructure forces installments = [] and firstDueDate = null even if stale installments are passed", () => {
+      const payload = buildDebtCreateInputPayload({
+        debtId: "debt-existing-3",
+        debtKind: "bank_loan",
+        onboardingMode: "EXISTING_DEBT",
+        currencyCode: "PEN",
+        name: "Préstamo Flexible",
+        creditorName: "Persona A",
+        openingPrincipalBalance: 2000,
+        repaymentStructure: "open_ended",
+        firstDueDate: "2026-09-01",
+        plannedInstallmentCount: 6,
+        installments: [
+          { installmentNumber: 1, dueDate: "2026-09-01", expectedAmount: 400 },
+        ],
+      });
+
+      expect(payload.repaymentStructure).toBe("open_ended");
+      expect(payload.plannedInstallmentCount).toBeNull();
+      expect(payload.firstDueDate).toBeNull();
+      expect(payload.installments).toEqual([]);
+    });
+
     it("B. NEW_DEBT mode sets originalPrincipal equal to openingPrincipalBalance (single amount concept)", () => {
       const payload = buildDebtCreateInputPayload({
         debtId: "debt-new-1",

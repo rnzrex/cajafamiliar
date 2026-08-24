@@ -96,8 +96,25 @@ export function DebtOperationForm({
 
   const [submitting, setSubmitting] = useState(false);
   const [isUserModified, setIsUserModified] = useState(false);
-
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
+
+  const reversedIds = new Set(
+    debtEvents
+      .filter((e) => e.eventType === "reversal" && e.reversalOfEventId)
+      .map((e) => e.reversalOfEventId!)
+  );
+
+  const effectiveEvents = debtEvents.filter(
+    (e) => e.eventType !== "reversal" && !reversedIds.has(e.id)
+  );
+
+  effectiveEvents.sort((a, b) => {
+    if (a.eventDate !== b.eventDate) return a.eventDate.localeCompare(b.eventDate);
+    return (a.createdAt || "").localeCompare(b.createdAt || "");
+  });
+
+  const lastEffectiveEvent = effectiveEvents[effectiveEvents.length - 1];
+  const lastEventDate = lastEffectiveEvent ? lastEffectiveEvent.eventDate : null;
 
   const numCash = Number(cashAmount || 0);
   const suggestion = calculateAssistedInterestSuggestion({
@@ -105,6 +122,7 @@ export function DebtOperationForm({
     currentPrincipal,
     paymentDate: eventDate,
     cashAmount: numCash,
+    lastEventDate,
     nextInstallment: currentScheduleInstallments[0] || null,
   });
 

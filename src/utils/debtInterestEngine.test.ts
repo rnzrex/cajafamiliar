@@ -52,7 +52,7 @@ describe("DEBT-6B Assisted Interest Engine Tests", () => {
     expect(suggestion.suggestedInterest).toBe(200);
     expect(suggestion.suggestedPrincipal).toBe(100);
     expect(suggestion.principalAfterPayment).toBe(4900);
-    expect(suggestion.certainty).toBe("exact_rate");
+    expect(suggestion.certainty).toBe("tea_estimate");
     expect(suggestion.calculationExplanation).toContain("4% mensual");
     expect(suggestion.warningMessage).toBeNull();
   });

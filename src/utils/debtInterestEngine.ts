@@ -93,8 +93,8 @@ export function calculateAssistedInterestSuggestion(params: {
       if (elapsedDays === null || (elapsedDays >= Math.floor(expectedDays * 0.7) && elapsedDays <= Math.ceil(expectedDays * 1.5)) || nextInstallment) {
         calcInterest = round2(principal * (ratePercent / 100));
         calculationSource = "contract_periodic_rate";
-        certainty = "exact_rate";
-        calculationExplanation = `Calculado con tasa contractual de ${ratePercent}% ${basis === "monthly" ? "mensual" : basis === "biweekly" ? "quincenal" : "semanal"} sobre el saldo pendiente.`;
+        certainty = "tea_estimate";
+        calculationExplanation = `Estimación con tasa contractual de ${ratePercent}% ${basis === "monthly" ? "mensual" : basis === "biweekly" ? "quincenal" : "semanal"} sobre el saldo pendiente.`;
       } else {
         // Irregular or ambiguous elapsed period -> downgrade to insufficient_info
         certainty = "insufficient_info";

@@ -6,6 +6,7 @@ import { DebtDetailModal } from "./DebtDetailModal";
 import { DebtOperationForm } from "./DebtOperationForm";
 import type { Debt, FinancialAccount, Category, DebtEvent } from "../types";
 import type { DebtIntelligenceItem } from "../utils/debtIntelligence";
+import { calculateAssistedInterestSuggestion } from "../utils/debtInterestEngine";
 import * as dataRepository from "../services/dataRepository";
 
 vi.mock("../services/dataRepository", async () => {
@@ -239,5 +240,87 @@ describe("DEBT-6B Flexible Debt Management UX Tests", () => {
 
     expect(html).toContain("Registrar pago");
     expect(html).toContain("¿Cuánto pagaste en total?");
+  });
+
+  it("4. calculateAssistedInterestSuggestion uses previous effective event date as anchor date for interest suggestion", () => {
+    const eventsWithReversal: DebtEvent[] = [
+      {
+        id: "evt-1",
+        debtId: flexDebt.id,
+        eventDate: "2026-02-01",
+        eventType: "payment",
+        cashAmount: 450,
+        principalDelta: -250,
+        interestPaid: 200,
+        feesPaid: 0,
+        insurancePaid: 0,
+        otherCostPaid: 0,
+        breakdownComplete: true,
+        movementId: "mov-1",
+        reversalOfEventId: null,
+        description: "Pago cuota 1",
+        registeredByUserId: "user-1",
+        createdAt: "2026-02-01T10:00:00Z",
+      },
+      {
+        id: "evt-2",
+        debtId: flexDebt.id,
+        eventDate: "2026-02-15",
+        eventType: "payment",
+        cashAmount: 500,
+        principalDelta: -300,
+        interestPaid: 200,
+        feesPaid: 0,
+        insurancePaid: 0,
+        otherCostPaid: 0,
+        breakdownComplete: true,
+        movementId: "mov-2",
+        reversalOfEventId: null,
+        description: "Pago anulado",
+        registeredByUserId: "user-1",
+        createdAt: "2026-02-15T10:00:00Z",
+      },
+      {
+        id: "evt-3",
+        debtId: flexDebt.id,
+        eventDate: "2026-02-16",
+        eventType: "reversal",
+        cashAmount: -500,
+        principalDelta: 300,
+        interestPaid: -200,
+        feesPaid: 0,
+        insurancePaid: 0,
+        otherCostPaid: 0,
+        breakdownComplete: true,
+        movementId: "mov-3",
+        reversalOfEventId: "evt-2",
+        description: "Reversión de pago anulado",
+        registeredByUserId: "user-1",
+        createdAt: "2026-02-16T10:00:00Z",
+      },
+    ];
+
+    const reversedIds = new Set(
+      eventsWithReversal
+        .filter((e) => e.eventType === "reversal" && e.reversalOfEventId)
+        .map((e) => e.reversalOfEventId!)
+    );
+    const effectiveEvents = eventsWithReversal.filter(
+      (e) => e.eventType !== "reversal" && !reversedIds.has(e.id)
+    );
+    effectiveEvents.sort((a, b) => a.eventDate.localeCompare(b.eventDate));
+    const lastEffectiveEvent = effectiveEvents[effectiveEvents.length - 1];
+
+    expect(lastEffectiveEvent.eventDate).toBe("2026-02-01");
+
+    const suggestion = calculateAssistedInterestSuggestion({
+      debt: flexDebt,
+      currentPrincipal: 4750,
+      paymentDate: "2026-03-01",
+      cashAmount: 300,
+      lastEventDate: lastEffectiveEvent.eventDate,
+    });
+
+    expect(suggestion.calcInterest).toBe(190);
   });
 });

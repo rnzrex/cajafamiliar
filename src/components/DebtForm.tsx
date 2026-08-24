@@ -881,39 +881,43 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                 </>
               ) : (
                 <>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700">Fecha del primer pago</label>
-                    <input
-                      type="date"
-                      value={firstDueDate}
-                      onChange={(e) => setFirstDueDate(e.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700">Monto estimado de cuota</label>
-                    <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
-                      <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={plannedInstallmentAmount}
-                        onChange={(e) => setPlannedInstallmentAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700">Número de cuotas planeadas</label>
-                    <input
-                      type="number"
-                      value={plannedInstallmentCount}
-                      onChange={(e) => setPlannedInstallmentCount(e.target.value)}
-                      placeholder="Ej. 12"
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                    />
-                  </div>
+                  {repaymentStructure !== "open_ended" && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-700">Fecha del primer pago</label>
+                        <input
+                          type="date"
+                          value={firstDueDate}
+                          onChange={(e) => setFirstDueDate(e.target.value)}
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-700">Monto estimado de cuota</label>
+                        <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
+                          <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={plannedInstallmentAmount}
+                            onChange={(e) => setPlannedInstallmentAmount(e.target.value)}
+                            placeholder="0.00"
+                            className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-slate-700">Número de cuotas planeadas</label>
+                        <input
+                          type="number"
+                          value={plannedInstallmentCount}
+                          onChange={(e) => setPlannedInstallmentCount(e.target.value)}
+                          placeholder="Ej. 12"
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                        />
+                      </div>
+                    </>
+                  )}
                   {paymentFrequency === "custom" && (
                     <div>
                       <label className="block text-sm font-semibold text-slate-700">Días entre pagos (Frecuencia personalizada)</label>
@@ -965,8 +969,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
             />
           </div>
 
-          {/* Optional Schedule (Only non-card) */}
-          {!isCard && showAdvanced && (
+          {/* Optional Schedule (Only non-card, fixed schedule) */}
+          {!isCard && showAdvanced && repaymentStructure !== "open_ended" && (
             <div className="rounded-2xl border border-slate-200 p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-bold text-slate-800">Cronograma inicial de cuotas (Opcional)</h3>
