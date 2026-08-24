@@ -18,7 +18,7 @@ export interface AssistedInterestSuggestion {
 
 export interface EffectivePeriodicRateParams {
   teaPercent: number;
-  frequency?: string | null;
+  frequency: "monthly" | "biweekly" | "weekly";
 }
 
 export interface EffectivePeriodicRateResult {
@@ -40,8 +40,10 @@ function parseDaysBetween(startDateStr: string, endDateStr: string): number {
 }
 
 /**
- * Pure SSOT helper to convert TEA (Tasa Efectiva Anual) to periodic effective rate (e.g. TEM for monthly).
- * Formula for monthly: (1 + TEA)^(1/12) - 1.
+ * Pure SSOT helper to convert TEA (Tasa Efectiva Anual) to explicit periodic effective rate.
+ * - Monthly (1/12): (1 + TEA)^(1/12) - 1
+ * - Biweekly (14-day cycle): (1 + TEA)^(14/365) - 1
+ * - Weekly (7-day cycle): (1 + TEA)^(7/365) - 1
  * Never uses nominal division TEA / 12.
  */
 export function effectivePeriodicRateFromTea(params: EffectivePeriodicRateParams): EffectivePeriodicRateResult {
@@ -50,19 +52,15 @@ export function effectivePeriodicRateFromTea(params: EffectivePeriodicRateParams
     return { rateDecimal: 0, ratePercent: 0 };
   }
 
-  const freq = frequency || "monthly";
   let rateDecimal = 0;
-
-  if (freq === "monthly") {
+  if (frequency === "monthly") {
     rateDecimal = Math.pow(1 + teaPercent / 100, 1 / 12) - 1;
-  } else if (freq === "biweekly") {
-    rateDecimal = Math.pow(1 + teaPercent / 100, 1 / 24) - 1;
-  } else if (freq === "weekly") {
-    rateDecimal = Math.pow(1 + teaPercent / 100, 1 / 52) - 1;
-  } else if (freq === "daily") {
-    rateDecimal = Math.pow(1 + teaPercent / 100, 1 / 365) - 1;
+  } else if (frequency === "biweekly") {
+    rateDecimal = Math.pow(1 + teaPercent / 100, 14 / 365) - 1;
+  } else if (frequency === "weekly") {
+    rateDecimal = Math.pow(1 + teaPercent / 100, 7 / 365) - 1;
   } else {
-    rateDecimal = Math.pow(1 + teaPercent / 100, 1 / 12) - 1;
+    return { rateDecimal: 0, ratePercent: 0 };
   }
 
   return {
@@ -171,7 +169,7 @@ export function calculateAssistedInterestSuggestion(params: {
           calculationExplanation = "No se puede calcular estimación de interés sin un período transcurrido de días válido (la fecha de pago debe ser posterior a la fecha inicial o del último pago).";
         } else {
           const expectedDays = basis === "monthly" ? 30 : basis === "biweekly" ? 14 : 7;
-          if ((elapsedDays >= Math.floor(expectedDays * 0.7) && elapsedDays <= Math.ceil(expectedDays * 1.5)) || nextInstallment || debt.firstDueDate) {
+          if ((elapsedDays >= Math.floor(expectedDays * 0.7) && elapsedDays <= Math.ceil(expectedDays * 1.5)) || nextInstallment) {
             calcInterest = round2(principal * (ratePercent / 100));
             calculationSource = "contract_periodic_rate";
             certainty = "tea_estimate";
@@ -191,13 +189,13 @@ export function calculateAssistedInterestSuggestion(params: {
       calculationExplanation = "No tenemos un porcentaje de TEA válido para proponer la estimación.";
     } else {
       const frequency = debt.paymentFrequency;
-      const isContractualFrequencyKnown =
+      const isExplicitContractualFrequency =
         frequency === "monthly" ||
         frequency === "biweekly" ||
         frequency === "weekly";
 
-      if (isContractualFrequencyKnown) {
-        const effectiveFreq = frequency!;
+      if (isExplicitContractualFrequency) {
+        const effectiveFreq = frequency as "monthly" | "biweekly" | "weekly";
         const { rateDecimal, ratePercent } = effectivePeriodicRateFromTea({
           teaPercent: debt.teaPercent,
           frequency: effectiveFreq,
@@ -253,7 +251,7 @@ export function calculateAssistedInterestSuggestion(params: {
     suggestedInterest = cashPaid;
     suggestedPrincipal = 0;
     principalAfterPayment = principal;
-    warningMessage = `El pago ingresado (${currencySymbol} ${cashPaid.toFixed(2)}) no cubre el interés calculado (${currencySymbol} ${calcInterest.toFixed(2)}). El capital no se reduce.`;
+    warningMessage = `El pago ingresado (${currencySymbol} ${cashPaid.toFixed(2)}) no cubre el interés calculated (${currencySymbol} ${calcInterest.toFixed(2)}). El capital no se reduce.`;
   }
 
   return {
