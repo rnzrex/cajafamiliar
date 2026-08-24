@@ -16,6 +16,16 @@ export interface AssistedInterestSuggestion {
   warningMessage: string | null;
 }
 
+export interface EffectivePeriodicRateParams {
+  teaPercent: number;
+  frequency: "monthly" | "biweekly" | "weekly";
+}
+
+export interface EffectivePeriodicRateResult {
+  rateDecimal: number;
+  ratePercent: number;
+}
+
 function round2(val: number): number {
   return Math.round((val + Number.EPSILON) * 100) / 100;
 }
@@ -27,6 +37,36 @@ function parseDaysBetween(startDateStr: string, endDateStr: string): number {
   const diffTime = end.getTime() - start.getTime();
   const diffDays = Math.floor(diffTime / (1000 * 3600 * 24));
   return Math.max(0, diffDays);
+}
+
+/**
+ * Pure SSOT helper to convert TEA (Tasa Efectiva Anual) to explicit periodic effective rate.
+ * - Monthly (1/12): (1 + TEA)^(1/12) - 1
+ * - Biweekly (14-day cycle): (1 + TEA)^(14/365) - 1
+ * - Weekly (7-day cycle): (1 + TEA)^(7/365) - 1
+ * Never uses nominal division TEA / 12.
+ */
+export function effectivePeriodicRateFromTea(params: EffectivePeriodicRateParams): EffectivePeriodicRateResult {
+  const { teaPercent, frequency } = params;
+  if (teaPercent == null || teaPercent <= 0) {
+    return { rateDecimal: 0, ratePercent: 0 };
+  }
+
+  let rateDecimal = 0;
+  if (frequency === "monthly") {
+    rateDecimal = Math.pow(1 + teaPercent / 100, 1 / 12) - 1;
+  } else if (frequency === "biweekly") {
+    rateDecimal = Math.pow(1 + teaPercent / 100, 14 / 365) - 1;
+  } else if (frequency === "weekly") {
+    rateDecimal = Math.pow(1 + teaPercent / 100, 7 / 365) - 1;
+  } else {
+    return { rateDecimal: 0, ratePercent: 0 };
+  }
+
+  return {
+    rateDecimal,
+    ratePercent: rateDecimal * 100,
+  };
 }
 
 export function getLastEffectiveDebtPaymentDate(
@@ -135,7 +175,6 @@ export function calculateAssistedInterestSuggestion(params: {
             certainty = "tea_estimate";
             calculationExplanation = `Estimación con tasa contractual de ${ratePercent}% ${basis === "monthly" ? "mensual" : basis === "biweekly" ? "quincenal" : "semanal"} sobre el saldo pendiente.`;
           } else {
-            // Irregular or ambiguous elapsed period -> downgrade to insufficient_info
             certainty = "insufficient_info";
             calculationExplanation = `El período transcurrido (${elapsedDays} días) no coincide con un período contractual regular (${basis}).`;
           }
@@ -148,22 +187,42 @@ export function calculateAssistedInterestSuggestion(params: {
     if (debt.teaPercent == null || debt.teaPercent <= 0) {
       certainty = "insufficient_info";
       calculationExplanation = "No tenemos un porcentaje de TEA válido para proponer la estimación.";
-    } else if (anchorDate && paymentDate && paymentDate > anchorDate) {
-      const days = parseDaysBetween(anchorDate, paymentDate);
-      if (days > 0) {
-        const teaDecimal = debt.teaPercent / 100;
-        const periodRate = Math.pow(1 + teaDecimal, days / 365) - 1;
-        calcInterest = round2(principal * periodRate);
+    } else {
+      const frequency = debt.paymentFrequency;
+      const isExplicitContractualFrequency =
+        frequency === "monthly" ||
+        frequency === "biweekly" ||
+        frequency === "weekly";
+
+      if (isExplicitContractualFrequency) {
+        const effectiveFreq = frequency as "monthly" | "biweekly" | "weekly";
+        const { rateDecimal, ratePercent } = effectivePeriodicRateFromTea({
+          teaPercent: debt.teaPercent,
+          frequency: effectiveFreq,
+        });
+
+        calcInterest = round2(principal * rateDecimal);
         calculationSource = "tea_estimate";
         certainty = "tea_estimate";
-        calculationExplanation = `Estimación calculada con TEA (${debt.teaPercent}% anual) para ${days} días. TCEA no se utiliza para calcular el interés del pago.`;
+        const label = effectiveFreq === "monthly" ? "TEM" : effectiveFreq === "biweekly" ? "TEQ" : "TES";
+        calculationExplanation = `Calculado con ${label} ${ratePercent.toFixed(4)}% derivada de una TEA de ${debt.teaPercent}%. TCEA no se utiliza para calcular el interés.`;
+      } else if (anchorDate && paymentDate && paymentDate > anchorDate) {
+        const days = parseDaysBetween(anchorDate, paymentDate);
+        if (days > 0) {
+          const teaDecimal = debt.teaPercent / 100;
+          const periodRate = Math.pow(1 + teaDecimal, days / 365) - 1;
+          calcInterest = round2(principal * periodRate);
+          calculationSource = "tea_estimate";
+          certainty = "tea_estimate";
+          calculationExplanation = `Estimación calculada con TEA (${debt.teaPercent}% anual) para ${days} días. TCEA no se utiliza para calcular el interés del pago.`;
+        } else {
+          certainty = "insufficient_info";
+          calculationExplanation = "No se puede calcular estimación TEA sin un período transcurrido de días válido.";
+        }
       } else {
         certainty = "insufficient_info";
-        calculationExplanation = "No se puede calcular estimación TEA sin un período transcurrido de días válido.";
+        calculationExplanation = "No se puede calcular estimación TEA sin un período transcurrido de días válido o una frecuencia contractual definida.";
       }
-    } else {
-      certainty = "insufficient_info";
-      calculationExplanation = "No se puede calcular estimación TEA sin un período transcurrido de días válido.";
     }
   }
   // Priority 4: Manual / Unknown / Insufficient Info
@@ -181,7 +240,6 @@ export function calculateAssistedInterestSuggestion(params: {
   let warningMessage: string | null = null;
 
   if (certainty === "insufficient_info") {
-    // REQUIREMENT 4: NEVER FABRICATE PRINCIPAL WHEN INTEREST IS UNKNOWN
     suggestedInterest = 0;
     suggestedPrincipal = 0;
     principalAfterPayment = principal;
@@ -190,7 +248,6 @@ export function calculateAssistedInterestSuggestion(params: {
     suggestedPrincipal = round2(cashPaid - calcInterest);
     principalAfterPayment = round2(Math.max(0, principal - suggestedPrincipal));
   } else {
-    // Underpaid interest: payment does not cover calculated interest
     suggestedInterest = cashPaid;
     suggestedPrincipal = 0;
     principalAfterPayment = principal;
