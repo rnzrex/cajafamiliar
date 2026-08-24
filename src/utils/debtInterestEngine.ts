@@ -119,18 +119,27 @@ export function calculateAssistedInterestSuggestion(params: {
       }
     } else {
       // Monthly, biweekly, weekly
-      const expectedDays = basis === "monthly" ? 30 : basis === "biweekly" ? 14 : 7;
-      const elapsedDays = anchorDate && paymentDate && paymentDate > anchorDate ? parseDaysBetween(anchorDate, paymentDate) : null;
-
-      if (elapsedDays === null || (elapsedDays >= Math.floor(expectedDays * 0.7) && elapsedDays <= Math.ceil(expectedDays * 1.5)) || nextInstallment) {
-        calcInterest = round2(principal * (ratePercent / 100));
-        calculationSource = "contract_periodic_rate";
-        certainty = "tea_estimate";
-        calculationExplanation = `Estimación con tasa contractual de ${ratePercent}% ${basis === "monthly" ? "mensual" : basis === "biweekly" ? "quincenal" : "semanal"} sobre el saldo pendiente.`;
-      } else {
-        // Irregular or ambiguous elapsed period -> downgrade to insufficient_info
+      if (!anchorDate || !paymentDate || paymentDate <= anchorDate) {
         certainty = "insufficient_info";
-        calculationExplanation = `El período transcurrido (${elapsedDays} días) no coincide con un período contractual regular (${basis}).`;
+        calculationExplanation = "No se puede calcular estimación de interés sin un período transcurrido de días válido (la fecha de pago debe ser posterior a la fecha inicial o del último pago).";
+      } else {
+        const elapsedDays = parseDaysBetween(anchorDate, paymentDate);
+        if (elapsedDays <= 0) {
+          certainty = "insufficient_info";
+          calculationExplanation = "No se puede calcular estimación de interés sin un período transcurrido de días válido (la fecha de pago debe ser posterior a la fecha inicial o del último pago).";
+        } else {
+          const expectedDays = basis === "monthly" ? 30 : basis === "biweekly" ? 14 : 7;
+          if ((elapsedDays >= Math.floor(expectedDays * 0.7) && elapsedDays <= Math.ceil(expectedDays * 1.5)) || nextInstallment) {
+            calcInterest = round2(principal * (ratePercent / 100));
+            calculationSource = "contract_periodic_rate";
+            certainty = "tea_estimate";
+            calculationExplanation = `Estimación con tasa contractual de ${ratePercent}% ${basis === "monthly" ? "mensual" : basis === "biweekly" ? "quincenal" : "semanal"} sobre el saldo pendiente.`;
+          } else {
+            // Irregular or ambiguous elapsed period -> downgrade to insufficient_info
+            certainty = "insufficient_info";
+            calculationExplanation = `El período transcurrido (${elapsedDays} días) no coincide con un período contractual regular (${basis}).`;
+          }
+        }
       }
     }
   }

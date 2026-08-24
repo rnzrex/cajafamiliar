@@ -181,3 +181,31 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
     periodicRateBasis: params.periodicRateBasis ?? null,
   };
 }
+
+export function validateDebtFinancialTerms(input: {
+  interestCalculationMode?: string | null;
+  periodicRatePercent?: string | number | null;
+  periodicRateBasis?: string | null;
+  teaPercent?: string | number | null;
+}): { valid: boolean; error?: string } {
+  const mode = input.interestCalculationMode;
+  if (mode === "contract_periodic_rate") {
+    const rate = input.periodicRatePercent != null && input.periodicRatePercent !== "" ? Number(input.periodicRatePercent) : null;
+    const basis = input.periodicRateBasis;
+    if (rate == null || isNaN(rate) || rate <= 0 || !basis) {
+      return {
+        valid: false,
+        error: "La tasa periódica contractual requiere un porcentaje mayor a 0 y una frecuencia válida (mensual, quincenal, semanal o diaria).",
+      };
+    }
+  } else if (mode === "tea_estimate") {
+    const tea = input.teaPercent != null && input.teaPercent !== "" ? Number(input.teaPercent) : null;
+    if (tea == null || isNaN(tea) || tea <= 0) {
+      return {
+        valid: false,
+        error: "La estimación por TEA requiere especificar una Tasa Efectiva Anual (TEA) mayor a 0%.",
+      };
+    }
+  }
+  return { valid: true };
+}

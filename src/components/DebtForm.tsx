@@ -7,6 +7,7 @@ import {
   getCurrencySymbol,
   formatReviewDate,
   buildDebtCreateInputPayload,
+  validateDebtFinancialTerms,
 } from "../utils/debtFormMode";
 import { createDebt, createCreditCardDebt } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
@@ -161,6 +162,17 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
     if (Number(openingPrincipalBalance) < 0) {
       setToast({ message: "El saldo adeudado no puede ser un monto negativo.", type: "error" });
+      return false;
+    }
+
+    const termsValidation = validateDebtFinancialTerms({
+      interestCalculationMode,
+      periodicRatePercent,
+      periodicRateBasis,
+      teaPercent,
+    });
+    if (!termsValidation.valid) {
+      setToast({ message: termsValidation.error || "Términos financieros no válidos.", type: "error" });
       return false;
     }
 

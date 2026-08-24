@@ -7,6 +7,7 @@ import {
   buildPledgeCollateralList,
   getCurrencySymbol,
   formatReviewDate,
+  validateDebtFinancialTerms,
 } from "../utils/debtFormMode";
 import * as dataRepository from "../services/dataRepository";
 import type { FinancialAccount, Category } from "../types";
@@ -186,6 +187,18 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
       expect(formatReviewDate("2026-01-05")).toBe("05/01/2026");
       expect(formatReviewDate("")).toBe("—");
       expect(formatReviewDate(null)).toBe("—");
+    });
+
+    it("F. validateDebtFinancialTerms enforces coherent mode and rate inputs locally", () => {
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "contract_periodic_rate", periodicRatePercent: 0, periodicRateBasis: "monthly" }).valid).toBe(false);
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "contract_periodic_rate", periodicRatePercent: 4, periodicRateBasis: null }).valid).toBe(false);
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "contract_periodic_rate", periodicRatePercent: 4, periodicRateBasis: "monthly" }).valid).toBe(true);
+
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "tea_estimate", teaPercent: 0 }).valid).toBe(false);
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "tea_estimate", teaPercent: 60.1 }).valid).toBe(true);
+
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "manual" }).valid).toBe(true);
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "unknown" }).valid).toBe(true);
     });
   });
 

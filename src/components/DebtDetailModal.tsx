@@ -31,7 +31,7 @@ import {
 import { formatDebtMoney } from "../utils/debtPresentation";
 import { setDebtArchived, updateDebtMetadata, updateDebtTerms } from "../services/dataRepository";
 import { buildDebtPaymentLedger } from "../utils/debtPaymentLedger";
-import { getCurrencySymbol, formatReviewDate } from "../utils/debtFormMode";
+import { getCurrencySymbol, formatReviewDate, validateDebtFinancialTerms } from "../utils/debtFormMode";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 
@@ -209,6 +209,16 @@ export function DebtDetailModal({
     e.preventDefault();
     if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
       setToast({ message: "Las operaciones de deuda requieren conexión a internet.", type: "error" });
+      return;
+    }
+    const termsValidation = validateDebtFinancialTerms({
+      interestCalculationMode: editInterestCalcMode,
+      periodicRatePercent: editPeriodicRatePercent,
+      periodicRateBasis: editPeriodicRateBasis,
+      teaPercent: editTeaPercent,
+    });
+    if (!termsValidation.valid) {
+      setToast({ message: termsValidation.error || "Términos financieros no válidos.", type: "error" });
       return;
     }
     setSubmitting(true);

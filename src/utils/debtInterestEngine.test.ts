@@ -156,6 +156,53 @@ describe("DEBT-6B Assisted Interest Engine Tests", () => {
     expect(suggestion.warningMessage).toContain("$");
   });
 
+  it("7. periodic rate with zero/invalid elapsed period blocks calculation", () => {
+    const debt: Debt = {
+      ...baseDebt,
+      interestCalculationMode: "contract_periodic_rate",
+      periodicRatePercent: 4,
+      periodicRateBasis: "monthly",
+      trackingStartDate: "2026-02-01",
+    };
+
+    // Same day as anchor -> 0 days elapsed
+    const suggestionSameDay = calculateAssistedInterestSuggestion({
+      debt,
+      currentPrincipal: 5000,
+      paymentDate: "2026-02-01",
+      cashAmount: 300,
+    });
+
+    expect(suggestionSameDay.certainty).toBe("insufficient_info");
+    expect(suggestionSameDay.calcInterest).toBe(0);
+    expect(suggestionSameDay.suggestedInterest).toBe(0);
+    expect(suggestionSameDay.suggestedPrincipal).toBe(0);
+
+    // Payment before anchor -> invalid elapsed
+    const suggestionBeforeAnchor = calculateAssistedInterestSuggestion({
+      debt,
+      currentPrincipal: 5000,
+      paymentDate: "2026-01-15",
+      cashAmount: 300,
+    });
+
+    expect(suggestionBeforeAnchor.certainty).toBe("insufficient_info");
+    expect(suggestionBeforeAnchor.calcInterest).toBe(0);
+
+    // Valid ~monthly period -> gives assisted estimate
+    const suggestionValidPeriod = calculateAssistedInterestSuggestion({
+      debt,
+      currentPrincipal: 5000,
+      paymentDate: "2026-03-03",
+      cashAmount: 300,
+    });
+
+    expect(suggestionValidPeriod.certainty).toBe("tea_estimate");
+    expect(suggestionValidPeriod.calcInterest).toBe(200);
+    expect(suggestionValidPeriod.suggestedInterest).toBe(200);
+    expect(suggestionValidPeriod.suggestedPrincipal).toBe(100);
+  });
+
   describe("getLastEffectiveDebtPaymentDate Pure Production Helper Tests", () => {
     it("A. prevents cross-debt contamination (Debt A payment vs Debt B payment)", () => {
       const events: DebtEvent[] = [
