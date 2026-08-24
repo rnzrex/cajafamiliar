@@ -1,0 +1,49 @@
+name: Temporary debt service hotfix
+
+on:
+  push:
+    branches:
+      - hotfix/debt-service-planning-total-20260824
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: ${{ !contains(github.event.head_commit.message, '[hotfix-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply focused hotfix
+        run: python3 scripts/apply-hotfix-debt-service.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run test suite
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Diff hygiene
+        run: git diff --check
+
+      - name: Commit validated hotfix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src
+          git commit -m "fix: unify debt service planning and totals [hotfix-applied]"
+          git push origin HEAD:hotfix/debt-service-planning-total-20260824
