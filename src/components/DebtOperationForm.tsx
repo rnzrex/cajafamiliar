@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ArrowLeft, AlertCircle } from "lucide-react";
-import type { Debt, FinancialAccount, Category, DebtInstallment, DebtScheduleVersion, DebtEvent, DebtEventInstallmentAllocation } from "../types";
-import { recordDebtPayment, recordDebtPrepayment, recordDebtPayoff, reverseDebtEvent } from "../services/dataRepository";
+import type { Debt, FinancialAccount, Category, DebtInstallment, DebtScheduleVersion, DebtEvent, DebtEventInstallmentAllocation, PrepaymentEffect } from "../types";
+import { recordDebtPayment, recordDebtPrepayment, recordDebtPayoff, reverseDebtEvent, recordDebtInstallmentAdvance } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError, validateDebtPayment, validateDebtPrepayment, validateDebtPayoff, validateDebtAllocations, debtEconomicSummary } from "../utils/debtViewModel";
@@ -12,7 +12,7 @@ import { getCurrencySymbol } from "../utils/debtFormMode";
 
 interface DebtOperationFormProps {
   debt: Debt;
-  operationType: "payment" | "prepayment" | "payoff" | "reversal";
+  operationType: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance";
   targetEventId?: string;
   installments: DebtInstallment[];
   scheduleVersions: DebtScheduleVersion[];
@@ -394,6 +394,7 @@ export function DebtOperationForm({
   const titleMap = {
     payment: isFlexOpenEnded ? "Registrar pago" : "Registrar pago de cuota",
     prepayment: "Registrar prepago de principal",
+    installment_advance: "Adelantar cuotas futuras",
     payoff: "Liquidar deuda",
     reversal: "Revertir registro",
   };

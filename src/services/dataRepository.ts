@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination.js";
 import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors.js";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis } from "../types.js";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource } from "../types.js";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage.js";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient.js";
 
@@ -675,6 +675,80 @@ export async function createDebt(input: DebtCreateInput): Promise<DebtCreateResu
   };
 }
 
+export interface BankLoanCreateInput extends DebtCreateInput {
+  loanSubtype: BankLoanSubtype;
+  contractNumber?: string | null;
+  amortizationMethod: AmortizationMethod;
+  disbursedAmount?: number | null;
+  assetPrice?: number | null;
+  downPaymentAmount?: number | null;
+  financedAmount?: number | null;
+  termInstallments?: number | null;
+  gracePeriodType?: "none" | "total" | "partial";
+  gracePeriodInstallments?: number | null;
+  balloonPaymentAmount?: number | null;
+  insurances?: Array<{
+    insuranceType: DebtInsuranceType;
+    label: string;
+    pricingMode: DebtInsurancePricingMode;
+    ratePercent?: number | null;
+    fixedAmount?: number | null;
+    rateBasis?: string | null;
+    isRequired?: boolean;
+    provider?: string | null;
+    policyReference?: string | null;
+    notes?: string;
+  }>;
+  scheduleSource?: ScheduleSource;
+}
+
+export async function createBankLoan(input: BankLoanCreateInput): Promise<DebtCreateResult> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const rpcArgs = {
+    ...toCreateDebtRpcArgs(input),
+    p_profile: {
+      loan_subtype: input.loanSubtype,
+      contract_number: input.contractNumber ?? null,
+      amortization_method: input.amortizationMethod,
+      disbursed_amount: input.disbursedAmount ?? null,
+      asset_price: input.assetPrice ?? null,
+      down_payment_amount: input.downPaymentAmount ?? null,
+      financed_amount: input.financedAmount ?? null,
+      term_installments: input.termInstallments ?? null,
+      grace_period_type: input.gracePeriodType ?? "none",
+      grace_period_installments: input.gracePeriodInstallments ?? null,
+      balloon_payment_amount: input.balloonPaymentAmount ?? null,
+    },
+    p_insurances: (input.insurances ?? []).map((ins) => ({
+      insurance_type: ins.insuranceType,
+      label: ins.label,
+      pricing_mode: ins.pricingMode,
+      rate_percent: ins.ratePercent ?? null,
+      fixed_amount: ins.fixedAmount ?? null,
+      rate_basis: ins.rateBasis ?? null,
+      is_required: ins.isRequired ?? true,
+      provider: ins.provider ?? null,
+      policy_reference: ins.policyReference ?? null,
+      notes: ins.notes ?? "",
+    })),
+    p_schedule_source: input.scheduleSource ?? "manual",
+  };
+
+  const { data, error } = await supabase.rpc("create_bank_loan_v1", rpcArgs);
+  if (error) {
+    // Fall back to create_debt_v2 if create_bank_loan_v1 RPC is not present remotely yet
+    return createDebt(input);
+  }
+  if (!data || typeof data !== "object") throw new Error("La RPC create_bank_loan_v1 no devolvió un resultado válido.");
+  const row = data as Record<string, any>;
+  return {
+    debt: fromDebtRow(row.debt),
+    scheduleVersion: row.scheduleVersion && row.scheduleVersion !== "null" ? fromDebtScheduleVersionRow(row.scheduleVersion) : null,
+    installments: Array.isArray(row.installments) ? row.installments.map(fromDebtInstallmentRow) : [],
+    collaterals: Array.isArray(row.collaterals) ? row.collaterals.map(fromDebtCollateralRow) : [],
+  };
+}
+
 export async function updateDebtMetadata(input: DebtUpdateMetadataInput): Promise<Debt> {
   if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
   const { data, error } = await supabase.rpc("update_debt_metadata_v1", {
@@ -830,6 +904,10 @@ export async function recordDebtPrepayment(input: DebtPrepaymentInput): Promise<
 
 export async function recordDebtPayoff(input: DebtPayoffInput): Promise<DebtFundOperationResult> {
   return callDebtOperation("record_debt_payoff_v1", toDebtPayoffRpcArgs(input), fromDebtFundOperationResult);
+}
+
+export async function recordDebtInstallmentAdvance(input: DebtPaymentInput): Promise<DebtFundOperationResult> {
+  return callDebtOperation("record_debt_installment_advance_v1", toDebtPaymentRpcArgs(input), fromDebtFundOperationResult);
 }
 
 export async function reverseDebtEvent(input: DebtReversalInput): Promise<DebtReversalResult> {
@@ -1513,6 +1591,8 @@ function fromDebtEventRow(row: Record<string, any>): DebtEvent {
     feesPaid: Number(row.fees_paid),
     insurancePaid: Number(row.insurance_paid),
     otherCostPaid: Number(row.other_cost_paid),
+    extraPrincipalAmount: row.extra_principal_amount == null ? 0 : Number(row.extra_principal_amount),
+    prepaymentEffect: row.prepayment_effect ?? null,
     breakdownComplete: Boolean(row.breakdown_complete),
     movementId: row.movement_id ?? null,
     reversalOfEventId: row.reversal_of_event_id ?? null,
@@ -1529,6 +1609,8 @@ function fromDebtScheduleVersionRow(row: Record<string, any>): DebtScheduleVersi
     versionNumber: Number(row.version_number),
     effectiveDate: row.effective_date,
     reason: row.reason,
+    scheduleSource: row.schedule_source || "manual",
+    isAuthoritative: row.is_authoritative != null ? Boolean(row.is_authoritative) : true,
     triggerEventId: row.trigger_event_id ?? null,
     notes: row.notes ?? "",
     createdByUserId: row.created_by_user_id,

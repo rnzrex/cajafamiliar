@@ -55,7 +55,7 @@ interface DebtDetailModalProps {
   canWriteDebt?: boolean;
   onClose: () => void;
   onOpenOperation: (
-    operationType: "payment" | "prepayment" | "payoff" | "reversal",
+    operationType: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance",
     targetEventId?: string
   ) => void;
   onRefresh: () => Promise<void> | void;
@@ -467,13 +467,22 @@ export function DebtDetailModal({
                   <DollarSign className="h-4 w-4" /> {isFlexOpenEnded ? "Registrar pago" : "Registrar pago"}
                 </button>
                 {!isFlexOpenEnded && (
-                  <button
-                    type="button"
-                    onClick={() => onOpenOperation("prepayment")}
-                    className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-indigo-700"
-                  >
-                    <ArrowUpRight className="h-4 w-4" /> Prepago
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onOpenOperation("prepayment")}
+                      className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-indigo-700"
+                    >
+                      <ArrowUpRight className="h-4 w-4" /> Prepago
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onOpenOperation("installment_advance")}
+                      className="flex items-center gap-1.5 rounded-xl bg-purple-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-purple-700"
+                    >
+                      <ArrowUpRight className="h-4 w-4" /> Adelantar cuotas
+                    </button>
+                  </>
                 )}
                 <button
                   type="button"

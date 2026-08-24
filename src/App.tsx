@@ -167,7 +167,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null);
   const selectedDebt = useMemo(() => data.debts.find((d) => d.id === selectedDebtId) ?? null, [data.debts, selectedDebtId]);
   const [debtOperationState, setDebtOperationState] = useState<{
-    type: "payment" | "prepayment" | "payoff" | "reversal";
+    type: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance";
     targetEventId?: string;
   } | null>(null);
   const [dataReady, setDataReady] = useState(!isSupabaseConfigured);

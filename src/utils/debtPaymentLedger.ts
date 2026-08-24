@@ -48,6 +48,8 @@ function getEventTypeLabel(eventType: string): string {
     case "principal_prepayment":
     case "prepayment":
       return "Amortización de capital";
+    case "installment_advance":
+      return "Adelanto de cuotas";
     case "payoff":
       return "Cancelación / Liquidación";
     case "reversal":
