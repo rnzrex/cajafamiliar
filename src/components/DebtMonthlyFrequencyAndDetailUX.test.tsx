@@ -56,7 +56,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
   it("3. TEA 51.11% with monthly frequency and principal 6510 yields interest 227.86", () => {
     const debt: Debt = {
       id: "d1",
-      householdId: "h1",
+      createdByUserId: "u1",
       name: "Deuda TEA",
       creditorName: "Banco",
       debtKind: "bank_loan",
@@ -102,7 +102,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
   it("4. Minimum principal 30 with interest 227.86 yields minimum payment 257.86 and principal after 6480.00", () => {
     const debt: Debt = {
       id: "d1",
-      householdId: "h1",
+      createdByUserId: "u1",
       name: "Deuda TEA",
       creditorName: "Banco",
       debtKind: "bank_loan",
@@ -148,7 +148,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
   it("5. 7-day first-due gap with explicit monthly paymentFrequency STILL calculates contractual TEM interest 227.86", () => {
     const debt: Debt = {
       id: "d1",
-      householdId: "h1",
+      createdByUserId: "u1",
       name: "Deuda TEA 7 Días",
       creditorName: "Banco",
       debtKind: "pledge",
@@ -192,7 +192,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
   it("6. frequency null with 7-day gap falls back to actual-day calculation (≈ 51.75)", () => {
     const debt: Debt = {
       id: "d1",
-      householdId: "h1",
+      createdByUserId: "u1",
       name: "Deuda TEA Sin Frecuencia",
       creditorName: "Banco",
       debtKind: "pledge",
@@ -236,7 +236,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
   it("7. Edit Terms form in DebtDetailModal renders Frecuencia and Editar términos", () => {
     const debt: Debt = {
       id: "d1",
-      householdId: "h1",
+      createdByUserId: "u1",
       name: "Préstamo Test",
       creditorName: "BCP",
       debtKind: "bank_loan",
@@ -305,7 +305,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
   it("9. Terms summary displays explicit Frecuencia Mensual and calculated TEM 3.5002%", () => {
     const debt: Debt = {
       id: "d1",
-      householdId: "h1",
+      createdByUserId: "u1",
       name: "Préstamo TEA",
       creditorName: "BCP",
       debtKind: "bank_loan",
@@ -369,7 +369,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
   it("10. Changing TCEA does not alter calculated interest amount", () => {
     const debtTEAOnly: Debt = {
       id: "d1",
-      householdId: "h1",
+      createdByUserId: "u1",
       name: "Deuda TEA",
       creditorName: "Banco",
       debtKind: "bank_loan",
@@ -413,7 +413,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX", () => {
     const onClose = vi.fn();
     const debt: Debt = {
       id: "d1",
-      householdId: "h1",
+      createdByUserId: "u1",
       name: "Deuda In-Page",
       creditorName: "Banco",
       debtKind: "bank_loan",
