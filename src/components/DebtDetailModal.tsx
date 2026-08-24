@@ -158,9 +158,9 @@ export function DebtDetailModal({
 
   const canDeletePristine =
     allEventsForDebt.length === 0 &&
-    (debt.debtKind !== "credit_card" ||
-      ((creditCardEntries || []).filter((e) => e.debtId === debt.id).length === 0 &&
-       (creditCardStatements || []).filter((s) => s.debtId === debt.id).length === 0));
+    ((debt.debtKind as string) !== "credit_card" ||
+      (((creditCardEntries || []).filter((e) => e.debtId === debt.id).length === 0) &&
+       ((cardStatements || []).filter((s) => s.debtId === debt.id).length === 0)));
 
   const handleToggleArchive = async () => {
     if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {

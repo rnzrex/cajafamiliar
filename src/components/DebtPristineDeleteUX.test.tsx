@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Debt, DebtEvent, CreditCardEntry, CreditCardStatement } from "../types";
 import { translateDebtError } from "../utils/debtViewModel";
 
@@ -41,7 +41,7 @@ describe("DEBT-6B.3 Pristine Delete UX & Logic Tests", () => {
   ): boolean => {
     const hasEvents = events.some((e) => e.debtId === debt.id);
     if (hasEvents) return false;
-    if (debt.debtKind === "credit_card") {
+    if ((debt.debtKind as string) === "credit_card") {
       const hasEntries = cardEntries.some((e) => e.debtId === debt.id);
       const hasStatements = cardStatements.some((s) => s.debtId === debt.id);
       if (hasEntries || hasStatements) return false;
@@ -57,6 +57,7 @@ describe("DEBT-6B.3 Pristine Delete UX & Logic Tests", () => {
     const event: DebtEvent = {
       id: "event-1",
       debtId: baseDebt.id,
+      movementId: null,
       eventType: "payment",
       eventDate: "2026-02-01",
       cashAmount: 100,
@@ -65,7 +66,10 @@ describe("DEBT-6B.3 Pristine Delete UX & Logic Tests", () => {
       feesPaid: 0,
       insurancePaid: 0,
       otherCostPaid: 0,
+      reversalOfEventId: null,
+      description: "Pago",
       breakdownComplete: true,
+      registeredByUserId: "user-1",
       createdAt: "2026-02-01T00:00:00Z",
     };
     expect(isDebtPristine(baseDebt, [event])).toBe(false);
@@ -81,12 +85,13 @@ describe("DEBT-6B.3 Pristine Delete UX & Logic Tests", () => {
     const entry: CreditCardEntry = {
       id: "entry-1",
       debtId: cardDebt.id,
+      entryDate: "2026-02-01",
       entryType: "purchase",
-      transactionDate: "2026-02-01",
-      postDate: "2026-02-01",
+      liabilityDelta: 50,
+      movementId: null,
+      reversalOfEntryId: null,
       description: "Compra",
-      amount: 50,
-      status: "posted",
+      registeredByUserId: "user-1",
       createdAt: "2026-02-01T00:00:00Z",
     };
     expect(isDebtPristine(cardDebt, [], [entry], [])).toBe(false);
@@ -102,6 +107,7 @@ describe("DEBT-6B.3 Pristine Delete UX & Logic Tests", () => {
     const reversedEvent: DebtEvent = {
       id: "event-rev-1",
       debtId: baseDebt.id,
+      movementId: null,
       eventType: "reversal",
       eventDate: "2026-02-01",
       cashAmount: 0,
@@ -110,7 +116,10 @@ describe("DEBT-6B.3 Pristine Delete UX & Logic Tests", () => {
       feesPaid: 0,
       insurancePaid: 0,
       otherCostPaid: 0,
+      reversalOfEventId: null,
+      description: "Reversión",
       breakdownComplete: true,
+      registeredByUserId: "user-1",
       createdAt: "2026-02-01T00:00:00Z",
     };
     expect(isDebtPristine(baseDebt, [reversedEvent])).toBe(false);
