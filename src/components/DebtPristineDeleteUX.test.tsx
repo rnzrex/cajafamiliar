@@ -112,7 +112,7 @@ describe("DEBT-6B.3 Pristine Delete UX & Component Regressions", () => {
       payoffCount: 0,
       inconsistentEventCount: 0,
     },
-    rateBasis: null,
+    rateBasis: "tcea",
     ratePercent: null,
     hasCurrentSchedule: false,
     currentScheduleId: null,
@@ -288,7 +288,10 @@ describe("DEBT-6B.3 Pristine Delete UX & Component Regressions", () => {
       dueDate: "2026-02-15",
       statementBalance: 500,
       minimumPaymentAmount: 50,
+      closingEntryId: null,
+      createdByUserId: "user-1",
       createdAt: "2026-02-01T00:00:00Z",
+      updatedAt: "2026-02-01T00:00:00Z",
     };
 
     const html = renderToStaticMarkup(
