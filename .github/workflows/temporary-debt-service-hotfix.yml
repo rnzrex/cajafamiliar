@@ -1,22 +1,24 @@
 name: Temporary debt service hotfix
 
 on:
-  push:
+  pull_request:
     branches:
-      - hotfix/debt-service-planning-total-20260824
+      - main
+    types:
+      - opened
 
 permissions:
   contents: write
 
 jobs:
   apply-and-verify:
-    if: ${{ !contains(github.event.head_commit.message, '[hotfix-applied]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout branch
+      - name: Checkout hotfix branch
         uses: actions/checkout@v4
         with:
+          ref: hotfix/debt-service-planning-total-20260824
           fetch-depth: 0
 
       - name: Set up Node
