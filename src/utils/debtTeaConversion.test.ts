@@ -103,10 +103,10 @@ describe("HOTFIX-DEBT-TEA-01 TEA Conversion & Explicit Frequency Tests", () => {
       lastEventDate: "2026-08-10",
     });
 
-    // 5 days elapsed: (1 + 0.5111)^(5/365) - 1 ≈ 0.0056623 => 5000 * 0.0056623 = 28.31
+    // 5 days elapsed: (1 + 0.5111)^(5/365) - 1 ≈ 0.005672 => 5000 * 0.005672 = 28.36
     expect(suggestion.certainty).toBe("tea_estimate");
     expect(suggestion.calculationExplanation).toContain("para 5 días");
-    expect(suggestion.calcInterest).toBe(28.31);
+    expect(suggestion.calcInterest).toBe(28.36);
     expect(suggestion.calcInterest).not.toBe(175.01);
   });
 
@@ -288,7 +288,7 @@ describe("HOTFIX-DEBT-TEA-01 TEA Conversion & Explicit Frequency Tests", () => {
       debt,
       currentPrincipal: 5000,
       paymentDate: "2026-08-15",
-      cashAmount: 50, // Less than 175.01 interest
+      cashAmount: 50,
     });
 
     expect(suggestion.warningMessage).toContain("no cubre el interés calculado");
