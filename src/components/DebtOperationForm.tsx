@@ -6,6 +6,8 @@ import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError, validateDebtPayment, validateDebtPrepayment, validateDebtPayoff, validateDebtAllocations, debtEconomicSummary } from "../utils/debtViewModel";
 import { currentDebtScheduleVersion, allocatedAmountForInstallment } from "../utils/debtCalculations";
+import { calculateAssistedInterestSuggestion, getLastEffectiveDebtPaymentDate } from "../utils/debtInterestEngine";
+import { getCurrencySymbol } from "../utils/debtFormMode";
 
 interface DebtOperationFormProps {
   debt: Debt;
@@ -50,9 +52,13 @@ export function DebtOperationForm({
   const activeAccounts = accounts.filter((acc) => acc.isActive !== false);
   const [accountId, setAccountId] = useState(activeAccounts[0]?.id ?? "");
 
+  const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
+
   const [description, setDescription] = useState(
     operationType === "payment"
-      ? `Pago de cuota — ${debt.name}`
+      ? isFlexOpenEnded
+        ? `Pago de deuda — ${debt.name}`
+        : `Pago de cuota — ${debt.name}`
       : operationType === "prepayment"
         ? `Prepago de principal — ${debt.name}`
         : operationType === "payoff"
@@ -89,8 +95,32 @@ export function DebtOperationForm({
   const [scheduleNotes, setScheduleNotes] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
+  const [isUserModified, setIsUserModified] = useState(false);
+  const currencySymbol = getCurrencySymbol(debt.currencyCode);
+
+  const lastEventDate = getLastEffectiveDebtPaymentDate(debtEvents, debt.id);
 
   const numCash = Number(cashAmount || 0);
+  const suggestion = calculateAssistedInterestSuggestion({
+    debt,
+    currentPrincipal,
+    paymentDate: eventDate,
+    cashAmount: numCash,
+    lastEventDate,
+    nextInstallment: currentScheduleInstallments[0] || null,
+  });
+
+  const applySuggestion = () => {
+    if (suggestion.certainty !== "insufficient_info") {
+      setInterestPaid(suggestion.suggestedInterest.toString());
+      setPrincipalAmount(suggestion.suggestedPrincipal.toString());
+      setOtherCostPaid(suggestion.suggestedOtherCosts.toString());
+      setFeesPaid("0");
+      setInsurancePaid("0");
+    }
+    setIsUserModified(false);
+  };
+
   const numPrincipal = Number(principalAmount || 0);
   const numInterest = Number(interestPaid || 0);
   const numFees = Number(feesPaid || 0);
@@ -320,7 +350,7 @@ export function DebtOperationForm({
   };
 
   const titleMap = {
-    payment: "Registrar pago de cuota",
+    payment: isFlexOpenEnded ? "Registrar pago" : "Registrar pago de cuota",
     prepayment: "Registrar prepago de principal",
     payoff: "Liquidar deuda",
     reversal: "Revertir registro",
@@ -389,7 +419,9 @@ export function DebtOperationForm({
           {operationType !== "reversal" && (
             <>
               <div>
-                <label className="block text-sm font-semibold text-slate-700">Salida de dinero (Caja/Banco) *</label>
+                <label className="block text-sm font-semibold text-slate-700">
+                  {operationType === "payment" ? "¿Cuánto pagaste en total? *" : "Salida de dinero (Caja/Banco) *"}
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -428,6 +460,65 @@ export function DebtOperationForm({
             />
           </div>
 
+          {operationType !== "reversal" && numCash > 0 && (
+            <div className="sm:col-span-2 rounded-2xl border border-blue-200 bg-blue-50/70 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-wider text-blue-900">DISTRIBUCIÓN SUGERIDA</p>
+                <span className="rounded-full bg-blue-200/80 px-2.5 py-0.5 text-xs font-semibold text-blue-900">
+                  {suggestion.certainty === "exact_contract"
+                    ? "Cronograma contractual"
+                    : suggestion.certainty === "exact_rate"
+                    ? "Tasa contractual"
+                    : suggestion.certainty === "tea_estimate"
+                    ? "Estimación TEA"
+                    : "Información insuficiente"}
+                </span>
+              </div>
+
+              {suggestion.certainty !== "insufficient_info" ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-slate-500 font-medium">Interés</p>
+                    <p className="font-bold text-slate-900">{currencySymbol} {suggestion.suggestedInterest.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 font-medium">A capital</p>
+                    <p className="font-bold text-emerald-700">{currencySymbol} {suggestion.suggestedPrincipal.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 font-medium">Otros costos</p>
+                    <p className="font-bold text-slate-900">{currencySymbol} {suggestion.suggestedOtherCosts.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 font-medium">Saldo después del pago</p>
+                    <p className="font-bold text-blue-800">{currencySymbol} {suggestion.principalAfterPayment.toFixed(2)}</p>
+                  </div>
+                </div>
+              ) : null}
+
+              <p className="text-xs text-slate-600 italic">{suggestion.calculationExplanation}</p>
+
+              {suggestion.warningMessage && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-xs font-bold text-amber-900 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 text-amber-700 shrink-0" />
+                  <span>{suggestion.warningMessage}</span>
+                </div>
+              )}
+
+              {suggestion.certainty !== "insufficient_info" && (
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={applySuggestion}
+                    className="text-xs font-bold text-blue-700 hover:text-blue-900 underline"
+                  >
+                    {isUserModified ? "Restablecer sugerencia" : "Aplicar distribución sugerida"}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {operationType !== "payoff" && operationType !== "reversal" && (
             <div>
               <label className="block text-sm font-semibold text-slate-700">Capital aplicado *</label>
@@ -436,7 +527,10 @@ export function DebtOperationForm({
                 step="0.01"
                 required
                 value={principalAmount}
-                onChange={(e) => setPrincipalAmount(e.target.value)}
+                onChange={(e) => {
+                  setPrincipalAmount(e.target.value);
+                  setIsUserModified(true);
+                }}
                 placeholder="0.00"
                 className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
               />
@@ -451,7 +545,10 @@ export function DebtOperationForm({
                   type="number"
                   step="0.01"
                   value={interestPaid}
-                  onChange={(e) => setInterestPaid(e.target.value)}
+                  onChange={(e) => {
+                    setInterestPaid(e.target.value);
+                    setIsUserModified(true);
+                  }}
                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
                 />
               </div>

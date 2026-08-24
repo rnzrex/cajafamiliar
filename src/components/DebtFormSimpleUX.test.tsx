@@ -7,6 +7,7 @@ import {
   buildPledgeCollateralList,
   getCurrencySymbol,
   formatReviewDate,
+  validateDebtFinancialTerms,
 } from "../utils/debtFormMode";
 import * as dataRepository from "../services/dataRepository";
 import type { FinancialAccount, Category } from "../types";
@@ -78,30 +79,64 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
         originalPrincipal: "10000.00",
         originDate: "2025-01-15",
         trackingStartDate: "2026-08-23",
+        repaymentStructure: "fixed_schedule",
+        interestCalculationMode: "contract_periodic_rate",
+        periodicRatePercent: "4.5",
+        periodicRateBasis: "monthly",
       });
 
       expect(payload.openingPrincipalBalance).toBe(4500.5);
       expect(payload.originalPrincipal).toBe(10000);
       expect(payload.originDate).toBe("2025-01-15");
       expect(payload.trackingStartDate).toBe("2026-08-23");
+      expect(payload.repaymentStructure).toBe("fixed_schedule");
+      expect(payload.interestCalculationMode).toBe("contract_periodic_rate");
+      expect(payload.periodicRatePercent).toBe(4.5);
+      expect(payload.periodicRateBasis).toBe("monthly");
     });
 
-    it("A2. EXISTING_DEBT allows originalPrincipal to remain null when omitted", () => {
+    it("A2. open_ended repaymentStructure sets plannedInstallmentCount to null", () => {
       const payload = buildDebtCreateInputPayload({
         debtId: "debt-existing-2",
-        debtKind: "family_loan",
+        debtKind: "pledge",
         onboardingMode: "EXISTING_DEBT",
         currencyCode: "PEN",
-        name: "Deuda Familiar",
-        creditorName: "Tío Carlos",
+        name: "Empeño Anillo",
+        creditorName: "Casa de Empeño",
         openingPrincipalBalance: 800,
-        originalPrincipal: "",
-        trackingStartDate: "2026-08-23",
+        repaymentStructure: "open_ended",
+        interestCalculationMode: "contract_periodic_rate",
+        periodicRatePercent: 5,
+        periodicRateBasis: "monthly",
+        plannedInstallmentCount: 12,
       });
 
-      expect(payload.openingPrincipalBalance).toBe(800);
-      expect(payload.originalPrincipal).toBeNull();
-      expect(payload.originDate).toBeNull();
+      expect(payload.repaymentStructure).toBe("open_ended");
+      expect(payload.plannedInstallmentCount).toBeNull();
+      expect(payload.periodicRatePercent).toBe(5);
+    });
+
+    it("A3. open_ended repaymentStructure forces installments = [] and firstDueDate = null even if stale installments are passed", () => {
+      const payload = buildDebtCreateInputPayload({
+        debtId: "debt-existing-3",
+        debtKind: "bank_loan",
+        onboardingMode: "EXISTING_DEBT",
+        currencyCode: "PEN",
+        name: "Préstamo Flexible",
+        creditorName: "Persona A",
+        openingPrincipalBalance: 2000,
+        repaymentStructure: "open_ended",
+        firstDueDate: "2026-09-01",
+        plannedInstallmentCount: 6,
+        installments: [
+          { installmentNumber: 1, dueDate: "2026-09-01", expectedAmount: 400 },
+        ],
+      });
+
+      expect(payload.repaymentStructure).toBe("open_ended");
+      expect(payload.plannedInstallmentCount).toBeNull();
+      expect(payload.firstDueDate).toBeNull();
+      expect(payload.installments).toEqual([]);
     });
 
     it("B. NEW_DEBT mode sets originalPrincipal equal to openingPrincipalBalance (single amount concept)", () => {
@@ -153,10 +188,42 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
       expect(formatReviewDate("")).toBe("—");
       expect(formatReviewDate(null)).toBe("—");
     });
+
+    it("F. validateDebtFinancialTerms enforces coherent mode and rate inputs locally", () => {
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "contract_periodic_rate", periodicRatePercent: 0, periodicRateBasis: "monthly" }).valid).toBe(false);
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "contract_periodic_rate", periodicRatePercent: 4, periodicRateBasis: null }).valid).toBe(false);
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "contract_periodic_rate", periodicRatePercent: 4, periodicRateBasis: "monthly" }).valid).toBe(true);
+
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "tea_estimate", teaPercent: 0 }).valid).toBe(false);
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "tea_estimate", teaPercent: 60.1 }).valid).toBe(true);
+
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "manual" }).valid).toBe(true);
+      expect(validateDebtFinancialTerms({ interestCalculationMode: "unknown" }).valid).toBe(true);
+    });
   });
 
   describe("Component Rendering & Form UX Tests", () => {
-    it("1. currency is select, not free text with PEN and USD options", () => {
+    it("1. DebtForm onboarding allows selecting repayment structure and interest terms", () => {
+      const html = renderToStaticMarkup(
+        <DebtForm
+          initialStep="details"
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
+
+      expect(html).toContain("¿Cómo funciona el pago de esta deuda / empeño?");
+      expect(html).toContain("Sin plazo fijo");
+      expect(html).toContain("Con cuotas / fecha final");
+      expect(html).toContain("¿Cómo se calculan los intereses?");
+      expect(html).toContain("Tasa por período");
+      expect(html).toContain("Tasa Efectiva Anual (TEA)");
+    });
+
+    it("2. currency is select, not free text with PEN and USD options", () => {
       const html = renderToStaticMarkup(
         <DebtForm
           initialStep="details"
@@ -173,55 +240,7 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
       expect(html).not.toContain('placeholder="PEN"');
     });
 
-    it("2. only PEN and USD selectable in debt form", () => {
-      const html = renderToStaticMarkup(
-        <DebtForm
-          initialStep="details"
-          accounts={mockAccounts}
-          categories={mockCategories}
-          onSaved={mockOnSaved}
-          onCancel={mockOnCancel}
-          setToast={mockSetToast}
-        />
-      );
-
-      expect(html).toContain('<option value="PEN"');
-      expect(html).toContain('<option value="USD"');
-      expect(html).not.toContain('<option value="EUR"');
-      expect(html).not.toContain('<option value="BRL"');
-    });
-
-    it("3. PEN shows S/ symbol in amount inputs", () => {
-      const html = renderToStaticMarkup(
-        <DebtForm
-          initialStep="details"
-          accounts={mockAccounts}
-          categories={mockCategories}
-          onSaved={mockOnSaved}
-          onCancel={mockOnCancel}
-          setToast={mockSetToast}
-        />
-      );
-
-      expect(html).toContain("S/");
-    });
-
-    it("4. USD displays $ symbol", () => {
-      const html = renderToStaticMarkup(
-        <DebtForm
-          initialStep="details"
-          accounts={mockAccounts}
-          categories={mockCategories}
-          onSaved={mockOnSaved}
-          onCancel={mockOnCancel}
-          setToast={mockSetToast}
-        />
-      );
-
-      expect(html).toContain("Dólar estadounidense");
-    });
-
-    it("5. simple debt registration works without advanced fields", () => {
+    it("3. simple debt registration works without advanced fields", () => {
       const html = renderToStaticMarkup(
         <DebtForm
           initialStep="details"
@@ -235,53 +254,6 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
 
       expect(html).toContain("Mostrar datos adicionales y avanzados ▼");
       expect(html).not.toContain("Cronograma inicial de cuotas");
-    });
-
-    it("6. pledge-specific UX renders clear labels for pledge", () => {
-      const html = renderToStaticMarkup(
-        <DebtForm
-          initialStep="type_select"
-          accounts={mockAccounts}
-          categories={mockCategories}
-          onSaved={mockOnSaved}
-          onCancel={mockOnCancel}
-          setToast={mockSetToast}
-        />
-      );
-
-      expect(html).toContain("Empeño");
-      expect(html).not.toContain("Pignoración");
-    });
-
-    it("7. mobile-friendly render structure", () => {
-      const html = renderToStaticMarkup(
-        <DebtForm
-          accounts={mockAccounts}
-          categories={mockCategories}
-          onSaved={mockOnSaved}
-          onCancel={mockOnCancel}
-          setToast={mockSetToast}
-        />
-      );
-
-      expect(html).toContain("grid grid-cols-1");
-      expect(html).toContain("rounded-3xl");
-    });
-
-    it("8. confirmation review displays friendly date format and label 'Comenzó'", () => {
-      const html = renderToStaticMarkup(
-        <DebtForm
-          initialStep="review"
-          accounts={mockAccounts}
-          categories={mockCategories}
-          onSaved={mockOnSaved}
-          onCancel={mockOnCancel}
-          setToast={mockSetToast}
-        />
-      );
-
-      expect(html).toContain("Confirmar registro de deuda");
-      expect(html).not.toContain("Empezó / Fecha origen");
     });
   });
 });

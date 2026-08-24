@@ -355,7 +355,23 @@ export function buildDebtIntelligenceItems({
     let next30KnownAmount = 0;
     let next30UnknownAmountCount = 0;
 
-    if (isCard && latestCardStatement && latestCardStatement.dueDate) {
+    if (debt.repaymentStructure === "open_ended") {
+      remainingInstallmentCount = 0;
+      knownRemainingInstallmentCount = 0;
+      unknownRemainingInstallmentCount = 0;
+      overdueInstallmentCount = 0;
+
+      nextInstallmentId = null;
+      nextInstallmentNumber = null;
+      nextInstallmentDueDate = null;
+      nextInstallmentDueStatus = null;
+      nextInstallmentRemainingAmount = null;
+      nextInstallmentAmountKnown = true;
+
+      next30InstallmentCount = 0;
+      next30KnownAmount = 0;
+      next30UnknownAmountCount = 0;
+    } else if (isCard && latestCardStatement && latestCardStatement.dueDate) {
       const attention = classifyCreditCardStatementAttention({
         debt,
         statement: latestCardStatement,
@@ -423,33 +439,34 @@ export function buildDebtIntelligenceItems({
     }
 
     // 9. Data Readiness & Limitations
+    const isOpenEnded = debt.repaymentStructure === "open_ended";
     const hasOriginalPrincipal = debt.originalPrincipal != null && debt.originalPrincipal > 0;
-    const hasKnownCurrentScheduleAmounts = hasCurrentSchedule && unknownRemainingInstallmentCount === 0;
+    const hasKnownCurrentScheduleAmounts = isOpenEnded || (hasCurrentSchedule && unknownRemainingInstallmentCount === 0);
     const hasRecordedLastDueDate = currentScheduleLastDueDate != null;
-    const hasRate = ratePercent != null;
+    const hasRate = ratePercent != null || debt.periodicRatePercent != null;
     const hasTcea = debt.tceaPercent != null;
     const hasTea = debt.teaPercent != null;
 
     const limitations: DebtDataLimitation[] = [];
     if (!hasOriginalPrincipal) limitations.push("missing_original_principal");
-    if (!hasCurrentSchedule) limitations.push("missing_current_schedule");
-    if (unknownRemainingInstallmentCount > 0) limitations.push("unknown_installment_amounts");
+    if (!hasCurrentSchedule && !isOpenEnded) limitations.push("missing_current_schedule");
+    if (unknownRemainingInstallmentCount > 0 && !isOpenEnded) limitations.push("unknown_installment_amounts");
     if (!hasRate) limitations.push("missing_rate");
-    if (!hasRecordedLastDueDate) limitations.push("missing_last_due_date");
+    if (!hasRecordedLastDueDate && !isOpenEnded) limitations.push("missing_last_due_date");
 
     const readiness: DebtDataReadiness = {
       hasOriginalPrincipal,
-      hasCurrentSchedule,
+      hasCurrentSchedule: isOpenEnded || hasCurrentSchedule,
       hasKnownCurrentScheduleAmounts,
-      hasRecordedLastDueDate,
+      hasRecordedLastDueDate: isOpenEnded || hasRecordedLastDueDate,
       hasRate,
       hasTcea,
       hasTea,
 
-      planningReady: hasCurrentSchedule,
+      planningReady: isOpenEnded || hasCurrentSchedule,
       rateStrategyReady: hasRate,
       originalProgressReady: hasOriginalPrincipal,
-      payoffVisibilityReady: hasCurrentSchedule && hasRecordedLastDueDate,
+      payoffVisibilityReady: isOpenEnded || (hasCurrentSchedule && hasRecordedLastDueDate),
 
       limitations,
     };

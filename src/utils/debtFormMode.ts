@@ -1,4 +1,4 @@
-import type { DebtKind, DebtPaymentFrequency, DebtInstallmentAmountMode } from "../types";
+import type { DebtKind, DebtPaymentFrequency, DebtInstallmentAmountMode, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis } from "../types";
 import type { DebtCreateInput } from "../services/dataRepository";
 import { localDateString } from "./date";
 
@@ -96,6 +96,10 @@ export interface DebtOnboardingInputParams {
   pledgePledgedValue?: string;
   installments?: any[];
   extraCollaterals?: any[];
+  repaymentStructure?: DebtRepaymentStructure;
+  interestCalculationMode?: DebtInterestCalculationMode;
+  periodicRatePercent?: string | number | null;
+  periodicRateBasis?: PeriodicRateBasis | null;
 }
 
 export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): DebtCreateInput {
@@ -109,10 +113,8 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
 
   let finalOriginalPrincipal: number | null = null;
   if (isNewDebt) {
-    // For NEW_DEBT, the original principal received is the opening principal balance
     finalOriginalPrincipal = numOwed;
   } else {
-    // For EXISTING_DEBT, originalPrincipal is optional
     finalOriginalPrincipal = params.originalPrincipal ? Number(params.originalPrincipal) : null;
   }
 
@@ -150,24 +152,60 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
     trackingStartDate: params.trackingStartDate || todayStr,
     originalPrincipal: finalOriginalPrincipal,
     openingPrincipalBalance: numOwed,
-    plannedInstallmentCount: params.plannedInstallmentCount ? Number(params.plannedInstallmentCount) : null,
+    plannedInstallmentCount: params.repaymentStructure === "open_ended"
+      ? null
+      : (params.plannedInstallmentCount ? Number(params.plannedInstallmentCount) : null),
     plannedInstallmentAmount: params.plannedInstallmentAmount ? Number(params.plannedInstallmentAmount) : null,
     installmentAmountMode: params.installmentAmountMode || "unknown",
     paymentFrequency: params.paymentFrequency || null,
     customFrequencyDays: params.customFrequencyDays ? Number(params.customFrequencyDays) : null,
-    firstDueDate: params.firstDueDate || null,
+    firstDueDate: params.repaymentStructure === "open_ended" ? null : (params.firstDueDate || null),
     teaPercent: params.teaPercent ? Number(params.teaPercent) : null,
     tceaPercent: params.tceaPercent ? Number(params.tceaPercent) : null,
     notes: params.notes || "",
-    installments: (params.installments || []).map((i) => ({
-      installmentNumber: i.installmentNumber,
-      dueDate: i.dueDate,
-      expectedAmount: i.expectedAmount ? Number(i.expectedAmount) : null,
-      expectedPrincipal: i.expectedPrincipal ? Number(i.expectedPrincipal) : null,
-      expectedInterest: i.expectedInterest ? Number(i.expectedInterest) : null,
-      expectedFees: i.expectedFees ? Number(i.expectedFees) : null,
-      expectedInsurance: i.expectedInsurance ? Number(i.expectedInsurance) : null,
-    })),
+    installments: params.repaymentStructure === "open_ended"
+      ? []
+      : (params.installments || []).map((i) => ({
+          installmentNumber: i.installmentNumber,
+          dueDate: i.dueDate,
+          expectedAmount: i.expectedAmount ? Number(i.expectedAmount) : null,
+          expectedPrincipal: i.expectedPrincipal ? Number(i.expectedPrincipal) : null,
+          expectedInterest: i.expectedInterest ? Number(i.expectedInterest) : null,
+          expectedFees: i.expectedFees ? Number(i.expectedFees) : null,
+          expectedInsurance: i.expectedInsurance ? Number(i.expectedInsurance) : null,
+        })),
     collaterals,
+    repaymentStructure: params.repaymentStructure ?? "unknown",
+    interestCalculationMode: params.interestCalculationMode ?? "unknown",
+    periodicRatePercent: params.periodicRatePercent ? Number(params.periodicRatePercent) : null,
+    periodicRateBasis: params.periodicRateBasis ?? null,
   };
+}
+
+export function validateDebtFinancialTerms(input: {
+  interestCalculationMode?: string | null;
+  periodicRatePercent?: string | number | null;
+  periodicRateBasis?: string | null;
+  teaPercent?: string | number | null;
+}): { valid: boolean; error?: string } {
+  const mode = input.interestCalculationMode;
+  if (mode === "contract_periodic_rate") {
+    const rate = input.periodicRatePercent != null && input.periodicRatePercent !== "" ? Number(input.periodicRatePercent) : null;
+    const basis = input.periodicRateBasis;
+    if (rate == null || isNaN(rate) || rate <= 0 || !basis) {
+      return {
+        valid: false,
+        error: "La tasa periódica contractual requiere un porcentaje mayor a 0 y una frecuencia válida (mensual, quincenal, semanal o diaria).",
+      };
+    }
+  } else if (mode === "tea_estimate") {
+    const tea = input.teaPercent != null && input.teaPercent !== "" ? Number(input.teaPercent) : null;
+    if (tea == null || isNaN(tea) || tea <= 0) {
+      return {
+        valid: false,
+        error: "La estimación por TEA requiere especificar una Tasa Efectiva Anual (TEA) mayor a 0%.",
+      };
+    }
+  }
+  return { valid: true };
 }
