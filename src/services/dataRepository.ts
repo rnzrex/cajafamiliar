@@ -762,6 +762,23 @@ export async function setDebtArchived(input: DebtSetArchivedInput): Promise<Debt
   return fromDebtRow(data);
 }
 
+export interface DeletePristineDebtInput {
+  debtId: string;
+}
+
+export async function deletePristineDebt(input: DeletePristineDebtInput): Promise<boolean> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("delete_pristine_debt_v1", {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+  });
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object" || (data as any).deleted !== true || (data as any).success !== true) {
+    throw new Error("La RPC delete_pristine_debt_v1 no devolvió un resultado válido.");
+  }
+  return true;
+}
+
 export function toDebtPaymentRpcArgs(input: DebtPaymentInput) {
   return {
     p_household_id: householdId,

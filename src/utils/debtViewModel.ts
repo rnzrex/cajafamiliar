@@ -13,6 +13,7 @@ export function translateDebtError(error: unknown): string {
       INVALID_INSTALLMENTS: "El cronograma de cuotas contiene datos inválidos.",
       INVALID_COLLATERALS: "Las garantías ingresadas no son válidas.",
       DEBT_ARCHIVED: "La deuda se encuentra archivada y no admite operaciones.",
+      DEBT_HAS_HISTORY: "Esta deuda ya tiene historial registrado y no puede eliminarse. Puedes archivarla para conservar el historial.",
       DEBT_NOT_ACTIVE: "La deuda no está activa.",
       DEBT_ALREADY_PAID_OFF: "La deuda ya ha sido pagada en su totalidad.",
       DEBT_PRINCIPAL_EXCEEDED: "El monto supera el saldo principal actual.",
