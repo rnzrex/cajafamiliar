@@ -13,6 +13,7 @@ import { createDebt, createCreditCardDebt } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError } from "../utils/debtViewModel";
+import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
 
 interface DebtFormProps {
   currentMember?: HouseholdMember;
@@ -656,31 +657,14 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                 )}
               </div>
 
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700">¿Cuándo comenzó la deuda? (Opcional)</label>
-                  <input
-                    type="date"
-                    value={originDate}
-                    onChange={(e) => setOriginDate(e.target.value)}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700">¿Cada cuánto pagas? (Opcional)</label>
-                  <select
-                    value={paymentFrequency ?? ""}
-                    onChange={(e) => setPaymentFrequency((e.target.value || null) as DebtPaymentFrequency | null)}
-                    className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                  >
-                    <option value="">No especificada</option>
-                    <option value="monthly">Mensual</option>
-                    <option value="biweekly">Quincenal</option>
-                    <option value="weekly">Semanal</option>
-                    <option value="custom">Personalizada</option>
-                  </select>
-                </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700">¿Cuándo comenzó la deuda? (Opcional)</label>
+                <input
+                  type="date"
+                  value={originDate}
+                  onChange={(e) => setOriginDate(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                />
               </div>
             </div>
           )}
@@ -732,6 +716,64 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
               </div>
 
               <div>
+                <label className="block text-sm font-bold text-slate-800 mb-1">Frecuencia de pago</label>
+                <select
+                  value={paymentFrequency ?? ""}
+                  onChange={(e) => setPaymentFrequency((e.target.value || null) as DebtPaymentFrequency | null)}
+                  className="w-full sm:w-72 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 font-medium focus:border-blue-600 focus:outline-none"
+                >
+                  <option value="">Otra / No especificada</option>
+                  <option value="monthly">Mensual</option>
+                  <option value="biweekly">Quincenal</option>
+                  <option value="weekly">Semanal</option>
+                  <option value="custom">Personalizada</option>
+                </select>
+              </div>
+
+              {paymentFrequency === "monthly" && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 rounded-xl bg-white p-4 border border-slate-200">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700">Día de pago mensual (1–31)</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      value={monthlyDueDay}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setMonthlyDueDay(val);
+                        setPaymentFrequency("monthly");
+                        const dayNum = parseInt(val, 10);
+                        if (dayNum >= 1 && dayNum <= 31) {
+                          const now = new Date();
+                          let y = now.getFullYear();
+                          let m = now.getMonth() + 1;
+                          if (dayNum < now.getDate()) {
+                            m += 1;
+                            if (m > 12) { m = 1; y += 1; }
+                          }
+                          const maxD = new Date(y, m, 0).getDate();
+                          const d = Math.min(dayNum, maxD);
+                          setFirstDueDate(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
+                        }
+                      }}
+                      placeholder="Ej. 15"
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700">Próximo vencimiento</label>
+                    <input
+                      type="date"
+                      value={firstDueDate}
+                      onChange={(e) => setFirstDueDate(e.target.value)}
+                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
                 <label className="block text-sm font-bold text-slate-800 mb-1">¿Cómo se calculan los intereses?</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <button
@@ -757,7 +799,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                     }`}
                   >
                     <p className="font-bold text-sm mb-0.5">Tasa Efectiva Anual (TEA)</p>
-                    <p className="text-[11px] text-slate-500 font-normal">Estimación según días transcurridos.</p>
+                    <p className="text-[11px] text-slate-500 font-normal">Convierte la TEA a la tasa efectiva del período cuando la frecuencia está definida.</p>
                   </button>
 
                   <button
@@ -818,7 +860,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
               )}
 
               {interestCalculationMode === "tea_estimate" && (
-                <div className="pt-2">
+                <div className="pt-2 space-y-2">
                   <label className="block text-xs font-bold text-slate-700">TEA % (Tasa Efectiva Anual)</label>
                   <input
                     type="number"
@@ -828,6 +870,18 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                     placeholder="Ej. 60.10"
                     className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm sm:w-64"
                   />
+                  {teaPercent && Number(teaPercent) > 0 && (paymentFrequency === "monthly" || paymentFrequency === "biweekly" || paymentFrequency === "weekly") && (
+                    <div className="rounded-xl bg-blue-50 p-2.5 text-xs font-semibold text-blue-900 border border-blue-200">
+                      {(() => {
+                        const res = effectivePeriodicRateFromTea({
+                          teaPercent: Number(teaPercent),
+                          frequency: paymentFrequency as "monthly" | "biweekly" | "weekly",
+                        });
+                        const label = paymentFrequency === "monthly" ? "TEM" : paymentFrequency === "biweekly" ? "TEQ" : "TES";
+                        return `TEA ${teaPercent}% → ${label} estimada ${res.ratePercent.toFixed(4)}%`;
+                      })()}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -897,60 +951,21 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
               ) : (
                 <>
                   {repaymentStructure === "open_ended" ? (
-                    <>
-                      <div>
-                        <label className="block text-sm font-semibold text-slate-700">Día de pago mensual (1–31)</label>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700">Abono mínimo obligatorio a capital</label>
+                      <p className="mt-0.5 text-xs text-slate-500">Monto mínimo que la entidad exige reducir del capital en cada pago. Déjalo vacío si no existe un mínimo.</p>
+                      <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
+                        <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
                         <input
                           type="number"
-                          min="1"
-                          max="31"
-                          value={monthlyDueDay}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setMonthlyDueDay(val);
-                            const dayNum = parseInt(val, 10);
-                            if (dayNum >= 1 && dayNum <= 31) {
-                              const now = new Date();
-                              let y = now.getFullYear();
-                              let m = now.getMonth() + 1;
-                              if (dayNum < now.getDate()) {
-                                m += 1;
-                                if (m > 12) { m = 1; y += 1; }
-                              }
-                              const maxD = new Date(y, m, 0).getDate();
-                              const d = Math.min(dayNum, maxD);
-                              setFirstDueDate(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`);
-                            }
-                          }}
-                          placeholder="Ej. 15"
-                          className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                          step="0.01"
+                          value={minimumPrincipalPayment}
+                          onChange={(e) => setMinimumPrincipalPayment(e.target.value)}
+                          placeholder="Opcional"
+                          className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
                         />
                       </div>
-                      <div>
-                        <label className="block text-sm font-semibold text-slate-700">Próxima fecha de vencimiento</label>
-                        <input
-                          type="date"
-                          value={firstDueDate}
-                          onChange={(e) => setFirstDueDate(e.target.value)}
-                          className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-semibold text-slate-700">Abono mínimo obligatorio a capital</label>
-                        <p className="mt-0.5 text-xs text-slate-500">Monto mínimo que la entidad exige reducir del capital en cada pago. Déjalo vacío si no existe un mínimo.</p>
-                        <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
-                          <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={minimumPrincipalPayment}
-                            onChange={(e) => setMinimumPrincipalPayment(e.target.value)}
-                            placeholder="Opcional"
-                            className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
-                          />
-                        </div>
-                      </div>
-                    </>
+                    </div>
                   ) : (
                     <>
                       <div>
