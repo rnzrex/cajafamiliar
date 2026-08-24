@@ -135,7 +135,7 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
 
       expect(payload.repaymentStructure).toBe("open_ended");
       expect(payload.plannedInstallmentCount).toBeNull();
-      expect(payload.firstDueDate).toBeNull();
+      expect(payload.firstDueDate).toBe("2026-09-01");
       expect(payload.installments).toEqual([]);
     });
 

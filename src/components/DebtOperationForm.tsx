@@ -7,6 +7,7 @@ import { localDateString } from "../utils/date";
 import { translateDebtError, validateDebtPayment, validateDebtPrepayment, validateDebtPayoff, validateDebtAllocations, debtEconomicSummary } from "../utils/debtViewModel";
 import { currentDebtScheduleVersion, allocatedAmountForInstallment } from "../utils/debtCalculations";
 import { calculateAssistedInterestSuggestion, getLastEffectiveDebtPaymentDate } from "../utils/debtInterestEngine";
+import { calculateNextPayment } from "../utils/debtNextPayment";
 import { getCurrencySymbol } from "../utils/debtFormMode";
 
 interface DebtOperationFormProps {
@@ -46,13 +47,26 @@ export function DebtOperationForm({
   const [movementId] = useState(() => makeUuid());
   const [reversalEventId] = useState(() => makeUuid());
 
+  const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
+  const initialNextPayment = calculateNextPayment({ debt, debtEvents, currentPrincipal });
+
+  const initialPrefillCash = (operationType === "payment" && isFlexOpenEnded && initialNextPayment.minimumPaymentKnown && initialNextPayment.minimumPaymentAmount != null)
+    ? initialNextPayment.minimumPaymentAmount.toString()
+    : (operationType === "payoff" ? currentPrincipal.toString() : "");
+
+  const initialPrefillInterest = (operationType === "payment" && isFlexOpenEnded && initialNextPayment.minimumPaymentKnown && initialNextPayment.interestAmount != null)
+    ? initialNextPayment.interestAmount.toString()
+    : "0";
+
+  const initialPrefillPrincipal = (operationType === "payment" && isFlexOpenEnded && initialNextPayment.minimumPaymentKnown && initialNextPayment.minimumPrincipalAmount != null)
+    ? initialNextPayment.minimumPrincipalAmount.toString()
+    : (operationType === "payoff" ? currentPrincipal.toString() : "");
+
   const [eventDate, setEventDate] = useState(localDateString(new Date()));
-  const [cashAmount, setCashAmount] = useState(operationType === "payoff" ? currentPrincipal.toString() : "");
+  const [cashAmount, setCashAmount] = useState(initialPrefillCash);
 
   const activeAccounts = accounts.filter((acc) => acc.isActive !== false);
   const [accountId, setAccountId] = useState(activeAccounts[0]?.id ?? "");
-
-  const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
 
   const [description, setDescription] = useState(
     operationType === "payment"
@@ -70,8 +84,8 @@ export function DebtOperationForm({
   const defaultCategory = activeCategories.find((c) => c.name.toLowerCase() === "préstamos")?.name ?? activeCategories[0]?.name ?? "";
   const [category, setCategory] = useState(defaultCategory);
 
-  const [principalAmount, setPrincipalAmount] = useState(operationType === "payoff" ? currentPrincipal.toString() : "");
-  const [interestPaid, setInterestPaid] = useState("0");
+  const [principalAmount, setPrincipalAmount] = useState(initialPrefillPrincipal);
+  const [interestPaid, setInterestPaid] = useState(initialPrefillInterest);
   const [feesPaid, setFeesPaid] = useState("0");
   const [insurancePaid, setInsurancePaid] = useState("0");
   const [otherCostPaid, setOtherCostPaid] = useState("0");
@@ -99,6 +113,7 @@ export function DebtOperationForm({
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
 
   const lastEventDate = getLastEffectiveDebtPaymentDate(debtEvents, debt.id);
+  const nextPayment = calculateNextPayment({ debt, debtEvents, currentPrincipal, todayKey: eventDate });
 
   const numCash = Number(cashAmount || 0);
   const suggestion = calculateAssistedInterestSuggestion({
@@ -427,10 +442,27 @@ export function DebtOperationForm({
                   step="0.01"
                   required
                   value={cashAmount}
-                  onChange={(e) => setCashAmount(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCashAmount(val);
+                    const newCash = Number(val || 0);
+                    if (operationType === "payment" && isFlexOpenEnded && !isUserModified && nextPayment.interestKnown && nextPayment.interestAmount != null) {
+                      const calcInt = nextPayment.interestAmount;
+                      const newInt = Math.min(newCash, calcInt);
+                      const newPrin = Math.min(currentPrincipal, Math.max(0, newCash - calcInt));
+                      setInterestPaid(newInt.toString());
+                      setPrincipalAmount(newPrin.toString());
+                    }
+                  }}
                   placeholder="0.00"
                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
                 />
+                {operationType === "payment" && nextPayment.minimumPaymentKnown && nextPayment.minimumPaymentAmount != null && numCash > 0 && numCash < nextPayment.minimumPaymentAmount && (
+                  <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-bold text-amber-900">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 mt-0.5" />
+                    <span>Este pago está por debajo del mínimo estimado/contractual.</span>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-semibold text-slate-700">Categoría</label>

@@ -336,8 +336,9 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
         recurringPayments: data.recurringPayments,
         debts: data.debts,
         debtPlanningItems,
+        debtEvents: data.debtEvents,
       }),
-    [data.recurringPayments, data.debts, debtPlanningItems]
+    [data.recurringPayments, data.debts, debtPlanningItems, data.debtEvents]
   );
 
   const debtPlanningAlertSummary = useMemo(() => summarizeDebtPlanningAlerts(debtPlanningItems), [debtPlanningItems]);
@@ -1405,6 +1406,8 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               payments={data.recurringPayments}
               categories={data.categories}
               alertSummary={urgentPaymentSummary}
+              debts={data.debts}
+              debtEvents={data.debtEvents}
               focusedPaymentId={focusedPaymentId}
               currentMember={currentMember}
               isBrowserOnline={isBrowserOnline}
@@ -1412,6 +1415,10 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               onMarkPaid={markPaymentPaid}
               onDeactivate={deactivatePayment}
               onReactivate={reactivatePayment}
+              onOpenDebt={(debtId) => {
+                setSelectedDebtId(debtId);
+                setView("deudas");
+              }}
             />
           )}
           {view === "reportes" && (

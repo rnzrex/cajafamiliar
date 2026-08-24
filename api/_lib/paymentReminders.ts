@@ -65,6 +65,9 @@ interface RecurringPaymentRow {
   last_paid_month: number | null;
   last_paid_year: number | null;
   paid_at: string | null;
+  linked_debt_id?: string | null;
+  starts_on?: string | null;
+  currency_code?: string;
 }
 
 export interface ObligationReminderPayloadInput {
@@ -116,9 +119,13 @@ export function buildObligationReminderPayload({
         numRecurring === 1
           ? "Tienes 1 pago que requiere atención."
           : `Tienes ${numRecurring} pagos que requieren atención.`;
+      const singleRec = urgentRecurringPayments[0];
+      const linkedId = singleRec?.linked_debt_id ?? singleRec?.linkedDebtId;
       url =
         numRecurring === 1
-          ? `/?view=pagos&payment=${encodeURIComponent(urgentRecurringPayments[0].id)}`
+          ? linkedId
+            ? `/?view=deudas&debt=${encodeURIComponent(linkedId)}`
+            : `/?view=pagos&payment=${encodeURIComponent(singleRec.id)}`
           : "/?view=pagos";
     } else if (numDebt > 0 && numRecurring === 0) {
       body =
@@ -302,7 +309,7 @@ async function loadUrgentPayments(
   const { data, error } = await admin
     .from("recurring_payments")
     .select(
-      "id,household_id,name,amount,amount_mode,due_day,due_date,category,status,notes,recurrence_type,total_installments,paid_installments,is_active,last_paid_month,last_paid_year,paid_at"
+      "id,household_id,name,amount,amount_mode,due_day,due_date,category,status,notes,recurrence_type,total_installments,paid_installments,is_active,last_paid_month,last_paid_year,paid_at,linked_debt_id,starts_on,currency_code"
     )
     .in("household_id", householdIds);
   if (error) throw error;
@@ -503,6 +510,9 @@ function toRecurringPayment(row: RecurringPaymentRow): RecurringPayment {
     last_paid_month: row.last_paid_month == null ? null : Number(row.last_paid_month),
     last_paid_year: row.last_paid_year == null ? null : Number(row.last_paid_year),
     paidAt: row.paid_at ?? null,
+    linked_debt_id: row.linked_debt_id ?? null,
+    starts_on: row.starts_on ?? null,
+    currency_code: row.currency_code ?? "PEN",
   };
 }
 

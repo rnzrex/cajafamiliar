@@ -1,7 +1,8 @@
-import { Archive, Bell, BellOff, CalendarDays, CheckCircle2, Edit3, Plus, RotateCcw, Save, X } from "lucide-react";
+import { Archive, ArrowUpRight, Bell, BellOff, CalendarDays, CheckCircle2, Edit3, Plus, RotateCcw, Save, X } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { Category, HouseholdMember, PaymentAmountMode, RecurrenceType, RecurringPayment } from "../types";
+import { Category, Debt, DebtEvent, HouseholdMember, PaymentAmountMode, RecurrenceType, RecurringPayment } from "../types";
 import {
+  formatMoneyByCurrency,
   isPaymentFinished,
   isPaymentPaidThisMonth,
   paymentAmountLabel,
@@ -10,12 +11,16 @@ import {
   paymentStatus,
 } from "../utils/calculations";
 import { isValidLocalDate } from "../utils/date";
+import { currentDebtPrincipal } from "../utils/debtCalculations";
+import { calculateNextPayment } from "../utils/debtNextPayment";
 import { enablePushNotifications, getPushNotificationState, PushNotificationState, unregisterPushSubscription } from "../services/pushNotifications";
 
 interface RecurringPaymentsProps {
   payments: RecurringPayment[];
   categories: Category[];
   alertSummary: PaymentAlertSummary;
+  debts?: Debt[];
+  debtEvents?: DebtEvent[];
   focusedPaymentId?: string | null;
   currentMember?: HouseholdMember;
   isBrowserOnline: boolean;
@@ -23,11 +28,26 @@ interface RecurringPaymentsProps {
   onMarkPaid: (payment: RecurringPayment, actualAmount: number | null, shouldCreateExpense: boolean) => void | Promise<void>;
   onDeactivate: (id: string) => void | Promise<boolean>;
   onReactivate: (id: string) => void | Promise<boolean>;
+  onOpenDebt?: (debtId: string) => void;
 }
 
 type PaymentTab = "pending" | "paid" | "archived";
 
-export function RecurringPayments({ payments, categories, alertSummary, focusedPaymentId, currentMember, isBrowserOnline, onSave, onMarkPaid, onDeactivate, onReactivate }: RecurringPaymentsProps) {
+export function RecurringPayments({
+  payments,
+  categories,
+  alertSummary,
+  debts = [],
+  debtEvents = [],
+  focusedPaymentId,
+  currentMember,
+  isBrowserOnline,
+  onSave,
+  onMarkPaid,
+  onDeactivate,
+  onReactivate,
+  onOpenDebt,
+}: RecurringPaymentsProps) {
   const [tab, setTab] = useState<PaymentTab>("pending");
   const [editing, setEditing] = useState<RecurringPayment | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -219,6 +239,36 @@ export function RecurringPayments({ payments, categories, alertSummary, focusedP
     const status = paymentStatus(payment);
     const isFocused = payment.id === focusedPaymentId;
     const isTerminal = isPaymentTerminal(payment);
+    const linkedDebtId = payment.linked_debt_id ?? payment.linkedDebtId ?? null;
+    const linkedDebt = linkedDebtId ? debts.find((d) => d.id === linkedDebtId) ?? null : null;
+
+    let linkedAmountLabel = "";
+    let linkedNextDueDate = "";
+    if (linkedDebt) {
+      const debtEventsForLinked = debtEvents.filter((e) => e.debtId === linkedDebt.id);
+      const currentPrincipal = currentDebtPrincipal(linkedDebt, debtEventsForLinked);
+
+      const nextPayRes = calculateNextPayment({
+        debt: linkedDebt,
+        debtEvents: debtEventsForLinked,
+        currentPrincipal,
+      });
+
+      linkedNextDueDate = nextPayRes.nextDueDate || linkedDebt.firstDueDate || "";
+
+      if (nextPayRes.minimumPaymentKnown && nextPayRes.minimumPaymentAmount != null) {
+        const isContract =
+          nextPayRes.certainty === "exact_contract" || nextPayRes.certainty === "exact_rate";
+        linkedAmountLabel = `${isContract ? "Pago mínimo contractual" : "Pago mínimo estimado"}: ${formatMoneyByCurrency(nextPayRes.minimumPaymentAmount, linkedDebt.currencyCode)}`;
+      } else if (
+        nextPayRes.minimumPrincipalKnown &&
+        nextPayRes.minimumPrincipalAmount != null
+      ) {
+        linkedAmountLabel = `Mínimo a capital: ${formatMoneyByCurrency(nextPayRes.minimumPrincipalAmount, linkedDebt.currencyCode)}`;
+      } else {
+        linkedAmountLabel = "Monto por confirmar";
+      }
+    }
 
     return (
       <article
@@ -231,26 +281,54 @@ export function RecurringPayments({ payments, categories, alertSummary, focusedP
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-2xl font-black text-slate-900">{payment.name}</h3>
               <span className={`rounded-full px-3 py-1 text-sm font-black ${statusClass(status.tone)}`}>{status.label}</span>
+              {linkedDebtId && (
+                <span className="rounded-full bg-purple-100 px-3 py-1 text-sm font-black text-purple-800">
+                  Deuda vinculada
+                </span>
+              )}
             </div>
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-base font-semibold text-slate-600">
-              <span>{paymentAmountLabel(payment)}</span>
-              <span>{paymentScheduleLabel(payment)}</span>
-              <span>{payment.category}</span>
+              {linkedDebt ? (
+                <>
+                  <span>{linkedAmountLabel}</span>
+                  {linkedNextDueDate && <span>Próximo vencimiento: {linkedNextDueDate}</span>}
+                  <span>{payment.category}</span>
+                </>
+              ) : (
+                <>
+                  <span>{paymentAmountLabel(payment)}</span>
+                  <span>{paymentScheduleLabel(payment)}</span>
+                  <span>{payment.category}</span>
+                </>
+              )}
             </div>
             {payment.notes && <p className="mt-2 text-base text-slate-600">{payment.notes}</p>}
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap lg:justify-end">
             {tab === "pending" && payment.is_active && (
-              <button type="button" disabled={busyPaymentId !== null} onClick={() => openPaymentDialog(payment)} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-base font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
-                <CheckCircle2 className="h-5 w-5" />
-                Marcar pagado
+              linkedDebtId ? (
+                <button
+                  type="button"
+                  onClick={() => onOpenDebt?.(linkedDebtId)}
+                  className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-purple-600 px-4 py-2 text-base font-black text-white hover:bg-purple-700"
+                >
+                  <ArrowUpRight className="h-5 w-5" />
+                  Registrar pago de deuda
+                </button>
+              ) : (
+                <button type="button" disabled={busyPaymentId !== null} onClick={() => openPaymentDialog(payment)} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-base font-black text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60">
+                  <CheckCircle2 className="h-5 w-5" />
+                  Marcar pagado
+                </button>
+              )
+            )}
+            {!linkedDebtId && (
+              <button type="button" onClick={() => startEdit(payment)} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-50 px-4 py-2 text-base font-black text-blue-800 hover:bg-blue-100">
+                <Edit3 className="h-5 w-5" />
+                Editar
               </button>
             )}
-            <button type="button" onClick={() => startEdit(payment)} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-blue-50 px-4 py-2 text-base font-black text-blue-800 hover:bg-blue-100">
-              <Edit3 className="h-5 w-5" />
-              Editar
-            </button>
-            {!isTerminal && (
+            {!isTerminal && !linkedDebtId && (
               <button type="button" disabled={busyPaymentId !== null} onClick={() => void changeActiveState(payment)} className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-base font-black text-slate-700 hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60">
                 {payment.is_active ? <Archive className="h-5 w-5" /> : <RotateCcw className="h-5 w-5" />}
                 {busyPaymentId === payment.id ? "Guardando..." : payment.is_active ? "Archivar" : "Reactivar"}
@@ -609,7 +687,7 @@ function pushStateMessage(state: PushNotificationState) {
     case "active":
       return "Alertas activas. Recibirás como máximo un resumen diario por dispositivo.";
     case "denied":
-      return "El navegador bloqueó las alertas. Habilítalas desde los permisos del sitio.";
+      return "El navegador blocked las alertas. Habilítalas desde los permisos del sitio.";
     case "offline":
       return "Conéctate a internet para verificar o cambiar las alertas.";
     case "error":

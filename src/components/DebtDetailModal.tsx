@@ -32,6 +32,7 @@ import { formatDebtMoney } from "../utils/debtPresentation";
 import { setDebtArchived, updateDebtMetadata, updateDebtTerms } from "../services/dataRepository";
 import { buildDebtPaymentLedger } from "../utils/debtPaymentLedger";
 import { getCurrencySymbol, formatReviewDate, validateDebtFinancialTerms } from "../utils/debtFormMode";
+import { calculateNextPayment } from "../utils/debtNextPayment";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 
@@ -97,6 +98,8 @@ export function DebtDetailModal({
   const [editTeaPercent, setEditTeaPercent] = useState(debt.teaPercent != null ? debt.teaPercent.toString() : "");
   const [editTceaPercent, setEditTceaPercent] = useState(debt.tceaPercent != null ? debt.tceaPercent.toString() : "");
   const [editPaymentFrequency, setEditPaymentFrequency] = useState<DebtPaymentFrequency | "">(debt.paymentFrequency || "");
+  const [editFirstDueDate, setEditFirstDueDate] = useState(debt.firstDueDate || "");
+  const [editMinimumPrincipalPayment, setEditMinimumPrincipalPayment] = useState(debt.minimumPrincipalPayment != null ? debt.minimumPrincipalPayment.toString() : "");
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -145,6 +148,11 @@ export function DebtDetailModal({
   const ledgerResult = buildDebtPaymentLedger(debt, allEventsForDebt);
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
+  const nextPayment = calculateNextPayment({
+    debt,
+    debtEvents: allEventsForDebt,
+    currentPrincipal: debtIntelligence.currentPrincipal,
+  });
 
   const handleToggleArchive = async () => {
     if (!canWriteDebt || (typeof navigator !== "undefined" && !navigator.onLine)) {
@@ -237,6 +245,10 @@ export function DebtDetailModal({
         clearTea: !editTeaPercent,
         clearTcea: !editTceaPercent,
         clearFrequency: !editPaymentFrequency,
+        firstDueDate: editFirstDueDate || null,
+        clearFirstDueDate: !editFirstDueDate,
+        minimumPrincipalPayment: editMinimumPrincipalPayment ? Number(editMinimumPrincipalPayment) : null,
+        clearMinimumPrincipalPayment: !editMinimumPrincipalPayment,
       });
       success = true;
       setIsEditingTerms(false);
@@ -505,6 +517,28 @@ export function DebtDetailModal({
                         className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
                       />
                     </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700">Próxima fecha de vencimiento</label>
+                      <input
+                        type="date"
+                        value={editFirstDueDate}
+                        onChange={(e) => setEditFirstDueDate(e.target.value)}
+                        className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700">Abono mínimo obligatorio a capital</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editMinimumPrincipalPayment}
+                        onChange={(e) => setEditMinimumPrincipalPayment(e.target.value)}
+                        placeholder="Opcional"
+                        className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                      />
+                    </div>
                   </div>
 
                   <div className="flex justify-end gap-2 pt-2 border-t border-blue-100">
@@ -548,6 +582,78 @@ export function DebtDetailModal({
                     </button>
                   </div>
                 </div>
+              )}
+
+              {/* Prominent Próximo Pago Section */}
+              {debt.status === "active" && (
+                <section className="rounded-2xl border border-blue-200 bg-blue-50/50 p-5 shadow-sm space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-blue-100 pb-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-blue-700">PRÓXIMO PAGO</p>
+                      <p className="text-2xl font-black text-slate-900">
+                        {nextPayment.nextDueDate ? formatReviewDate(nextPayment.nextDueDate) : "Por confirmar"}
+                      </p>
+                    </div>
+                    {canWriteDebt && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenOperation("payment")}
+                        className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:bg-blue-700 transition"
+                      >
+                        Registrar este pago
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                    <div className="rounded-xl bg-white p-3 border border-slate-200">
+                      <p className="text-xs text-slate-500 font-medium">Interés estimado</p>
+                      <p className="font-bold text-slate-900 mt-0.5">
+                        {nextPayment.interestKnown && nextPayment.interestAmount != null
+                          ? formatDebtMoney(nextPayment.interestAmount, nextPayment.currencyCode)
+                          : "Desconocido"}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl bg-white p-3 border border-slate-200">
+                      <p className="text-xs text-slate-500 font-medium">Mínimo a capital</p>
+                      <p className="font-bold text-slate-900 mt-0.5">
+                        {nextPayment.minimumPrincipalKnown && nextPayment.minimumPrincipalAmount != null
+                          ? formatDebtMoney(nextPayment.minimumPrincipalAmount, nextPayment.currencyCode)
+                          : "Sin mínimo"}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl bg-white p-3 border border-blue-200 bg-blue-50/30">
+                      <p className="text-xs text-blue-700 font-bold">Pago mínimo</p>
+                      <p className="text-lg font-black text-blue-900 mt-0.5">
+                        {nextPayment.minimumPaymentKnown && nextPayment.minimumPaymentAmount != null
+                          ? formatDebtMoney(nextPayment.minimumPaymentAmount, nextPayment.currencyCode)
+                          : "Desconocido"}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl bg-white p-3 border border-slate-200">
+                      <p className="text-xs text-slate-500 font-medium">Saldo actual</p>
+                      <p className="font-bold text-slate-900 mt-0.5">
+                        {formatDebtMoney(nextPayment.currentPrincipal, nextPayment.currencyCode)}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl bg-white p-3 border border-slate-200">
+                      <p className="text-xs text-slate-500 font-medium">Saldo después</p>
+                      <p className="font-bold text-slate-900 mt-0.5">
+                        {nextPayment.principalAfterPayment != null
+                          ? formatDebtMoney(nextPayment.principalAfterPayment, nextPayment.currencyCode)
+                          : "Desconocido"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-600 font-medium">
+                    Puedes abonar más al capital.
+                  </p>
+                </section>
               )}
 
               {/* Comprehensive Intelligence & Analysis Panel */}

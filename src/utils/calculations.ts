@@ -98,6 +98,43 @@ export function lastCashCount(cashCounts: CashCount[]) {
   return [...cashCounts].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
 
+/**
+ * Pure helper to determine if a recurring payment's obligation is covered for a given target month (YYYY-MM).
+ *
+ * For DEBT-LINKED recurring payments:
+ * - Current/target month is covered iff (last_paid_year, last_paid_month) >= target (year, month)
+ *   AND the recurring obligation has already started in or before the target month.
+ * - Stale persisted payment.status = 'pagado' is IGNORED for current-cycle truth.
+ *
+ * For ORDINARY/MANUAL recurring payments:
+ * - Current/target month is covered iff (last_paid_year, last_paid_month) === target (year, month).
+ */
+export function isRecurringPaymentCoveredForMonth(
+  payment: RecurringPayment,
+  targetMonthKey: string = localMonthString()
+): boolean {
+  if (payment.last_paid_year == null || payment.last_paid_month == null) {
+    return false;
+  }
+
+  const [tYear, tMonth] = targetMonthKey.split("-").map(Number);
+  if (!tYear || !tMonth) return false;
+
+  const linkedDebtId = payment.linked_debt_id ?? payment.linkedDebtId ?? null;
+  const startsOn = payment.starts_on ?? payment.startsOn ?? null;
+
+  if (linkedDebtId) {
+    if (startsOn && startsOn.slice(0, 7) > targetMonthKey) {
+      return false;
+    }
+    if (payment.last_paid_year > tYear) return true;
+    if (payment.last_paid_year === tYear && payment.last_paid_month >= tMonth) return true;
+    return false;
+  }
+
+  return payment.last_paid_year === tYear && payment.last_paid_month === tMonth;
+}
+
 export function paymentStatus(payment: RecurringPayment): PaymentStatus {
   const todayKey = localDateString();
   const today = parseLocalDate(todayKey);
@@ -113,9 +150,21 @@ export function paymentStatus(payment: RecurringPayment): PaymentStatus {
   if (isPaymentFinished(payment)) return { kind: "completed", label: "Finalizado", tone: "green", days: 999 };
   if (!payment.is_active) return { kind: "inactive", label: "Archivado", tone: "slate", days: 999 };
 
+  const currentMonthKey = todayKey.slice(0, 7);
+  const isCovered = isRecurringPaymentCoveredForMonth(payment, currentMonthKey);
+
+  if (isCovered) {
+    const dueDate = monthlyDueDate(payment.dueDay, todayKey);
+    return { kind: "paid", label: "Pagado este mes", tone: "green", days: 0, dueDate: dueDate ?? undefined };
+  }
+
+  const startsOn = payment.starts_on ?? payment.startsOn;
+  if (startsOn && todayKey < startsOn) {
+    return dueDateStatus(startsOn, today);
+  }
+
   const dueDate = monthlyDueDate(payment.dueDay, todayKey);
   if (!dueDate) return { kind: "later", label: "Fecha por confirmar", tone: "blue", days: 999 };
-  if (isPaymentPaidThisMonth(payment)) return { kind: "paid", label: "Pagado este mes", tone: "green", days: 0, dueDate };
   return dueDateStatus(dueDate, today);
 }
 
@@ -149,7 +198,7 @@ export function paymentAlertSummary(payments: RecurringPayment[]): PaymentAlertS
 
 export function isPaymentPaidThisMonth(payment: RecurringPayment, date = new Date()) {
   const month = localMonthString(date);
-  return payment.last_paid_month === Number(month.slice(5)) && payment.last_paid_year === Number(month.slice(0, 4));
+  return isRecurringPaymentCoveredForMonth(payment, month);
 }
 
 export function isPaymentFinished(payment: RecurringPayment) {
@@ -176,7 +225,6 @@ export function paymentScheduleLabel(payment: RecurringPayment) {
   return payment.recurrence_type === "fixed" ? `${installmentLabel(payment)} · ${monthlySchedule}` : monthlySchedule;
 }
 
-
 /**
  * Adapter: converts the generic dueDateStatus (todayKey-based) to the
  * legacy internal signature (Date-based) used by paymentStatus().
@@ -184,8 +232,6 @@ export function paymentScheduleLabel(payment: RecurringPayment) {
  * so we widen the return type here.
  */
 function dueDateStatus(dueDate: string | null, today: Date): PaymentStatus {
-  // Convert the Date back to a todayKey so the generic helper can use it.
-  // We already have the Date; format it to YYYY-MM-DD without re-reading wall clock.
   const y = today.getUTCFullYear();
   const m = String(today.getUTCMonth() + 1).padStart(2, "0");
   const d = String(today.getUTCDate()).padStart(2, "0");
