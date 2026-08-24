@@ -41,17 +41,29 @@ export function DebtPortfolioIntelligencePanel({ portfolio }: DebtPortfolioIntel
           <p className="mt-1 text-2xl font-extrabold text-slate-900">{portfolio.totalActiveDebts}</p>
         </div>
 
-        {/* Principal Activo Por Moneda */}
+        {/* Estimated current-period settlement by currency */}
         <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4">
-          <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Principal activo por moneda</p>
-          <div className="mt-1 space-y-0.5">
+          <p className="text-xs font-bold uppercase tracking-wider text-blue-700">Total estimado para cancelar</p>
+          <div className="mt-1 space-y-1">
             {currencyEntries.length === 0 ? (
               <p className="text-sm font-bold text-slate-500">Sin deudas activas</p>
             ) : (
               currencyEntries.map((entry) => (
-                <p key={entry.currencyCode} className="text-lg font-extrabold text-blue-900">
-                  {formatDebtMoney(entry.totalCurrentPrincipal, entry.currencyCode)}
-                </p>
+                <div key={entry.currencyCode}>
+                  <p className="text-lg font-extrabold text-blue-900">
+                    {entry.totalEstimatedSettlement > 0
+                      ? formatDebtMoney(entry.totalEstimatedSettlement, entry.currencyCode)
+                      : "Por confirmar"}
+                  </p>
+                  <p className="text-[11px] font-semibold text-slate-500">
+                    Principal: {formatDebtMoney(entry.totalCurrentPrincipal, entry.currencyCode)}
+                  </p>
+                  {entry.estimatedSettlementUnknownCount > 0 && (
+                    <p className="text-[11px] font-semibold text-amber-700">
+                      + {entry.estimatedSettlementUnknownCount} {entry.estimatedSettlementUnknownCount === 1 ? "liquidación por confirmar" : "liquidaciones por confirmar"}
+                    </p>
+                  )}
+                </div>
               ))
             )}
           </div>

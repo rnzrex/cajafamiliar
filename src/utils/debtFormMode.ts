@@ -1,6 +1,5 @@
-import type { DebtKind, DebtPaymentFrequency, DebtInstallmentAmountMode, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis } from "../types";
-import type { DebtCreateInput } from "../services/dataRepository";
-import { localDateString } from "./date";
+import type { DebtKind, DebtPaymentFrequency, DebtInstallmentAmountMode, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, DebtCreateInput } from "../types.js";
+import { localDateString } from "./date.js";
 
 export function isCreditCardDebtKind(kind: DebtKind): boolean {
   return kind === "credit_card";

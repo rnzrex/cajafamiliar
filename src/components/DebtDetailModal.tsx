@@ -697,14 +697,29 @@ export function DebtDetailModal({
                 </form>
               ) : (
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between rounded-2xl bg-blue-50/60 p-5 gap-4">
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-wider text-blue-600">Saldo principal actual</p>
-                    <p className="text-3xl font-extrabold text-blue-900">
-                      {formatDebtMoney(debtIntelligence.currentPrincipal, debtIntelligence.currencyCode)}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Principal inicial de apertura: {formatDebtMoney(debt.openingPrincipalBalance, debt.currencyCode)}
-                    </p>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-blue-600">Saldo principal actual</p>
+                      <p className="text-3xl font-extrabold text-blue-900">
+                        {formatDebtMoney(debtIntelligence.currentPrincipal, debtIntelligence.currencyCode)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Principal inicial de apertura: {formatDebtMoney(debt.openingPrincipalBalance, debt.currencyCode)}
+                      </p>
+                    </div>
+                    {isFlexOpenEnded && (
+                      <div className="rounded-xl border border-emerald-200 bg-white/80 px-4 py-3">
+                        <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">Total estimado para cancelar este período</p>
+                        <p className="text-2xl font-extrabold text-emerald-800">
+                          {nextPayment.settlementKnown && nextPayment.settlementAmount != null
+                            ? formatDebtMoney(nextPayment.settlementAmount, nextPayment.currencyCode)
+                            : "Por confirmar"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Principal + interés estimado del período. No incluye cargos no registrados.
+                        </p>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <button

@@ -1,8 +1,8 @@
-import { fetchAllSupabaseRows } from "./supabasePagination";
-import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis } from "../types";
-import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
-import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
+import { fetchAllSupabaseRows } from "./supabasePagination.js";
+import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors.js";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis } from "../types.js";
+import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage.js";
+import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient.js";
 
 export type AppDataLoadSource = "local" | "remote" | "fallback";
 
@@ -11,7 +11,7 @@ export interface AppDataLoadResult {
   source: AppDataLoadSource;
 }
 
-export * from "./dataRepositoryErrors";
+export * from "./dataRepositoryErrors.js";
 
 export class MovementNotFoundError extends Error {
   constructor() {
@@ -583,40 +583,6 @@ export interface DebtReversalResult {
   installments: DebtInstallment[];
 }
 
-export interface DebtCollateralInput {
-  description: string;
-  pledgedValue?: number | null;
-  estimatedValue?: number | null;
-  redemptionDeadline?: string | null;
-}
-
-export interface DebtCreateInput {
-  debtId: string;
-  name: string;
-  creditorName: string;
-  debtKind: DebtKind;
-  currencyCode: string;
-  originDate?: string | null;
-  trackingStartDate: string;
-  originalPrincipal?: number | null;
-  openingPrincipalBalance: number;
-  plannedInstallmentCount?: number | null;
-  plannedInstallmentAmount?: number | null;
-  installmentAmountMode: DebtInstallmentAmountMode;
-  paymentFrequency?: DebtPaymentFrequency | null;
-  customFrequencyDays?: number | null;
-  firstDueDate?: string | null;
-  teaPercent?: number | null;
-  tceaPercent?: number | null;
-  notes?: string | null;
-  installments: DebtScheduleInstallmentInput[];
-  collaterals: DebtCollateralInput[];
-  repaymentStructure?: DebtRepaymentStructure;
-  interestCalculationMode?: DebtInterestCalculationMode;
-  periodicRatePercent?: number | null;
-  periodicRateBasis?: PeriodicRateBasis | null;
-  minimumPrincipalPayment?: number | null;
-}
 
 export interface DebtUpdateMetadataInput {
   debtId: string;

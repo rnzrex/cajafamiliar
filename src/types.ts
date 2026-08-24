@@ -363,6 +363,41 @@ export interface CreditCardDebtCreateInput {
   notes?: string | null;
 }
 
+export interface DebtCollateralInput {
+  description: string;
+  pledgedValue?: number | null;
+  estimatedValue?: number | null;
+  redemptionDeadline?: string | null;
+}
+
+export interface DebtCreateInput {
+  debtId: string;
+  name: string;
+  creditorName: string;
+  debtKind: DebtKind;
+  currencyCode: string;
+  originDate?: string | null;
+  trackingStartDate: string;
+  originalPrincipal?: number | null;
+  openingPrincipalBalance: number;
+  plannedInstallmentCount?: number | null;
+  plannedInstallmentAmount?: number | null;
+  installmentAmountMode: DebtInstallmentAmountMode;
+  paymentFrequency?: DebtPaymentFrequency | null;
+  customFrequencyDays?: number | null;
+  firstDueDate?: string | null;
+  teaPercent?: number | null;
+  tceaPercent?: number | null;
+  notes?: string | null;
+  installments: DebtScheduleInstallmentInput[];
+  collaterals: DebtCollateralInput[];
+  repaymentStructure?: DebtRepaymentStructure;
+  interestCalculationMode?: DebtInterestCalculationMode;
+  periodicRatePercent?: number | null;
+  periodicRateBasis?: PeriodicRateBasis | null;
+  minimumPrincipalPayment?: number | null;
+}
+
 export interface CreditCardDebtCreateResult {
   success: boolean;
   debtId: string;

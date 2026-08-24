@@ -25,6 +25,7 @@ import type { DebtInstallmentPlanningItem } from "./debtPlanning.js";
 import { dueDateStatus } from "./dueDates.js";
 import type { DueDateKind } from "./dueDates.js";
 import { localDateString } from "./date.js";
+import { calculateNextPayment } from "./debtNextPayment.js";
 
 // ---------------------------------------------------------------------------
 // Types & Interfaces
@@ -87,6 +88,8 @@ export interface DebtIntelligenceItem {
   isArchived: boolean;
 
   currentPrincipal: number;
+  estimatedSettlementAmount?: number | null;
+  estimatedSettlementKnown?: boolean;
   originalPrincipal: number | null;
   openingPrincipalBalance: number;
 
@@ -137,6 +140,8 @@ export interface DebtPortfolioCurrencyIntelligence {
   currencyCode: string;
   activeDebtCount: number;
   totalCurrentPrincipal: number;
+  totalEstimatedSettlement: number;
+  estimatedSettlementUnknownCount: number;
 
   largestDebtId: string | null;
   largestDebtPrincipal: number | null;
@@ -211,6 +216,21 @@ export function buildDebtIntelligenceItems({
       debt.debtKind === "credit_card" && creditCardEntries.length > 0
         ? currentCreditCardBalance(debt, creditCardEntries)
         : currentDebtPrincipal(debt, debtEvents);
+
+    const settlementEstimate =
+      debt.debtKind === "credit_card"
+        ? null
+        : calculateNextPayment({ debt, debtEvents, currentPrincipal, todayKey });
+    const estimatedSettlementKnown =
+      debt.debtKind === "credit_card"
+        ? true
+        : debt.repaymentStructure === "open_ended" && settlementEstimate?.settlementKnown === true;
+    const estimatedSettlementAmount =
+      debt.debtKind === "credit_card"
+        ? currentPrincipal
+        : estimatedSettlementKnown
+        ? settlementEstimate?.settlementAmount ?? null
+        : null;
 
     // 2. Fund events vs Non-fund events
     const fundEvents = effectiveDebtFundEvents(debtEvents, debt.id);
@@ -355,23 +375,7 @@ export function buildDebtIntelligenceItems({
     let next30KnownAmount = 0;
     let next30UnknownAmountCount = 0;
 
-    if (debt.repaymentStructure === "open_ended") {
-      remainingInstallmentCount = 0;
-      knownRemainingInstallmentCount = 0;
-      unknownRemainingInstallmentCount = 0;
-      overdueInstallmentCount = 0;
-
-      nextInstallmentId = null;
-      nextInstallmentNumber = null;
-      nextInstallmentDueDate = null;
-      nextInstallmentDueStatus = null;
-      nextInstallmentRemainingAmount = null;
-      nextInstallmentAmountKnown = true;
-
-      next30InstallmentCount = 0;
-      next30KnownAmount = 0;
-      next30UnknownAmountCount = 0;
-    } else if (isCard && latestCardStatement && latestCardStatement.dueDate) {
+    if (isCard && latestCardStatement && latestCardStatement.dueDate) {
       const attention = classifyCreditCardStatementAttention({
         debt,
         statement: latestCardStatement,
@@ -481,6 +485,8 @@ export function buildDebtIntelligenceItems({
       isArchived: debt.isArchived,
 
       currentPrincipal,
+      estimatedSettlementAmount,
+      estimatedSettlementKnown,
       originalPrincipal: debt.originalPrincipal,
       openingPrincipalBalance: debt.openingPrincipalBalance,
 
@@ -557,6 +563,8 @@ export function buildDebtPortfolioIntelligence(
         currencyCode: curr,
         activeDebtCount: 0,
         totalCurrentPrincipal: 0,
+        totalEstimatedSettlement: 0,
+        estimatedSettlementUnknownCount: 0,
 
         largestDebtId: null,
         largestDebtPrincipal: null,
@@ -587,6 +595,11 @@ export function buildDebtPortfolioIntelligence(
 
     entry.activeDebtCount++;
     entry.totalCurrentPrincipal += item.currentPrincipal;
+    if (item.estimatedSettlementKnown && item.estimatedSettlementAmount != null) {
+      entry.totalEstimatedSettlement += item.estimatedSettlementAmount;
+    } else {
+      entry.estimatedSettlementUnknownCount++;
+    }
 
     // Largest / Smallest tracking
     if (entry.largestDebtPrincipal === null || item.currentPrincipal > entry.largestDebtPrincipal) {
