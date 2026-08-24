@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination";
 import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis } from "../types";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 
@@ -607,6 +607,10 @@ export interface DebtCreateInput {
   notes?: string | null;
   installments: DebtScheduleInstallmentInput[];
   collaterals: DebtCollateralInput[];
+  repaymentStructure?: DebtRepaymentStructure;
+  interestCalculationMode?: DebtInterestCalculationMode;
+  periodicRatePercent?: number | null;
+  periodicRateBasis?: PeriodicRateBasis | null;
 }
 
 export interface DebtUpdateMetadataInput {
@@ -614,6 +618,18 @@ export interface DebtUpdateMetadataInput {
   name: string;
   creditorName: string;
   notes: string;
+}
+
+export interface DebtUpdateTermsInput {
+  debtId: string;
+  repaymentStructure?: DebtRepaymentStructure | null;
+  interestCalculationMode?: DebtInterestCalculationMode | null;
+  periodicRatePercent?: number | null;
+  periodicRateBasis?: PeriodicRateBasis | null;
+  teaPercent?: number | null;
+  tceaPercent?: number | null;
+  paymentFrequency?: DebtPaymentFrequency | null;
+  customFrequencyDays?: number | null;
 }
 
 export interface DebtSetArchivedInput {
@@ -656,6 +672,10 @@ export function toCreateDebtRpcArgs(input: DebtCreateInput) {
       estimated_value: c.estimatedValue ?? null,
       redemption_deadline: c.redemptionDeadline ?? null,
     })),
+    p_repayment_structure: input.repaymentStructure ?? "unknown",
+    p_interest_calculation_mode: input.interestCalculationMode ?? "unknown",
+    p_periodic_rate_percent: input.periodicRatePercent ?? null,
+    p_periodic_rate_basis: input.periodicRateBasis ?? null,
   };
 }
 
@@ -684,6 +704,25 @@ export async function updateDebtMetadata(input: DebtUpdateMetadataInput): Promis
   });
   if (error) throw mapDebtOperationError(error.message) ?? error;
   if (!data || typeof data !== "object") throw new Error("La RPC update_debt_metadata_v1 no devolvió un resultado válido.");
+  return fromDebtRow(data);
+}
+
+export async function updateDebtTerms(input: DebtUpdateTermsInput): Promise<Debt> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("update_debt_terms_v1", {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_repayment_structure: input.repaymentStructure ?? null,
+    p_interest_calculation_mode: input.interestCalculationMode ?? null,
+    p_periodic_rate_percent: input.periodicRatePercent ?? null,
+    p_periodic_rate_basis: input.periodicRateBasis ?? null,
+    p_tea_percent: input.teaPercent ?? null,
+    p_tcea_percent: input.tceaPercent ?? null,
+    p_payment_frequency: input.paymentFrequency ?? null,
+    p_custom_frequency_days: input.customFrequencyDays ?? null,
+  });
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La RPC update_debt_terms_v1 no devolvió un resultado válido.");
   return fromDebtRow(data);
 }
 
@@ -1447,6 +1486,10 @@ function fromDebtRow(row: Record<string, any>): Debt {
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    repaymentStructure: row.repayment_structure ?? "unknown",
+    interestCalculationMode: row.interest_calculation_mode ?? "unknown",
+    periodicRatePercent: row.periodic_rate_percent == null ? null : Number(row.periodic_rate_percent),
+    periodicRateBasis: row.periodic_rate_basis ?? null,
   };
 }
 

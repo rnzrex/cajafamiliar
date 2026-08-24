@@ -1,4 +1,4 @@
-import type { DebtKind, DebtPaymentFrequency, DebtInstallmentAmountMode } from "../types";
+import type { DebtKind, DebtPaymentFrequency, DebtInstallmentAmountMode, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis } from "../types";
 import type { DebtCreateInput } from "../services/dataRepository";
 import { localDateString } from "./date";
 
@@ -96,6 +96,10 @@ export interface DebtOnboardingInputParams {
   pledgePledgedValue?: string;
   installments?: any[];
   extraCollaterals?: any[];
+  repaymentStructure?: DebtRepaymentStructure;
+  interestCalculationMode?: DebtInterestCalculationMode;
+  periodicRatePercent?: string | number | null;
+  periodicRateBasis?: PeriodicRateBasis | null;
 }
 
 export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): DebtCreateInput {
@@ -109,10 +113,8 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
 
   let finalOriginalPrincipal: number | null = null;
   if (isNewDebt) {
-    // For NEW_DEBT, the original principal received is the opening principal balance
     finalOriginalPrincipal = numOwed;
   } else {
-    // For EXISTING_DEBT, originalPrincipal is optional
     finalOriginalPrincipal = params.originalPrincipal ? Number(params.originalPrincipal) : null;
   }
 
@@ -169,5 +171,9 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
       expectedInsurance: i.expectedInsurance ? Number(i.expectedInsurance) : null,
     })),
     collaterals,
+    repaymentStructure: params.repaymentStructure ?? "unknown",
+    interestCalculationMode: params.interestCalculationMode ?? "unknown",
+    periodicRatePercent: params.periodicRatePercent ? Number(params.periodicRatePercent) : null,
+    periodicRateBasis: params.periodicRateBasis ?? null,
   };
 }

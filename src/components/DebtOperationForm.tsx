@@ -50,9 +50,13 @@ export function DebtOperationForm({
   const activeAccounts = accounts.filter((acc) => acc.isActive !== false);
   const [accountId, setAccountId] = useState(activeAccounts[0]?.id ?? "");
 
+  const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
+
   const [description, setDescription] = useState(
     operationType === "payment"
-      ? `Pago de cuota — ${debt.name}`
+      ? isFlexOpenEnded
+        ? `Pago de deuda — ${debt.name}`
+        : `Pago de cuota — ${debt.name}`
       : operationType === "prepayment"
         ? `Prepago de principal — ${debt.name}`
         : operationType === "payoff"
@@ -320,7 +324,7 @@ export function DebtOperationForm({
   };
 
   const titleMap = {
-    payment: "Registrar pago de cuota",
+    payment: isFlexOpenEnded ? "Registrar pago" : "Registrar pago de cuota",
     prepayment: "Registrar prepago de principal",
     payoff: "Liquidar deuda",
     reversal: "Revertir registro",

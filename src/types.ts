@@ -52,6 +52,10 @@ export interface Movement {
 export type MovementFormInput = Omit<Movement, "id" | "person" | "registeredByUserId" | "movementContext"> & { person?: string };
 export type MovementDraft = Partial<Omit<Movement, "id" | "movementContext">>;
 
+export type DebtRepaymentStructure = "fixed_schedule" | "open_ended" | "unknown";
+export type DebtInterestCalculationMode = "contract_schedule" | "contract_periodic_rate" | "tea_estimate" | "manual" | "unknown";
+export type PeriodicRateBasis = "monthly" | "biweekly" | "weekly" | "daily";
+
 export interface Debt {
   id: string;
   name: string;
@@ -76,6 +80,10 @@ export interface Debt {
   createdByUserId: string;
   createdAt: string;
   updatedAt: string;
+  repaymentStructure?: DebtRepaymentStructure;
+  interestCalculationMode?: DebtInterestCalculationMode;
+  periodicRatePercent?: number | null;
+  periodicRateBasis?: PeriodicRateBasis | null;
 }
 
 export interface DebtEvent {
@@ -90,11 +98,17 @@ export interface DebtEvent {
   insurancePaid: number;
   otherCostPaid: number;
   breakdownComplete: boolean;
-  movementId: string | null;
-  reversalOfEventId: string | null;
-  description: string;
-  registeredByUserId: string;
+  movementId?: string | null;
+  reversalOfEventId?: string | null;
+  reversedByEventId?: string | null;
+  reversesEventId?: string | null;
+  isReversed?: boolean;
+  notes?: string;
+  description?: string;
+  registeredByUserId?: string;
+  createdByUserId?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface DebtScheduleVersion {
