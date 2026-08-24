@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Debt } from "../types";
-import { calculateAssistedInterestSuggestion } from "./debtInterestEngine";
+import type { Debt, DebtEvent } from "../types";
+import { calculateAssistedInterestSuggestion, getLastEffectiveDebtPaymentDate } from "./debtInterestEngine";
 
 describe("DEBT-6B Assisted Interest Engine Tests", () => {
   const baseDebt: Debt = {
@@ -154,5 +154,155 @@ describe("DEBT-6B Assisted Interest Engine Tests", () => {
     });
 
     expect(suggestion.warningMessage).toContain("$");
+  });
+
+  describe("getLastEffectiveDebtPaymentDate Pure Production Helper Tests", () => {
+    it("A. prevents cross-debt contamination (Debt A payment vs Debt B payment)", () => {
+      const events: DebtEvent[] = [
+        {
+          id: "evt-a1",
+          debtId: "debt-a",
+          eventDate: "2026-03-01",
+          eventType: "payment",
+          cashAmount: 300,
+          principalDelta: -200,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-1",
+          reversalOfEventId: null,
+          description: "Pago Debt A",
+          registeredByUserId: "user-1",
+          createdAt: "2026-03-01T10:00:00Z",
+        },
+        {
+          id: "evt-b1",
+          debtId: "debt-b",
+          eventDate: "2026-03-20",
+          eventType: "payment",
+          cashAmount: 500,
+          principalDelta: -400,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-2",
+          reversalOfEventId: null,
+          description: "Pago Debt B",
+          registeredByUserId: "user-1",
+          createdAt: "2026-03-20T10:00:00Z",
+        },
+      ];
+
+      expect(getLastEffectiveDebtPaymentDate(events, "debt-a")).toBe("2026-03-01");
+      expect(getLastEffectiveDebtPaymentDate(events, "debt-b")).toBe("2026-03-20");
+    });
+
+    it("B. ignores reversed latest payment and uses previous effective payment date", () => {
+      const events: DebtEvent[] = [
+        {
+          id: "evt-1",
+          debtId: "debt-a",
+          eventDate: "2026-02-01",
+          eventType: "payment",
+          cashAmount: 300,
+          principalDelta: -200,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-1",
+          reversalOfEventId: null,
+          description: "Pago cuota 1",
+          registeredByUserId: "user-1",
+          createdAt: "2026-02-01T10:00:00Z",
+        },
+        {
+          id: "evt-2",
+          debtId: "debt-a",
+          eventDate: "2026-03-01",
+          eventType: "payment",
+          cashAmount: 400,
+          principalDelta: -300,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-2",
+          reversalOfEventId: null,
+          description: "Pago cuota 2 (anulado)",
+          registeredByUserId: "user-1",
+          createdAt: "2026-03-01T10:00:00Z",
+        },
+        {
+          id: "evt-3",
+          debtId: "debt-a",
+          eventDate: "2026-03-02",
+          eventType: "reversal",
+          cashAmount: -400,
+          principalDelta: 300,
+          interestPaid: -100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-3",
+          reversalOfEventId: "evt-2",
+          description: "Reversión pago cuota 2",
+          registeredByUserId: "user-1",
+          createdAt: "2026-03-02T10:00:00Z",
+        },
+      ];
+
+      expect(getLastEffectiveDebtPaymentDate(events, "debt-a")).toBe("2026-02-01");
+    });
+
+    it("C. ignores principal_adjustment events as interest-period anchors", () => {
+      const events: DebtEvent[] = [
+        {
+          id: "evt-1",
+          debtId: "debt-a",
+          eventDate: "2026-02-01",
+          eventType: "payment",
+          cashAmount: 300,
+          principalDelta: -200,
+          interestPaid: 100,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: "mov-1",
+          reversalOfEventId: null,
+          description: "Pago cuota 1",
+          registeredByUserId: "user-1",
+          createdAt: "2026-02-01T10:00:00Z",
+        },
+        {
+          id: "evt-2",
+          debtId: "debt-a",
+          eventDate: "2026-02-15",
+          eventType: "principal_adjustment",
+          cashAmount: 0,
+          principalDelta: 500,
+          interestPaid: 0,
+          feesPaid: 0,
+          insurancePaid: 0,
+          otherCostPaid: 0,
+          breakdownComplete: true,
+          movementId: null,
+          reversalOfEventId: null,
+          description: "Ajuste de saldo",
+          registeredByUserId: "user-1",
+          createdAt: "2026-02-15T10:00:00Z",
+        },
+      ];
+
+      expect(getLastEffectiveDebtPaymentDate(events, "debt-a")).toBe("2026-02-01");
+    });
   });
 });

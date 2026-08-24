@@ -6,7 +6,7 @@ import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError, validateDebtPayment, validateDebtPrepayment, validateDebtPayoff, validateDebtAllocations, debtEconomicSummary } from "../utils/debtViewModel";
 import { currentDebtScheduleVersion, allocatedAmountForInstallment } from "../utils/debtCalculations";
-import { calculateAssistedInterestSuggestion } from "../utils/debtInterestEngine";
+import { calculateAssistedInterestSuggestion, getLastEffectiveDebtPaymentDate } from "../utils/debtInterestEngine";
 import { getCurrencySymbol } from "../utils/debtFormMode";
 
 interface DebtOperationFormProps {
@@ -98,23 +98,7 @@ export function DebtOperationForm({
   const [isUserModified, setIsUserModified] = useState(false);
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
 
-  const reversedIds = new Set(
-    debtEvents
-      .filter((e) => e.eventType === "reversal" && e.reversalOfEventId)
-      .map((e) => e.reversalOfEventId!)
-  );
-
-  const effectiveEvents = debtEvents.filter(
-    (e) => e.eventType !== "reversal" && !reversedIds.has(e.id)
-  );
-
-  effectiveEvents.sort((a, b) => {
-    if (a.eventDate !== b.eventDate) return a.eventDate.localeCompare(b.eventDate);
-    return (a.createdAt || "").localeCompare(b.createdAt || "");
-  });
-
-  const lastEffectiveEvent = effectiveEvents[effectiveEvents.length - 1];
-  const lastEventDate = lastEffectiveEvent ? lastEffectiveEvent.eventDate : null;
+  const lastEventDate = getLastEffectiveDebtPaymentDate(debtEvents, debt.id);
 
   const numCash = Number(cashAmount || 0);
   const suggestion = calculateAssistedInterestSuggestion({

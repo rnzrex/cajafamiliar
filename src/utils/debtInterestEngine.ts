@@ -1,4 +1,4 @@
-import type { Debt, DebtInstallment, DebtInterestCalculationMode } from "../types";
+import type { Debt, DebtEvent, DebtInstallment, DebtInterestCalculationMode } from "../types";
 import { getCurrencySymbol } from "./debtFormMode";
 
 export type InterestSuggestionCertainty = "exact_contract" | "exact_rate" | "tea_estimate" | "insufficient_info";
@@ -29,6 +29,37 @@ function parseDaysBetween(startDateStr: string, endDateStr: string): number {
   return Math.max(0, diffDays);
 }
 
+export function getLastEffectiveDebtPaymentDate(
+  debtEvents: DebtEvent[],
+  debtId: string
+): string | null {
+  const debtScopedEvents = debtEvents.filter((e) => e.debtId === debtId);
+
+  const reversedIds = new Set(
+    debtScopedEvents
+      .filter((e) => e.eventType === "reversal" && e.reversalOfEventId)
+      .map((e) => e.reversalOfEventId!)
+  );
+
+  const effectivePaymentEvents = debtScopedEvents.filter(
+    (e) =>
+      !reversedIds.has(e.id) &&
+      e.eventType !== "reversal" &&
+      e.eventType !== "principal_adjustment" &&
+      (e.eventType === "payment" ||
+        e.eventType === "principal_prepayment" ||
+        e.eventType === "payoff")
+  );
+
+  effectivePaymentEvents.sort((a, b) => {
+    if (a.eventDate !== b.eventDate) return a.eventDate.localeCompare(b.eventDate);
+    return (a.createdAt || "").localeCompare(b.createdAt || "");
+  });
+
+  const lastEvent = effectivePaymentEvents[effectivePaymentEvents.length - 1];
+  return lastEvent ? lastEvent.eventDate : null;
+}
+
 export function calculateAssistedInterestSuggestion(params: {
   debt: Debt;
   currentPrincipal: number;
@@ -47,6 +78,8 @@ export function calculateAssistedInterestSuggestion(params: {
   let calculationExplanation = "";
   let certainty: InterestSuggestionCertainty = "insufficient_info";
 
+  const anchorDate = lastEventDate || debt.trackingStartDate || debt.originDate;
+
   // Priority 1: Contractual Schedule
   if (
     (debt.interestCalculationMode === "contract_schedule" || debt.repaymentStructure === "fixed_schedule") &&
@@ -59,7 +92,7 @@ export function calculateAssistedInterestSuggestion(params: {
     certainty = "exact_contract";
     calculationExplanation = `Calculado según cuota #${nextInstallment.installmentNumber} del cronograma contractual.`;
   }
-  // Priority 2: Contract Periodic Rate
+  // Priority 2: Contract Periodic Rate (Requires rate > 0)
   else if (
     debt.interestCalculationMode === "contract_periodic_rate" &&
     debt.periodicRatePercent != null &&
@@ -67,7 +100,6 @@ export function calculateAssistedInterestSuggestion(params: {
   ) {
     const basis = debt.periodicRateBasis || "monthly";
     const ratePercent = debt.periodicRatePercent;
-    const anchorDate = debt.interestAccrualAnchorDate || lastEventDate || debt.trackingStartDate || debt.originDate;
 
     if (basis === "daily") {
       if (anchorDate && paymentDate && paymentDate > anchorDate) {
@@ -75,8 +107,8 @@ export function calculateAssistedInterestSuggestion(params: {
         if (days > 0) {
           calcInterest = round2(principal * (ratePercent / 100) * days);
           calculationSource = "contract_periodic_rate";
-          certainty = "exact_rate";
-          calculationExplanation = `Calculado con tasa contractual de ${ratePercent}% diaria sobre el saldo pendiente (${days} días).`;
+          certainty = "tea_estimate";
+          calculationExplanation = `Estimación con tasa contractual de ${ratePercent}% diaria sobre el saldo pendiente (${days} días).`;
         } else {
           certainty = "insufficient_info";
           calculationExplanation = "No se puede calcular el período para tasa diaria sin fecha anterior válida.";
@@ -102,16 +134,19 @@ export function calculateAssistedInterestSuggestion(params: {
       }
     }
   }
-  // Priority 3: TEA Estimate (requires explicit known elapsed days > 0)
+  // Priority 3: TEA Estimate (requires mode === 'tea_estimate' or explicit TEA > 0, requires elapsed days > 0)
   else if (
     (debt.interestCalculationMode === "tea_estimate" || (debt.teaPercent != null && debt.teaPercent > 0)) &&
-    debt.interestCalculationMode !== "manual"
+    debt.interestCalculationMode !== "manual" &&
+    debt.interestCalculationMode !== "unknown"
   ) {
-    const anchorDate = debt.interestAccrualAnchorDate || lastEventDate || debt.trackingStartDate || debt.originDate;
-    if (anchorDate && paymentDate && paymentDate > anchorDate) {
+    if (debt.teaPercent == null || debt.teaPercent <= 0) {
+      certainty = "insufficient_info";
+      calculationExplanation = "No tenemos un porcentaje de TEA válido para proponer la estimación.";
+    } else if (anchorDate && paymentDate && paymentDate > anchorDate) {
       const days = parseDaysBetween(anchorDate, paymentDate);
       if (days > 0) {
-        const teaDecimal = (debt.teaPercent || 0) / 100;
+        const teaDecimal = debt.teaPercent / 100;
         const periodRate = Math.pow(1 + teaDecimal, days / 365) - 1;
         calcInterest = round2(principal * periodRate);
         calculationSource = "tea_estimate";

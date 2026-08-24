@@ -205,8 +205,8 @@ async function runSmokeTest() {
       select public.update_debt_terms_v1(
         '${ids.household}', '${ids.debt1}',
         'open_ended', 'tea_estimate', null, null,
-        60.1, 72.4, null, null, null,
-        true, false, false, false, false
+        60.1, 72.4, null, null,
+        true, false, false, false
       );
     `));
     const lines3 = updateResultJson.split("\n").map(s => s.trim()).filter(Boolean);
@@ -236,6 +236,25 @@ async function runSmokeTest() {
       throw new Error("update_debt_terms_v1 allowed invalid repayment_structure!");
     }
     console.log("✓ Invalid repayment_structure correctly rejected by domain check constraint");
+
+    // 6. Test cross-field validation (reject contract_periodic_rate without periodic_rate_percent)
+    let crossFieldRejected = false;
+    try {
+      await execSql(withUser(`
+        select public.update_debt_terms_v1(
+          '${ids.household}', '${ids.debt1}',
+          'open_ended', 'contract_periodic_rate', null, null,
+          null, null, null, null,
+          true, false, false, false
+        );
+      `));
+    } catch {
+      crossFieldRejected = true;
+    }
+    if (!crossFieldRejected) {
+      throw new Error("update_debt_terms_v1 allowed contract_periodic_rate with null periodic_rate_percent!");
+    }
+    console.log("✓ Incoherent mode/rate cross-field combination correctly rejected by domain constraint");
 
     console.log("--- DEBT-6B SQL Smoke Test Completed Successfully ---");
   } catch (err) {

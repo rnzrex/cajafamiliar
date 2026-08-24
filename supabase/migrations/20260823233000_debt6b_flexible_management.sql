@@ -9,8 +9,7 @@ alter table public.debts
   add column if not exists repayment_structure text not null default 'unknown',
   add column if not exists interest_calculation_mode text not null default 'unknown',
   add column if not exists periodic_rate_percent numeric null,
-  add column if not exists periodic_rate_basis text null,
-  add column if not exists interest_accrual_anchor_date date null;
+  add column if not exists periodic_rate_basis text null;
 
 alter table public.debts
   drop constraint if exists debts_repayment_structure_check,
@@ -31,6 +30,15 @@ alter table public.debts
   drop constraint if exists debts_periodic_rate_basis_check,
   add constraint debts_periodic_rate_basis_check
     check (periodic_rate_basis is null or periodic_rate_basis in ('monthly', 'biweekly', 'weekly', 'daily'));
+
+alter table public.debts
+  drop constraint if exists debts_mode_rate_coherence_check,
+  add constraint debts_mode_rate_coherence_check
+    check (
+      (interest_calculation_mode <> 'contract_periodic_rate' or (periodic_rate_percent is not null and periodic_rate_percent > 0 and periodic_rate_basis is not null))
+      and
+      (interest_calculation_mode <> 'tea_estimate' or (tea_percent is not null and tea_percent > 0))
+    );
 
 -- ============================================================
 -- 2. CREATE_DEBT_V1 (EXTENDED 25-ARGUMENT IMPLEMENTATION)
@@ -124,6 +132,14 @@ begin
   end if;
 
   if v_interest_calc_mode not in ('contract_schedule', 'contract_periodic_rate', 'tea_estimate', 'manual', 'unknown') then
+    raise exception 'INVALID_DEBT_INPUT';
+  end if;
+
+  if v_interest_calc_mode = 'contract_periodic_rate' and (p_periodic_rate_percent is null or p_periodic_rate_percent <= 0 or p_periodic_rate_basis is null) then
+    raise exception 'INVALID_DEBT_INPUT';
+  end if;
+
+  if v_interest_calc_mode = 'tea_estimate' and (p_tea_percent is null or p_tea_percent <= 0) then
     raise exception 'INVALID_DEBT_INPUT';
   end if;
 
@@ -391,12 +407,10 @@ create or replace function public.update_debt_terms_v1(
   p_tcea_percent numeric default null,
   p_payment_frequency text default null,
   p_custom_frequency_days integer default null,
-  p_interest_accrual_anchor_date date default null,
   p_clear_periodic_rate boolean default false,
   p_clear_tea boolean default false,
   p_clear_tcea boolean default false,
-  p_clear_frequency boolean default false,
-  p_clear_anchor boolean default false
+  p_clear_frequency boolean default false
 )
 returns pg_catalog.jsonb
 language plpgsql
@@ -406,6 +420,10 @@ as $function$
 declare
   v_user_id uuid := auth.uid();
   v_debt public.debts%rowtype;
+  v_new_mode text;
+  v_new_periodic_percent numeric;
+  v_new_periodic_basis text;
+  v_new_tea numeric;
 begin
   if v_user_id is null then
     raise exception 'AUTH_REQUIRED';
@@ -454,24 +472,37 @@ begin
     raise exception 'INVALID_DEBT_INPUT';
   end if;
 
+  v_new_mode := coalesce(p_interest_calculation_mode, v_debt.interest_calculation_mode);
+  v_new_periodic_percent := case
+    when coalesce(p_clear_periodic_rate, false) then null
+    when p_periodic_rate_percent is not null then p_periodic_rate_percent
+    else v_debt.periodic_rate_percent
+  end;
+  v_new_periodic_basis := case
+    when coalesce(p_clear_periodic_rate, false) then null
+    when p_periodic_rate_basis is not null then p_periodic_rate_basis
+    else v_debt.periodic_rate_basis
+  end;
+  v_new_tea := case
+    when coalesce(p_clear_tea, false) then null
+    when p_tea_percent is not null then p_tea_percent
+    else v_debt.tea_percent
+  end;
+
+  if v_new_mode = 'contract_periodic_rate' and (v_new_periodic_percent is null or v_new_periodic_percent <= 0 or v_new_periodic_basis is null) then
+    raise exception 'INVALID_DEBT_INPUT';
+  end if;
+
+  if v_new_mode = 'tea_estimate' and (v_new_tea is null or v_new_tea <= 0) then
+    raise exception 'INVALID_DEBT_INPUT';
+  end if;
+
   update public.debts as d
      set repayment_structure = coalesce(p_repayment_structure, d.repayment_structure),
-         interest_calculation_mode = coalesce(p_interest_calculation_mode, d.interest_calculation_mode),
-         periodic_rate_percent = case
-           when coalesce(p_clear_periodic_rate, false) then null
-           when p_periodic_rate_percent is not null then p_periodic_rate_percent
-           else d.periodic_rate_percent
-         end,
-         periodic_rate_basis = case
-           when coalesce(p_clear_periodic_rate, false) then null
-           when p_periodic_rate_basis is not null then p_periodic_rate_basis
-           else d.periodic_rate_basis
-         end,
-         tea_percent = case
-           when coalesce(p_clear_tea, false) then null
-           when p_tea_percent is not null then p_tea_percent
-           else d.tea_percent
-         end,
+         interest_calculation_mode = v_new_mode,
+         periodic_rate_percent = v_new_periodic_percent,
+         periodic_rate_basis = v_new_periodic_basis,
+         tea_percent = v_new_tea,
          tcea_percent = case
            when coalesce(p_clear_tcea, false) then null
            when p_tcea_percent is not null then p_tcea_percent
@@ -486,11 +517,6 @@ begin
            when coalesce(p_clear_frequency, false) then null
            when p_custom_frequency_days is not null then p_custom_frequency_days
            else d.custom_frequency_days
-         end,
-         interest_accrual_anchor_date = case
-           when coalesce(p_clear_anchor, false) then null
-           when p_interest_accrual_anchor_date is not null then p_interest_accrual_anchor_date
-           else d.interest_accrual_anchor_date
          end,
          updated_at = now()
    where d.id = p_debt_id
@@ -520,11 +546,11 @@ grant execute on function public.create_debt_v1(uuid, uuid, text, text, text, te
   to authenticated;
 
 -- Revoke & Grant for update_debt_terms_v1
-revoke all privileges on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, date, boolean, boolean, boolean, boolean, boolean)
+revoke all privileges on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, boolean, boolean, boolean, boolean)
   from public, anon, service_role;
 
-grant execute on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, date, boolean, boolean, boolean, boolean, boolean)
+grant execute on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, boolean, boolean, boolean, boolean)
   to authenticated;
 
-comment on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, date, boolean, boolean, boolean, boolean, boolean) is
-  'DEBT-6B: Permite actualizar o limpiar los términos financieros y estructura de pago de una deuda activa (repayment_structure, interest_calculation_mode, periodic_rate_percent, periodic_rate_basis, tea_percent, tcea_percent, payment_frequency, custom_frequency_days, interest_accrual_anchor_date).';
+comment on function public.update_debt_terms_v1(uuid, uuid, text, text, numeric, text, numeric, numeric, text, integer, boolean, boolean, boolean, boolean) is
+  'DEBT-6B: Permite actualizar o limpiar los términos financieros y estructura de pago de una deuda activa (repayment_structure, interest_calculation_mode, periodic_rate_percent, periodic_rate_basis, tea_percent, tcea_percent, payment_frequency, custom_frequency_days).';

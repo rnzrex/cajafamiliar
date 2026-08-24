@@ -726,12 +726,10 @@ export async function updateDebtTerms(input: DebtUpdateTermsInput): Promise<Debt
     p_tcea_percent: input.tceaPercent ?? null,
     p_payment_frequency: input.paymentFrequency ?? null,
     p_custom_frequency_days: input.customFrequencyDays ?? null,
-    p_interest_accrual_anchor_date: input.interestAccrualAnchorDate ?? null,
     p_clear_periodic_rate: Boolean(input.clearPeriodicRate),
     p_clear_tea: Boolean(input.clearTea),
     p_clear_tcea: Boolean(input.clearTcea),
     p_clear_frequency: Boolean(input.clearFrequency),
-    p_clear_anchor: Boolean(input.clearAnchor),
   });
   if (error) throw mapDebtOperationError(error.message) ?? error;
   if (!data || typeof data !== "object") throw new Error("La RPC update_debt_terms_v1 no devolvió un resultado válido.");
@@ -1502,7 +1500,6 @@ function fromDebtRow(row: Record<string, any>): Debt {
     interestCalculationMode: row.interest_calculation_mode ?? "unknown",
     periodicRatePercent: row.periodic_rate_percent == null ? null : Number(row.periodic_rate_percent),
     periodicRateBasis: row.periodic_rate_basis ?? null,
-    interestAccrualAnchorDate: row.interest_accrual_anchor_date ?? null,
   };
 }
 
