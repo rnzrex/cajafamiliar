@@ -1443,28 +1443,57 @@ async function saveInitialBalance(value: number): Promise<boolean> {
           )}
           {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={saveInitialBalance} />}
           {view === "deudas" && (
-            <DebtsManager
-              debts={data.debts}
-              debtEvents={data.debtEvents}
-              scheduleVersions={data.debtScheduleVersions}
-              installments={data.debtInstallments}
-              allocations={data.debtEventInstallmentAllocations}
-              collaterals={data.debtCollaterals}
-              accounts={data.financialAccounts}
-              categories={data.categories}
-              currentMember={currentMember}
-              creditCardProfiles={data.creditCardProfiles}
-              creditCardEntries={data.creditCardEntries}
-              cardStatements={data.creditCardStatements}
-              debtPlanningItems={debtPlanningItems}
-              debtPlanningAlertSummary={debtPlanningAlertSummary}
-              debtPortfolioIntelligence={debtPortfolioIntelligence}
-              debtStrategies={debtStrategies}
-              intelligenceItems={debtIntelligenceItems}
-              onOpenNewDebt={() => setView("registrar-deuda")}
-              onSelectDebt={(debt) => setSelectedDebtId(debt.id)}
-              onSelectDebtId={openDebt}
-            />
+            selectedDebt && selectedDebtIntelligence ? (
+              <DebtDetailModal
+                debt={selectedDebt}
+                debtIntelligence={selectedDebtIntelligence}
+                debtEvents={data.debtEvents}
+                scheduleVersions={data.debtScheduleVersions}
+                installments={data.debtInstallments}
+                allocations={data.debtEventInstallmentAllocations}
+                collaterals={data.debtCollaterals}
+                accounts={data.financialAccounts}
+                categories={data.categories}
+                currentMember={currentMember}
+                creditCardProfiles={data.creditCardProfiles}
+                creditCardEntries={data.creditCardEntries}
+                cardStatements={data.creditCardStatements}
+                allDebts={data.debts}
+                canWriteDebt={canWriteDebt}
+                onClose={() => setSelectedDebtId(null)}
+                onOpenOperation={(opType, targetEvId) => {
+                  setDebtOperationState({ type: opType, targetEventId: targetEvId });
+                  setView("operacion-deuda");
+                }}
+                onRefresh={async () => {
+                  await refreshAppData();
+                }}
+                setToast={(t) => setToast({ id: Date.now(), message: t.message })}
+              />
+            ) : (
+              <DebtsManager
+                debts={data.debts}
+                debtEvents={data.debtEvents}
+                scheduleVersions={data.debtScheduleVersions}
+                installments={data.debtInstallments}
+                allocations={data.debtEventInstallmentAllocations}
+                collaterals={data.debtCollaterals}
+                accounts={data.financialAccounts}
+                categories={data.categories}
+                currentMember={currentMember}
+                creditCardProfiles={data.creditCardProfiles}
+                creditCardEntries={data.creditCardEntries}
+                cardStatements={data.creditCardStatements}
+                debtPlanningItems={debtPlanningItems}
+                debtPlanningAlertSummary={debtPlanningAlertSummary}
+                debtPortfolioIntelligence={debtPortfolioIntelligence}
+                debtStrategies={debtStrategies}
+                intelligenceItems={debtIntelligenceItems}
+                onOpenNewDebt={() => setView("registrar-deuda")}
+                onSelectDebt={(debt) => setSelectedDebtId(debt.id)}
+                onSelectDebtId={openDebt}
+              />
+            )
           )}
           {view === "registrar-deuda" && (
             <DebtForm
@@ -1496,41 +1525,11 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               onSaved={async () => {
                 await refreshAppData();
                 setDebtOperationState(null);
-                setSelectedDebtId(null);
                 setView("deudas");
               }}
               onCancel={() => {
                 setDebtOperationState(null);
                 setView("deudas");
-              }}
-              setToast={(t) => setToast({ id: Date.now(), message: t.message })}
-            />
-          )}
-
-          {selectedDebt && selectedDebtIntelligence && view !== "operacion-deuda" && (
-            <DebtDetailModal
-              debt={selectedDebt}
-              debtIntelligence={selectedDebtIntelligence}
-              debtEvents={data.debtEvents}
-              scheduleVersions={data.debtScheduleVersions}
-              installments={data.debtInstallments}
-              allocations={data.debtEventInstallmentAllocations}
-              collaterals={data.debtCollaterals}
-              accounts={data.financialAccounts}
-              categories={data.categories}
-              currentMember={currentMember}
-              creditCardProfiles={data.creditCardProfiles}
-              creditCardEntries={data.creditCardEntries}
-              cardStatements={data.creditCardStatements}
-              allDebts={data.debts}
-              canWriteDebt={canWriteDebt}
-              onClose={() => setSelectedDebtId(null)}
-              onOpenOperation={(opType, targetEvId) => {
-                setDebtOperationState({ type: opType, targetEventId: targetEvId });
-                setView("operacion-deuda");
-              }}
-              onRefresh={async () => {
-                await refreshAppData();
               }}
               setToast={(t) => setToast({ id: Date.now(), message: t.message })}
             />

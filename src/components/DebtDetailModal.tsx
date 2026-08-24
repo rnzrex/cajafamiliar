@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, DollarSign, ArrowUpRight, CheckCircle2, RotateCcw, Settings, ShieldAlert, Trash2 } from "lucide-react";
+import { X, DollarSign, ArrowUpRight, CheckCircle2, RotateCcw, Settings, ShieldAlert, Trash2, ArrowLeft } from "lucide-react";
 import type {
   Debt,
   DebtEvent,
@@ -33,6 +33,7 @@ import { deletePristineDebt, setDebtArchived, updateDebtMetadata, updateDebtTerm
 import { buildDebtPaymentLedger } from "../utils/debtPaymentLedger";
 import { getCurrencySymbol, formatReviewDate, validateDebtFinancialTerms } from "../utils/debtFormMode";
 import { calculateNextPayment } from "../utils/debtNextPayment";
+import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 
@@ -177,9 +178,18 @@ export function DebtDetailModal({
   if (debt.debtKind === "credit_card") {
     const cardProfile = creditCardProfiles?.find((p) => p.debtId === debt.id) ?? null;
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-        <button type="button" className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} />
-        <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col rounded-3xl bg-white shadow-2xl overflow-y-auto p-6">
+      <section className="mx-auto max-w-7xl space-y-4">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-200 transition"
+          >
+            <ArrowLeft className="h-4 w-4" /> Volver a deudas
+          </button>
+        </div>
+
+        <div className="relative flex w-full flex-col rounded-3xl bg-white shadow-xl border border-slate-200 p-6">
           <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
             <div className="flex items-center gap-3">
               <h2 className="text-xl font-bold text-slate-900">{debt.name} ({debt.creditorName})</h2>
@@ -208,13 +218,6 @@ export function DebtDetailModal({
                   <Trash2 className="h-4 w-4" /> Eliminar deuda
                 </button>
               )}
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200 transition"
-              >
-                <X className="h-6 w-6" />
-              </button>
             </div>
           </div>
           {!canDeletePristine && (
@@ -272,7 +275,7 @@ export function DebtDetailModal({
             </div>
           </div>
         )}
-      </div>
+      </section>
     );
   }
 
@@ -373,9 +376,18 @@ export function DebtDetailModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-      <button type="button" className="absolute inset-0 bg-slate-950/40 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col rounded-3xl bg-white shadow-2xl overflow-hidden">
+    <section className="mx-auto max-w-7xl space-y-4">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex items-center gap-2 rounded-xl bg-slate-100 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-200 transition"
+        >
+          <ArrowLeft className="h-4 w-4" /> Volver a deudas
+        </button>
+      </div>
+
+      <div className="relative flex w-full flex-col rounded-3xl bg-white shadow-xl border border-slate-200 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 p-6">
           <div>
@@ -401,13 +413,6 @@ export function DebtDetailModal({
             </div>
             <p className="mt-1 text-sm text-slate-500">Acreedor / Entidad: {debt.creditorName}</p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full bg-slate-100 p-2 text-slate-500 hover:bg-slate-200 transition"
-          >
-            <X className="h-6 w-6" />
-          </button>
         </div>
 
         {/* Sub-Header Tabs & Quick Actions */}
@@ -505,7 +510,7 @@ export function DebtDetailModal({
         </div>
 
         {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 p-6">
           {activeTab === "overview" && (
             <div className="space-y-6">
               {isEditingMetadata ? (
@@ -637,6 +642,21 @@ export function DebtDetailModal({
                         placeholder="Ej. 72.40"
                         className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700">Frecuencia de pago</label>
+                      <select
+                        value={editPaymentFrequency}
+                        onChange={(e) => setEditPaymentFrequency(e.target.value as DebtPaymentFrequency | "")}
+                        className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+                      >
+                        <option value="">No especificada</option>
+                        <option value="monthly">Mensual</option>
+                        <option value="biweekly">Quincenal</option>
+                        <option value="weekly">Semanal</option>
+                        <option value="custom">Personalizada</option>
+                      </select>
                     </div>
 
                     <div>
@@ -783,15 +803,30 @@ export function DebtDetailModal({
               {/* Decision Support & Interest Terms */}
               <div className="rounded-2xl border border-slate-200 p-5 space-y-3 bg-slate-50/40">
                 <h4 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Términos y Tasas de la Deuda</h4>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 text-sm">
                   <div>
                     <p className="text-xs text-slate-500 font-medium">Estructura de pago</p>
                     <p className="font-bold text-slate-900">
                       {debt.repaymentStructure === "open_ended"
-                        ? "Sin plazo fijo (Flexibles)"
+                        ? "Sin plazo fijo"
                         : debt.repaymentStructure === "fixed_schedule"
                         ? "Con cuotas / plazo fijo"
                         : "No especificado"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-500 font-medium">Frecuencia</p>
+                    <p className="font-bold text-slate-900">
+                      {debt.paymentFrequency === "monthly"
+                        ? "Mensual"
+                        : debt.paymentFrequency === "biweekly"
+                        ? "Quincenal"
+                        : debt.paymentFrequency === "weekly"
+                        ? "Semanal"
+                        : debt.paymentFrequency === "custom"
+                        ? "Personalizada"
+                        : "No especificada"}
                     </p>
                   </div>
 
@@ -801,8 +836,33 @@ export function DebtDetailModal({
                       {debt.interestCalculationMode === "contract_periodic_rate" && debt.periodicRatePercent != null
                         ? `Tasa contractual: ${debt.periodicRatePercent}% ${debt.periodicRateBasis || "mensual"}`
                         : debt.teaPercent != null
-                        ? `TEA: ${debt.teaPercent}%`
+                        ? `TEA ${debt.teaPercent}%`
                         : "Manual / No especificado"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-slate-500 font-medium">Tasa efectiva del período</p>
+                    <p className="font-bold text-slate-900">
+                      {(() => {
+                        if (
+                          debt.interestCalculationMode === "tea_estimate" &&
+                          debt.teaPercent != null &&
+                          debt.teaPercent > 0 &&
+                          (debt.paymentFrequency === "monthly" ||
+                            debt.paymentFrequency === "biweekly" ||
+                            debt.paymentFrequency === "weekly")
+                        ) {
+                          const freq = debt.paymentFrequency as "monthly" | "biweekly" | "weekly";
+                          const res = effectivePeriodicRateFromTea({ teaPercent: debt.teaPercent, frequency: freq });
+                          const label = freq === "monthly" ? "TEM" : freq === "biweekly" ? "TEQ" : "TES";
+                          return `${label} ${res.ratePercent.toFixed(4)}%`;
+                        }
+                        if (debt.interestCalculationMode === "contract_periodic_rate" && debt.periodicRatePercent != null) {
+                          return `${debt.periodicRatePercent}% ${debt.periodicRateBasis || "mensual"}`;
+                        }
+                        return "No especificada";
+                      })()}
                     </p>
                   </div>
 
@@ -1125,6 +1185,6 @@ export function DebtDetailModal({
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }
