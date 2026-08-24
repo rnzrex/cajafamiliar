@@ -11,7 +11,7 @@ describe("HOTFIX-DEBT-TEA-01 TEA Conversion & Explicit Frequency Tests", () => {
     id: "debt-tea-1",
     name: "Prestamo Personal TEA",
     creditorName: "Banco",
-    debtKind: "loan",
+    debtKind: "bank_loan",
     currencyCode: "PEN",
     originDate: "2026-01-01",
     trackingStartDate: "2026-01-01",
@@ -90,7 +90,7 @@ describe("HOTFIX-DEBT-TEA-01 TEA Conversion & Explicit Frequency Tests", () => {
       ...baseDebt,
       interestCalculationMode: "tea_estimate",
       teaPercent: 51.11,
-      paymentFrequency: null, // Null frequency! Must NOT infer monthly from firstDueDate!
+      paymentFrequency: null,
       firstDueDate: "2026-08-15",
       trackingStartDate: "2026-08-10",
     };
@@ -103,7 +103,6 @@ describe("HOTFIX-DEBT-TEA-01 TEA Conversion & Explicit Frequency Tests", () => {
       lastEventDate: "2026-08-10",
     });
 
-    // 5 days elapsed: (1 + 0.5111)^(5/365) - 1 ≈ 0.005672 => 5000 * 0.005672 = 28.36
     expect(suggestion.certainty).toBe("tea_estimate");
     expect(suggestion.calculationExplanation).toContain("para 5 días");
     expect(suggestion.calcInterest).toBe(28.36);
