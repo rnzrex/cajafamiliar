@@ -10,6 +10,11 @@ declare
   v_user_id uuid := '00000000-0000-4000-a000-000000000003'::uuid;
   v_other_user_id uuid := '00000000-0000-4000-a000-000000000004'::uuid;
 
+  v_acc_id uuid := gen_random_uuid();
+  v_mov_id text := 'mov-' || gen_random_uuid();
+  v_mov_id_rev text := 'mov-rev-' || gen_random_uuid();
+  v_mov_card_id text := 'mov-card-' || gen_random_uuid();
+
   v_debt_simple uuid := gen_random_uuid();
   v_debt_recurring uuid := gen_random_uuid();
   v_debt_fixed uuid := gen_random_uuid();
@@ -18,6 +23,7 @@ declare
   v_debt_payment uuid := gen_random_uuid();
   v_debt_adj uuid := gen_random_uuid();
   v_debt_reversed uuid := gen_random_uuid();
+  v_orig_evt_id uuid := gen_random_uuid();
   v_debt_card_entry uuid := gen_random_uuid();
   v_debt_card_stmt uuid := gen_random_uuid();
 
@@ -26,15 +32,38 @@ declare
   v_caught boolean;
   v_rec_count integer;
 begin
+  -- Setup test users in auth.users
+  insert into auth.users (id, instance_id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, role, aud)
+  values (v_user_id, '00000000-0000-0000-0000-000000000000', 'u1@test.com', 'pwd', now(), '{}'::jsonb, '{}'::jsonb, now(), now(), 'authenticated', 'authenticated')
+  on conflict (id) do nothing;
+
+  insert into auth.users (id, instance_id, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at, role, aud)
+  values (v_other_user_id, '00000000-0000-0000-0000-000000000000', 'u2@test.com', 'pwd', now(), '{}'::jsonb, '{}'::jsonb, now(), now(), 'authenticated', 'authenticated')
+  on conflict (id) do nothing;
+
   -- Setup test households and members
   insert into public.households (id, name) values (v_household_id, 'Test Household 1') on conflict do nothing;
   insert into public.households (id, name) values (v_other_household_id, 'Test Household 2') on conflict do nothing;
 
-  insert into public.household_members (id, household_id, user_id, role)
-  values (gen_random_uuid(), v_household_id, v_user_id, 'owner') on conflict do nothing;
+  insert into public.household_members (household_id, user_id, role)
+  values (v_household_id, v_user_id, 'owner') on conflict do nothing;
 
-  insert into public.household_members (id, household_id, user_id, role)
-  values (gen_random_uuid(), v_other_household_id, v_other_user_id, 'owner') on conflict do nothing;
+  insert into public.household_members (household_id, user_id, role)
+  values (v_other_household_id, v_other_user_id, 'owner') on conflict do nothing;
+
+  -- Setup test financial account
+  insert into public.financial_accounts (id, household_id, name, reconciliation_type, is_active)
+  values (v_acc_id, v_household_id, 'Cuenta Principal', 'balance', true);
+
+  -- Setup test movements
+  insert into public.movements (id, household_id, account_id, type, date, amount, description, method, category, person, movement_context)
+  values (v_mov_id, v_household_id, v_acc_id, 'egreso', '2026-02-01', 100, 'Pago cuota', 'transferencia', 'Deudas', 'Renzo', 'debt_service');
+
+  insert into public.movements (id, household_id, account_id, type, date, amount, description, method, category, person, movement_context)
+  values (v_mov_id_rev, v_household_id, v_acc_id, 'egreso', '2026-02-01', 100, 'Pago cuota rev', 'transferencia', 'Deudas', 'Renzo', 'debt_service');
+
+  insert into public.movements (id, household_id, account_id, type, date, amount, description, method, category, person, movement_context)
+  values (v_mov_card_id, v_household_id, v_acc_id, 'egreso', '2026-02-01', 150, 'Compra supermercado', 'transferencia', 'Deudas', 'Renzo', 'credit_card_purchase');
 
   -- Set auth context to v_user_id
   perform set_config('request.jwt.claim.sub', v_user_id::text, true);
@@ -56,8 +85,8 @@ begin
   insert into public.debts (id, household_id, created_by_user_id, name, creditor_name, debt_kind, currency_code, origin_date, tracking_start_date, original_principal, opening_principal_balance, status)
   values (v_debt_recurring, v_household_id, v_user_id, 'Recurring Debt', 'Bank B', 'other', 'PEN', '2026-01-01', '2026-01-01', 2000, 2000, 'active');
 
-  insert into public.recurring_payments (id, household_id, name, amount, category, frequency, day_of_month, is_active, linked_debt_id, auto_sync_debt_linked)
-  values (gen_random_uuid(), v_household_id, 'Cuota Recurring', 100, 'Servicios', 'monthly', 15, true, v_debt_recurring, true);
+  insert into public.recurring_payments (id, household_id, name, amount, category, recurrence_type, due_day, is_active, linked_debt_id)
+  values ('rec-' || gen_random_uuid(), v_household_id, 'Cuota Recurring', 100, 'Servicios', 'indefinite', 15, true, v_debt_recurring);
 
   v_res := public.delete_pristine_debt_v1(v_household_id, v_debt_recurring);
   select count(*) into v_rec_count from public.recurring_payments where linked_debt_id = v_debt_recurring;
@@ -71,11 +100,11 @@ begin
   insert into public.debts (id, household_id, created_by_user_id, name, creditor_name, debt_kind, currency_code, origin_date, tracking_start_date, original_principal, opening_principal_balance, status, repayment_structure)
   values (v_debt_fixed, v_household_id, v_user_id, 'Fixed Debt', 'Bank C', 'bank_loan', 'PEN', '2026-01-01', '2026-01-01', 5000, 5000, 'active', 'fixed_schedule');
 
-  insert into public.debt_schedule_versions (id, debt_id, version_number, is_active)
-  values (v_sched_version_id, v_debt_fixed, 1, true);
+  insert into public.debt_schedule_versions (id, debt_id, household_id, created_by_user_id, version_number, effective_date, reason)
+  values (v_sched_version_id, v_debt_fixed, v_household_id, v_user_id, 1, '2026-01-01', 'initial');
 
-  insert into public.debt_installments (id, schedule_version_id, installment_number, due_date, expected_total_amount)
-  values (gen_random_uuid(), v_sched_version_id, 1, '2026-02-01', 500);
+  insert into public.debt_installments (id, schedule_version_id, debt_id, household_id, created_by_user_id, installment_number, due_date, expected_amount)
+  values (gen_random_uuid(), v_sched_version_id, v_debt_fixed, v_household_id, v_user_id, 1, '2026-02-01', 500);
 
   v_res := public.delete_pristine_debt_v1(v_household_id, v_debt_fixed);
   select count(*) into v_rec_count from public.debt_schedule_versions where debt_id = v_debt_fixed;
@@ -89,8 +118,8 @@ begin
   insert into public.debts (id, household_id, created_by_user_id, name, creditor_name, debt_kind, currency_code, origin_date, tracking_start_date, original_principal, opening_principal_balance, status)
   values (v_debt_pledge, v_household_id, v_user_id, 'Pledge Debt', 'Prenda Bank', 'pledge', 'PEN', '2026-01-01', '2026-01-01', 3000, 3000, 'active');
 
-  insert into public.debt_collaterals (id, debt_id, description, estimated_value)
-  values (gen_random_uuid(), v_debt_pledge, 'Anillo de oro', 4000);
+  insert into public.debt_collaterals (id, debt_id, household_id, created_by_user_id, description, estimated_value)
+  values (gen_random_uuid(), v_debt_pledge, v_household_id, v_user_id, 'Anillo de oro', 4000);
 
   v_res := public.delete_pristine_debt_v1(v_household_id, v_debt_pledge);
 
@@ -98,10 +127,10 @@ begin
   -- 5. Credit-card debt with profile only => delete succeeds.
   -------------------------------------------------------------
   insert into public.debts (id, household_id, created_by_user_id, name, creditor_name, debt_kind, currency_code, origin_date, tracking_start_date, original_principal, opening_principal_balance, status)
-  values (v_debt_card_pristine, v_household_id, v_user_id, 'Card Pristine', 'Visa', 'credit_card', 'PEN', '2026-01-01', '2026-01-01', 0, 0, 'active');
+  values (v_debt_card_pristine, v_household_id, v_user_id, 'Card Pristine', 'Visa', 'credit_card', 'PEN', '2026-01-01', '2026-01-01', null, 0, 'active');
 
-  insert into public.credit_card_profiles (id, debt_id, credit_limit, closing_day, due_day)
-  values (gen_random_uuid(), v_debt_card_pristine, 10000, 15, 5);
+  insert into public.credit_card_profiles (debt_id, household_id, created_by_user_id, credit_limit, closing_day, due_day)
+  values (v_debt_card_pristine, v_household_id, v_user_id, 10000, 15, 5);
 
   v_res := public.delete_pristine_debt_v1(v_household_id, v_debt_card_pristine);
 
@@ -111,8 +140,8 @@ begin
   insert into public.debts (id, household_id, created_by_user_id, name, creditor_name, debt_kind, currency_code, origin_date, tracking_start_date, original_principal, opening_principal_balance, status)
   values (v_debt_payment, v_household_id, v_user_id, 'Payment Debt', 'Bank D', 'other', 'PEN', '2026-01-01', '2026-01-01', 1000, 1000, 'active');
 
-  insert into public.debt_events (id, debt_id, event_type, event_date, cash_amount, principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid)
-  values (gen_random_uuid(), v_debt_payment, 'payment', '2026-02-01', 100, 100, 0, 0, 0, 0);
+  insert into public.debt_events (id, debt_id, household_id, registered_by_user_id, event_type, event_date, cash_amount, principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid, movement_id)
+  values (gen_random_uuid(), v_debt_payment, v_household_id, v_user_id, 'payment', '2026-02-01', 100, -100, 0, 0, 0, 0, v_mov_id);
 
   v_caught := false;
   begin
@@ -132,8 +161,8 @@ begin
   insert into public.debts (id, household_id, created_by_user_id, name, creditor_name, debt_kind, currency_code, origin_date, tracking_start_date, original_principal, opening_principal_balance, status)
   values (v_debt_adj, v_household_id, v_user_id, 'Adj Debt', 'Bank E', 'other', 'PEN', '2026-01-01', '2026-01-01', 1000, 1000, 'active');
 
-  insert into public.debt_events (id, debt_id, event_type, event_date, cash_amount, principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid)
-  values (gen_random_uuid(), v_debt_adj, 'principal_adjustment', '2026-02-01', 0, 50, 0, 0, 0, 0);
+  insert into public.debt_events (id, debt_id, household_id, registered_by_user_id, event_type, event_date, cash_amount, principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid)
+  values (gen_random_uuid(), v_debt_adj, v_household_id, v_user_id, 'principal_adjustment', '2026-02-01', 0, 50, 0, 0, 0, 0);
 
   v_caught := false;
   begin
@@ -153,8 +182,11 @@ begin
   insert into public.debts (id, household_id, created_by_user_id, name, creditor_name, debt_kind, currency_code, origin_date, tracking_start_date, original_principal, opening_principal_balance, status)
   values (v_debt_reversed, v_household_id, v_user_id, 'Reversed Debt', 'Bank F', 'other', 'PEN', '2026-01-01', '2026-01-01', 1000, 1000, 'active');
 
-  insert into public.debt_events (id, debt_id, event_type, event_date, cash_amount, principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid)
-  values (gen_random_uuid(), v_debt_reversed, 'reversal', '2026-02-01', 0, 0, 0, 0, 0, 0);
+  insert into public.debt_events (id, debt_id, household_id, registered_by_user_id, event_type, event_date, cash_amount, principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid, movement_id)
+  values (v_orig_evt_id, v_debt_reversed, v_household_id, v_user_id, 'payment', '2026-02-01', 100, -100, 0, 0, 0, 0, v_mov_id_rev);
+
+  insert into public.debt_events (id, debt_id, household_id, registered_by_user_id, event_type, event_date, cash_amount, principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid, reversal_of_event_id)
+  values (gen_random_uuid(), v_debt_reversed, v_household_id, v_user_id, 'reversal', '2026-02-02', 0, 0, 0, 0, 0, 0, v_orig_evt_id);
 
   v_caught := false;
   begin
@@ -172,10 +204,13 @@ begin
   -- 9. Card with credit_card_entry => DEBT_HAS_HISTORY & blocked.
   -------------------------------------------------------------
   insert into public.debts (id, household_id, created_by_user_id, name, creditor_name, debt_kind, currency_code, origin_date, tracking_start_date, original_principal, opening_principal_balance, status)
-  values (v_debt_card_entry, v_household_id, v_user_id, 'Card Entry Debt', 'Visa 2', 'credit_card', 'PEN', '2026-01-01', '2026-01-01', 0, 0, 'active');
+  values (v_debt_card_entry, v_household_id, v_user_id, 'Card Entry Debt', 'Visa 2', 'credit_card', 'PEN', '2026-01-01', '2026-01-01', null, 0, 'active');
 
-  insert into public.credit_card_entries (id, debt_id, entry_type, transaction_date, post_date, description, amount, status)
-  values (gen_random_uuid(), v_debt_card_entry, 'purchase', '2026-02-01', '2026-02-01', 'Compra supermercado', 150, 'posted');
+  insert into public.credit_card_profiles (debt_id, household_id, created_by_user_id, credit_limit, closing_day, due_day)
+  values (v_debt_card_entry, v_household_id, v_user_id, 10000, 15, 5);
+
+  insert into public.credit_card_entries (id, debt_id, household_id, entry_date, entry_type, liability_delta, description, registered_by_user_id, movement_id)
+  values (gen_random_uuid(), v_debt_card_entry, v_household_id, '2026-02-01', 'purchase', 150, 'Compra supermercado', v_user_id, v_mov_card_id);
 
   v_caught := false;
   begin
@@ -193,10 +228,13 @@ begin
   -- 10. Card with statement => DEBT_HAS_HISTORY & blocked.
   -------------------------------------------------------------
   insert into public.debts (id, household_id, created_by_user_id, name, creditor_name, debt_kind, currency_code, origin_date, tracking_start_date, original_principal, opening_principal_balance, status)
-  values (v_debt_card_stmt, v_household_id, v_user_id, 'Card Stmt Debt', 'Visa 3', 'credit_card', 'PEN', '2026-01-01', '2026-01-01', 0, 0, 'active');
+  values (v_debt_card_stmt, v_household_id, v_user_id, 'Card Stmt Debt', 'Visa 3', 'credit_card', 'PEN', '2026-01-01', '2026-01-01', null, 0, 'active');
 
-  insert into public.credit_card_statements (id, debt_id, statement_date, due_date, total_balance_due, minimum_payment_due, status)
-  values (gen_random_uuid(), v_debt_card_stmt, '2026-02-01', '2026-02-15', 500, 50, 'closed');
+  insert into public.credit_card_profiles (debt_id, household_id, created_by_user_id, credit_limit, closing_day, due_day)
+  values (v_debt_card_stmt, v_household_id, v_user_id, 10000, 15, 5);
+
+  insert into public.credit_card_statements (id, debt_id, household_id, created_by_user_id, statement_date, due_date, statement_balance, minimum_payment_amount)
+  values (gen_random_uuid(), v_debt_card_stmt, v_household_id, v_user_id, '2026-02-01', '2026-02-15', 500, 50);
 
   v_caught := false;
   begin
