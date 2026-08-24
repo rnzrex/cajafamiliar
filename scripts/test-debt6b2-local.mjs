@@ -63,6 +63,7 @@ function withUser(sql, userId = ids.user) {
     begin;
     select set_config('request.jwt.claim.sub', '${userId}', true);
     select set_config('request.jwt.claim.role', 'authenticated', true);
+    set local role authenticated;
     ${sql}
     commit;
   `;
@@ -162,6 +163,12 @@ async function applyMigrationsInOrder() {
     const sql = readFileSync(join(migrationsDir, file), "utf8");
     await execSql(sql);
   }
+
+  await execSql(`
+    grant select, insert, update, delete on all tables in schema public to authenticated, service_role;
+    grant usage, select on all sequences in schema public to authenticated, service_role;
+  `);
+
   console.log("✓ Applied all DB migrations to local Postgres container without error");
 }
 
@@ -284,6 +291,7 @@ async function runLocalSmokeTest() {
       begin;
       select set_config('request.jwt.claim.sub', '${ids.user}', true);
       select set_config('request.jwt.claim.role', 'authenticated', true);
+      set local role authenticated;
 
       -- Legitimate terms update
       select public.update_debt_terms_v2(
