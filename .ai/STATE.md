@@ -2,28 +2,25 @@
 
 ## Objective
 
-BANK CREDIT CONTRACT V2 is functionally audited. The cross-agent continuity
-layer is installed. The project is prepared for the Production/merge gate.
+BANK CREDIT CONTRACT V2 is functionally audited, its four migrations are applied in Production, and the cross-agent continuity layer is installed. The remaining closing work is PR merge and Production deployment verification.
 
 ## Active Work
 
 - No functional change is pending.
-- Production preflight is complete.
-- Next work: apply the four BANK V2 migrations to Production in repository order.
+- Supabase Production migration gate is complete.
+- Accidental temporary Edge Function cleanup is complete and the prior Edge Function baseline is restored.
+- Next work: merge PR #61 and verify Vercel Production plus non-destructive runtime regressions.
 
 ## Repository
 
 - Expected branch: `feat/bank-credit-contract-v2`
-- PR: `#61` (DRAFT)
+- PR: `#61` (DRAFT until final merge gate)
 - Validated financial code checkpoint: `b859522b0bba761a5e1950305422d487b4bb4575`
-- Remote base: `origin/main` = `82a3c8871a801324b32a5fc1c8d2c945ace8010a`
-- Worktree expectation: clean after this state commit.
-- Code checkpoint commit: `b859522...` is the last validated financial code;
-  continuity/state commits and push status must be read from Git.
-- The actual HEAD must always be obtained from Git; do not store a circular
-  claim that this file is in the same commit as the current HEAD.
-- Local `main` is `b28119ae87afd3f61c85ce7050190ba4676c9e7c`, behind
-  `origin/main`; do not reconcile it with reset or merge as part of this work.
+- Remote base before merge: `origin/main` = `82a3c8871a801324b32a5fc1c8d2c945ace8010a`
+- Worktree expectation: clean.
+- Code checkpoint commit: `b859522...` is the last validated financial code; continuity/state commits and push status must be read from Git.
+- The actual HEAD must always be obtained from Git; do not store a circular claim that this file is in the same commit as the current HEAD.
+- Local `main` may be stale relative to `origin/main`; do not reconcile it with reset as part of a handoff.
 
 ## Completed
 
@@ -35,42 +32,39 @@ layer is installed. The project is prepared for the Production/merge gate.
 - `pending_bank_schedule` lifecycle and planning guards.
 - QAPAQ `open_ended` regression preservation with no synthetic persisted installments.
 - BANK CREDIT CONTRACT V2 functional audit and validation at the checkpoint above.
-- Cross-agent continuity layer:
+- Cross-agent continuity layer installed:
   - `AGENTS.md`
   - `.ai/README.md`
   - `.ai/STATE.md`
   - `.ai/DECISIONS.md`
   - `.ai/RUNBOOK.md`
-- Continuity commit `ae39d9697ef55e51a476bfe1465b4777b501f71a` published.
-- Orchestrator continuity audit completed.
-- Production preflight verified:
-  - PR #61 still DRAFT/open.
-  - Branch contains only the four intended BANK V2 migrations; the backdated pseudo-baseline migration is absent.
-  - Production migration history stops before BANK V2.
-  - `bank_loan_profiles`, `debt_insurance_terms`, BANK V2 schedule columns, and BANK V2 RPCs are absent in Production before migration.
+- Production preflight verified before migration.
+- Supabase Production migrations applied in exact repository order:
+  - `20260824225428_bank_credit_contract_v2.sql`
+  - `20260825010000_bank_credit_contract_v2_audit_fix.sql`
+  - `20260825071034_bank_credit_contract_v2_finalization.sql`
+  - `20260825165854_bank_credit_contract_v2_schedule_state_guard.sql`
+- Independent remote audit confirmed BANK V2 tables, columns, constraints, triggers, RPC signatures, RLS/policies, and zero BANK V2 test/junk rows.
+- Supabase advisor findings reviewed; BANK V2 SECURITY DEFINER warnings are intentional and performance findings are non-blocking.
+- Temporary accidental `noop` Edge Function removed; `reset-commercial-password` remains ACTIVE as the restored baseline.
 
 ## Active
 
-- No functional change is pending.
-- The next authorized work is the Production closing sequence for BANK V2.
+- No functional or database blocker is known.
+- PR #61 is ready for final merge gate after docs-only state checkpoint and Preview verification.
 
 ## Blocked
 
-- No functional blocker is known.
-- BANK V2 has not yet been applied in Production.
-- PR `#61` remains DRAFT.
-- The stale local `main` is not a blocker and must not be fixed with reset.
+- No known blocker.
 
 ## Next Move
 
-1. From the validated feature branch/worktree, run a fresh Git bootstrap and confirm HEAD/remote cleanliness.
-2. Apply only the four BANK V2 migration files to Production in repository timestamp order, preserving their exact migration versions/history.
-3. Verify schema, RPCs, RLS, migration history, and Supabase security/performance advisors.
-4. Verify that no test or junk data was created.
-5. If everything is correct, merge PR `#61` using its verified expected HEAD.
-6. Wait for and verify Vercel Production.
-7. Run non-destructive Production smoke and regression checks.
-8. Update STATE with the final closing result.
+1. Verify PR head/mergeability and Vercel Preview for the current docs-only HEAD.
+2. Mark PR #61 ready if required by GitHub and merge using the verified expected head SHA.
+3. Verify `main` advanced to the merge result and Vercel Production deploys successfully.
+4. Verify the public Production app responds successfully and inspect recent Production runtime errors.
+5. Run only non-destructive Production regression checks; do not create test/junk financial data.
+6. Record the final closed state after the merge/deployment verification.
 
 ## Validation
 
@@ -85,16 +79,16 @@ layer is installed. The project is prepared for the Production/merge gate.
 
 ## Production
 
-- preflight touched: read-only checks only
-- migration status: BANK V2 NOT APPLIED
-- deployment status: pending the Production gate
+- Supabase migration status: BANK V2 APPLIED.
+- BANK V2 schema/RLS/RPC verification: PASS.
+- BANK V2 test/junk data: none created.
+- Edge Function cleanup: PASS; accidental `noop` removed.
+- Frontend deployment status: pending PR merge and Vercel Production verification.
 
 ## Safety / Do Not
 
-- Do not modify validated financial logic or committed BANK V2 migrations during the closing sequence unless a newly discovered blocker requires a separate audited change.
-- Production, Supabase, remote SQL, and Vercel Production actions must follow the documented closing sequence and the authorization available in the current session/environment.
-- Preserve exact repository migration versions when applying BANK V2; do not create replacement migration timestamps/names for the same SQL.
-- Do not create test or junk Production data.
+- Do not modify validated financial logic or committed BANK V2 migrations during closing unless a newly discovered blocker requires a separate audited change.
+- Do not create test or junk Production financial data.
 - Do not rewrite commits, reset, clean, force push, expose secrets, change billing, or perform unrelated/destructive work.
 - Preserve legacy non-bank behavior and the validated QAPAQ/cards regressions.
 
@@ -115,4 +109,4 @@ layer is installed. The project is prepared for the Production/merge gate.
 
 - Agent: ChatGPT orchestrator
 - Date: 2026-08-25
-- Summary: continuity is installed and Production preflight is complete; BANK V2 remains unapplied and the next step is exact-version Production migration through the project CLI workflow.
+- Summary: BANK V2 migrations are applied and independently verified in Production, accidental Edge Function cleanup is complete, and the next step is PR merge plus Vercel Production verification.
