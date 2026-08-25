@@ -8,7 +8,8 @@ layer is installed. The project is prepared for the Production/merge gate.
 ## Active Work
 
 - No functional change is pending.
-- Next work: close BANK CREDIT CONTRACT V2 in Production.
+- Production preflight is complete.
+- Next work: apply the four BANK V2 migrations to Production in repository order.
 
 ## Repository
 
@@ -18,7 +19,7 @@ layer is installed. The project is prepared for the Production/merge gate.
 - Remote base: `origin/main` = `82a3c8871a801324b32a5fc1c8d2c945ace8010a`
 - Worktree expectation: clean after this state commit.
 - Code checkpoint commit: `b859522...` is the last validated financial code;
-  continuity commit and push status must be read from Git.
+  continuity/state commits and push status must be read from Git.
 - The actual HEAD must always be obtained from Git; do not store a circular
   claim that this file is in the same commit as the current HEAD.
 - Local `main` is `b28119ae87afd3f61c85ce7050190ba4676c9e7c`, behind
@@ -42,6 +43,11 @@ layer is installed. The project is prepared for the Production/merge gate.
   - `.ai/RUNBOOK.md`
 - Continuity commit `ae39d9697ef55e51a476bfe1465b4777b501f71a` published.
 - Orchestrator continuity audit completed.
+- Production preflight verified:
+  - PR #61 still DRAFT/open.
+  - Branch contains only the four intended BANK V2 migrations; the backdated pseudo-baseline migration is absent.
+  - Production migration history stops before BANK V2.
+  - `bank_loan_profiles`, `debt_insurance_terms`, BANK V2 schedule columns, and BANK V2 RPCs are absent in Production before migration.
 
 ## Active
 
@@ -57,16 +63,14 @@ layer is installed. The project is prepared for the Production/merge gate.
 
 ## Next Move
 
-1. Verify Git, PR, and Production pre-state.
-2. Apply BANK V2 migrations to Production in order.
-3. Verify schema, RPCs, RLS, and advisors.
+1. From the validated feature branch/worktree, run a fresh Git bootstrap and confirm HEAD/remote cleanliness.
+2. Apply only the four BANK V2 migration files to Production in repository timestamp order, preserving their exact migration versions/history.
+3. Verify schema, RPCs, RLS, migration history, and Supabase security/performance advisors.
 4. Verify that no test or junk data was created.
-5. If everything is correct, merge PR `#61`.
+5. If everything is correct, merge PR `#61` using its verified expected HEAD.
 6. Wait for and verify Vercel Production.
 7. Run non-destructive Production smoke and regression checks.
 8. Update STATE with the final closing result.
-
-Documented only here; do not execute these steps in this state commit.
 
 ## Validation
 
@@ -77,11 +81,11 @@ Documented only here; do not execute these steps in this state commit.
 - `npm run test:debt2b2`: PASS.
 - `npm run test:debt5fa:local`: PASS.
 - `git diff --check`: PASS.
-- Vercel Preview: PASS.
+- Vercel Preview at the validated financial/documentation checkpoint: PASS.
 
 ## Production
 
-- touched: no
+- preflight touched: read-only checks only
 - migration status: BANK V2 NOT APPLIED
 - deployment status: pending the Production gate
 
@@ -89,6 +93,7 @@ Documented only here; do not execute these steps in this state commit.
 
 - Do not modify validated financial logic or committed BANK V2 migrations during the closing sequence unless a newly discovered blocker requires a separate audited change.
 - Production, Supabase, remote SQL, and Vercel Production actions must follow the documented closing sequence and the authorization available in the current session/environment.
+- Preserve exact repository migration versions when applying BANK V2; do not create replacement migration timestamps/names for the same SQL.
 - Do not create test or junk Production data.
 - Do not rewrite commits, reset, clean, force push, expose secrets, change billing, or perform unrelated/destructive work.
 - Preserve legacy non-bank behavior and the validated QAPAQ/cards regressions.
@@ -108,7 +113,6 @@ Documented only here; do not execute these steps in this state commit.
 
 ## Last Handoff
 
-- Agent: OpenCode
+- Agent: ChatGPT orchestrator
 - Date: 2026-08-25
-- Summary: finalized the semantic handoff after continuity commit `ae39d96...`;
-  the validated financial checkpoint remains `b859522...`.
+- Summary: continuity is installed and Production preflight is complete; BANK V2 remains unapplied and the next step is exact-version Production migration through the project CLI workflow.
