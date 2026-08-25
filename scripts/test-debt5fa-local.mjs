@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -7,6 +7,30 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
+
+function resolveDbContainer() {
+  const configuredContainer = process.env.DEBT5FA_DB_CONTAINER ?? process.env.DEBT_DB_CONTAINER;
+  if (configuredContainer?.trim()) return configuredContainer.trim();
+
+  const supabaseConfig = fs.readFileSync(path.join(projectRoot, "supabase", "config.toml"), "utf8");
+  const projectId = supabaseConfig.match(/^project_id\s*=\s*"([^"]+)"/m)?.[1];
+  const runningContainers = execFileSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8" })
+    .split(/\r?\n/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const projectContainer = projectId ? `supabase_db_${projectId}` : null;
+
+  if (projectContainer && runningContainers.includes(projectContainer)) return projectContainer;
+
+  const candidates = runningContainers.filter((name) => name.startsWith("supabase_db_"));
+  if (candidates.length === 1) return candidates[0];
+
+  throw new Error(
+    `Could not resolve the local Supabase Postgres container. Expected ${projectContainer ?? "a project-scoped container"}; found: ${candidates.join(", ") || "none"}. Set DEBT5FA_DB_CONTAINER to override.`
+  );
+}
+
+const dbContainer = resolveDbContainer();
 
 const LOCAL_SUPABASE_URL = "http://127.0.0.1:54321";
 const LOCAL_ANON_KEY =
@@ -32,7 +56,7 @@ function assert(condition, msg, errDetail = null) {
 
 function applySqlFile(filePath) {
   const sql = fs.readFileSync(filePath, "utf8");
-  execSync(`docker exec -i supabase_db_crea-una-aplicaci-n-web-completa psql -U postgres -d postgres`, {
+  execSync(`docker exec -i ${dbContainer} psql -U postgres -d postgres`, {
     cwd: projectRoot,
     input: sql,
     stdio: ["pipe", "ignore", "inherit"],
@@ -54,7 +78,7 @@ async function runLocalSmoke() {
 
   log("Resetting local Postgres public schema for clean reproducible test execution...");
   execSync(
-    `docker exec -i supabase_db_crea-una-aplicaci-n-web-completa psql -U postgres -d postgres -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO postgres; GRANT ALL ON SCHEMA public TO public;"`,
+    `docker exec -i ${dbContainer} psql -U postgres -d postgres -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO postgres; GRANT ALL ON SCHEMA public TO public;"`,
     { cwd: projectRoot, stdio: "ignore" }
   );
 
@@ -76,7 +100,7 @@ async function runLocalSmoke() {
 
   log("Granting baseline schema privileges to service_role and postgres...");
   execSync(
-    `docker exec -i supabase_db_crea-una-aplicaci-n-web-completa psql -U postgres -d postgres -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres, service_role; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres, service_role; NOTIFY pgrst, 'reload schema';"`,
+    `docker exec -i ${dbContainer} psql -U postgres -d postgres -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO postgres, service_role; GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO postgres, service_role; NOTIFY pgrst, 'reload schema';"`,
     { cwd: projectRoot, stdio: "ignore" }
   );
 
@@ -426,7 +450,7 @@ function buildCreateCardArgs(hhId, overrides = {}) {
     household_id: householdAId,
     name: "Personal Loan",
     creditor_name: "BBVA",
-    debt_kind: "bank_loan",
+    debt_kind: "family_loan",
     currency_code: "PEN",
     origin_date: "2026-08-01",
     tracking_start_date: "2026-08-01",

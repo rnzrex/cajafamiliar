@@ -40,6 +40,7 @@ export interface DebtsManagerProps {
   cardStatements?: CreditCardStatement[];
   debtPlanningItems: DebtInstallmentPlanningItem[];
   debtPlanningAlertSummary: DebtPlanningAlertSummary;
+  pendingBankScheduleDebtNames?: string[];
   debtPortfolioIntelligence: DebtPortfolioIntelligence;
   debtStrategies: DebtStrategyResult;
   intelligenceItems: DebtIntelligenceItem[];
@@ -55,6 +56,7 @@ export function DebtsManager({
   cardStatements = [],
   debtPlanningItems,
   debtPlanningAlertSummary,
+  pendingBankScheduleDebtNames = [],
   debtPortfolioIntelligence,
   debtStrategies,
   intelligenceItems,
@@ -174,6 +176,7 @@ export function DebtsManager({
             <DebtPlanningPanel
               debtPlanningItems={debtPlanningItems}
               debtPlanningAlertSummary={debtPlanningAlertSummary}
+              pendingBankScheduleDebtNames={pendingBankScheduleDebtNames}
               onSelectDebtId={handleSelectDebtId}
             />
             <DebtStrategyPanel

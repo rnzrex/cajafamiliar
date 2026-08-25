@@ -558,9 +558,12 @@ export type DebtOperationErrorCode =
   | "DEBT_EVENT_ID_CONFLICT"
   | "DEBT_EVENT_NOT_FOUND"
   | "DEBT_EVENT_TYPE_UNSUPPORTED"
+  | "DEBT_NOT_BANK_LOAN"
+  | "DEBT_SCHEDULE_NOT_FOUND"
   | "DEBT_EVENT_ALREADY_REVERSED"
   | "DEBT_REVERSAL_SCHEDULE_REQUIRED"
   | "DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED"
+  | "DEBT_REVERSAL_SCHEDULE_CONFLICT"
   | "DEBT_MOVEMENT_CONFLICT"
   | "DEBT_MOVEMENT_ALREADY_LINKED"
   | "DEBT_MOVEMENT_NOT_FOUND"
@@ -603,6 +606,23 @@ export interface DebtReversalResult {
   debt: Debt;
   event: DebtEvent;
   scheduleVersion: DebtScheduleVersion | null;
+  installments: DebtInstallment[];
+}
+
+export interface DebtScheduleUpdateInput {
+  debtId: string;
+  eventId: string;
+  eventDate: string;
+  reason: "rate_change" | "manual_adjustment";
+  scheduleInstallments: DebtScheduleInstallmentInput[];
+  scheduleNotes?: string | null;
+}
+
+export interface DebtScheduleUpdateResult {
+  idempotentReplay: boolean;
+  debt: Debt;
+  event: DebtEvent;
+  scheduleVersion: DebtScheduleVersion;
   installments: DebtInstallment[];
 }
 
@@ -859,6 +879,21 @@ export function toDebtPaymentRpcArgs(input: DebtPaymentInput) {
     p_prepayment_effect: input.prepaymentEffect ?? null,
     p_breakdown_complete: input.breakdownComplete,
     p_allocations: input.allocations.map(toDebtAllocationRow),
+    p_schedule_installments: (input.scheduleInstallments ?? []).map(toDebtScheduleInstallmentRow),
+    p_schedule_notes: input.scheduleNotes ?? null,
+    p_schedule_source: input.scheduleSource ?? null,
+  };
+}
+
+export function toDebtScheduleUpdateRpcArgs(input: DebtScheduleUpdateInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_event_id: input.eventId,
+    p_event_date: input.eventDate,
+    p_reason: input.reason,
+    p_schedule_installments: input.scheduleInstallments.map(toDebtScheduleInstallmentRow),
+    p_schedule_notes: input.scheduleNotes ?? null,
   };
 }
 
@@ -940,7 +975,7 @@ export function toDebtReversalRpcArgs(input: DebtReversalInput) {
 }
 
 export async function recordDebtPayment(input: DebtPaymentInput): Promise<DebtFundOperationResult> {
-  return callDebtOperation("record_debt_payment_v2", toDebtPaymentRpcArgs(input), fromDebtFundOperationResult);
+  return callDebtOperation("record_debt_payment_v3", toDebtPaymentRpcArgs(input), fromDebtFundOperationResult);
 }
 
 export async function recordDebtPrepayment(input: DebtPrepaymentInput): Promise<DebtFundOperationResult> {
@@ -957,6 +992,10 @@ export async function recordDebtInstallmentAdvance(input: DebtInstallmentAdvance
 
 export async function reverseDebtEvent(input: DebtReversalInput): Promise<DebtReversalResult> {
   return callDebtOperation("reverse_debt_event_v1", toDebtReversalRpcArgs(input), fromDebtReversalResult);
+}
+
+export async function updateDebtContractualSchedule(input: DebtScheduleUpdateInput): Promise<DebtScheduleUpdateResult> {
+  return callDebtOperation("update_debt_contractual_schedule_v1", toDebtScheduleUpdateRpcArgs(input), fromDebtScheduleUpdateResult);
 }
 
 export class CreditCardOperationError extends Error {
@@ -1305,9 +1344,12 @@ const debtOperationErrorCodes: DebtOperationErrorCode[] = [
   "DEBT_EVENT_ID_CONFLICT",
   "DEBT_EVENT_NOT_FOUND",
   "DEBT_EVENT_TYPE_UNSUPPORTED",
+  "DEBT_NOT_BANK_LOAN",
+  "DEBT_SCHEDULE_NOT_FOUND",
   "DEBT_EVENT_ALREADY_REVERSED",
   "DEBT_REVERSAL_SCHEDULE_REQUIRED",
   "DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED",
+  "DEBT_REVERSAL_SCHEDULE_CONFLICT",
   "DEBT_MOVEMENT_CONFLICT",
   "DEBT_MOVEMENT_ALREADY_LINKED",
   "DEBT_MOVEMENT_NOT_FOUND",
@@ -1340,6 +1382,17 @@ function fromDebtReversalResult(row: Record<string, any>): DebtReversalResult {
     debt: fromDebtRow(row.debt),
     event: fromDebtEventRow(row.event),
     scheduleVersion: row.scheduleVersion == null ? null : fromDebtScheduleVersionRow(row.scheduleVersion),
+    installments: Array.isArray(row.installments) ? row.installments.map(fromDebtInstallmentRow) : [],
+  };
+}
+
+function fromDebtScheduleUpdateResult(row: Record<string, any>): DebtScheduleUpdateResult {
+  if (!row.scheduleVersion) throw new Error("La RPC de cronograma no devolvió una versión válida.");
+  return {
+    idempotentReplay: Boolean(row.idempotentReplay),
+    debt: fromDebtRow(row.debt),
+    event: fromDebtEventRow(row.event),
+    scheduleVersion: fromDebtScheduleVersionRow(row.scheduleVersion),
     installments: Array.isArray(row.installments) ? row.installments.map(fromDebtInstallmentRow) : [],
   };
 }

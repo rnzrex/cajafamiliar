@@ -8,6 +8,7 @@ const ids = {
   accountA: "00000000-0000-4000-8000-000000000703",
   debtA: "00000000-0000-4000-8000-000000000704",
   debtEst: "00000000-0000-4000-8000-000000000708",
+  nonBankDebt: "00000000-0000-4000-8000-000000000713",
 
   userB: "00000000-0000-4000-8000-000000000710",
   householdB: "00000000-0000-4000-8000-000000000711",
@@ -17,6 +18,11 @@ const ids = {
   reversalEvent: "00000000-0000-4000-8000-000000000707",
   prepaymentEvent: "00000000-0000-4000-8000-000000000709",
   prepaymentReversalEvent: "00000000-0000-4000-8000-00000000070a",
+  v3PaymentEvent: "00000000-0000-4000-8000-00000000070d",
+  v3PendingEvent: "00000000-0000-4000-8000-00000000070e",
+  scheduleUpdateEvent: "00000000-0000-4000-8000-00000000070f",
+  v3InvalidEvent: "00000000-0000-4000-8000-000000000712",
+  nonBankEvent: "00000000-0000-4000-8000-000000000714",
 };
 
 function execSql(sql) {
@@ -74,10 +80,11 @@ try {
   const rpcCheck = await execSql(`
     select count(*) from information_schema.routines 
     where routine_schema = 'public' and routine_name in (
-      'create_bank_loan_v1', 'record_debt_payment_v2', 'record_debt_installment_advance_v1', 'reverse_debt_event_v1'
+      'create_bank_loan_v1', 'record_debt_payment_v2', 'record_debt_payment_v3',
+      'record_debt_installment_advance_v1', 'reverse_debt_event_v1', 'update_debt_contractual_schedule_v1'
     );
   `);
-  if (parseInt(rpcCheck, 10) !== 4) {
+  if (parseInt(rpcCheck, 10) !== 6) {
     throw new Error("RPC functions missing!");
   }
 
@@ -102,6 +109,8 @@ try {
       values ('${ids.householdA}', '${ids.userA}', 'owner', 'User A'), ('${ids.householdB}', '${ids.userB}', 'owner', 'User B');
     insert into public.financial_accounts (id, household_id, name, reconciliation_type, opening_balance, is_active, sort_order)
       values ('${ids.accountA}', '${ids.householdA}', 'Account A', 'balance', 10000, true, 10);
+    insert into public.debts (id, household_id, name, creditor_name, debt_kind, tracking_start_date, opening_principal_balance, created_by_user_id)
+      values ('${ids.nonBankDebt}', '${ids.householdA}', 'Family Loan', 'Family', 'family_loan', '2026-01-01', 1000, '${ids.userA}');
   `);
 
   console.log("3. A & D: Creating Bank Loan with Contractual Schedule...");
@@ -147,6 +156,12 @@ try {
   if (estSource !== "estimated|false") {
     throw new Error(`Unexpected estimated schedule metadata: ${estSource}`);
   }
+  // Legacy manual schedules must remain reversible after the V3 finalization.
+  await execSql(`
+    update public.debt_schedule_versions
+       set schedule_source = 'manual', is_authoritative = false
+     where debt_id = '${ids.debtEst}' and version_number = 1;
+  `);
 
   console.log("6. F: Testing record_debt_payment_v2 (payment + extra principal)...");
   await execSql(withUser(`
@@ -282,6 +297,14 @@ try {
   if (restoredCheck !== "3|active") {
     throw new Error(`Prepayment schedule restoration mismatch: ${restoredCheck}`);
   }
+  const manualRestorationSource = await execSql(`
+    select schedule_source || '|' || is_authoritative::text
+      from public.debt_schedule_versions
+     where trigger_event_id = '${ids.prepaymentReversalEvent}';
+  `);
+  if (manualRestorationSource !== "manual|false") {
+    throw new Error(`Legacy manual schedule metadata was not restored: ${manualRestorationSource}`);
+  }
   await execSql(withUser(`
     select public.reverse_debt_event_v1(
       '${ids.householdA}', '${ids.debtEst}', '${ids.prepaymentReversalEvent}', '${ids.prepaymentEvent}',
@@ -326,7 +349,135 @@ try {
     }
   }
 
-  console.log("11. K, L, M: Testing Security, RLS & Cross-household Isolation...");
+  console.log("11. O, P, Q: Testing finalization payment, pending schedule and contractual update...");
+  const v3Schedule = '[{"installment_number":1,"due_date":"2026-05-01","expected_amount":100,"expected_principal":80,"expected_interest":20,"expected_fees":0,"expected_insurance":0}]';
+  await execSql(withUser(`
+    select public.record_debt_payment_v3(
+      '${ids.householdA}', '${ids.debtA}', '${ids.v3PaymentEvent}', 'mov-v3-pay-1',
+      '2026-04-01', 150, '${ids.accountA}', 'Pago V3 + extra', 'Pago de deuda',
+      100, 0, 0, 0, 0, 50, 'reduce_term', true, '[]'::jsonb,
+      '${v3Schedule}'::jsonb, 'Cronograma posterior al pago', 'contractual'
+    );
+  `));
+  const v3PaymentCheck = await execSql(`
+    select count(*)::text || '|' || max(e.extra_principal_amount)::text || '|' || max(e.prepayment_effect)
+      || '|' || count(distinct s.id)::text || '|' || max(s.schedule_source) || '|' || max(s.is_authoritative::text)
+      from public.debt_events as e
+      left join public.debt_schedule_versions as s on s.trigger_event_id = e.id
+     where e.id = '${ids.v3PaymentEvent}';
+  `);
+  if (v3PaymentCheck !== "1|50|reduce_term|1|contractual|true") {
+    throw new Error(`Payment V3/schedule mismatch: ${v3PaymentCheck}`);
+  }
+  await execSql(withUser(`
+    select public.record_debt_payment_v3(
+      '${ids.householdA}', '${ids.debtA}', '${ids.v3PaymentEvent}', 'mov-v3-pay-1',
+      '2026-04-01', 150, '${ids.accountA}', 'Pago V3 + extra', 'Pago de deuda',
+      100, 0, 0, 0, 0, 50, 'reduce_term', true, '[]'::jsonb,
+      '${v3Schedule}'::jsonb, 'Cronograma posterior al pago', 'contractual'
+    );
+  `));
+  const v3ReplayCheck = await execSql(`select count(*) from public.debt_events where id = '${ids.v3PaymentEvent}';`);
+  if (v3ReplayCheck !== "1") throw new Error(`Payment V3 replay duplicated the event: ${v3ReplayCheck}`);
+
+  try {
+    await execSql(withUser(`
+      select public.record_debt_payment_v3(
+        '${ids.householdA}', '${ids.debtA}', '${ids.v3InvalidEvent}', 'mov-v3-invalid-1',
+        '2026-04-02', 90, '${ids.accountA}', 'Pago V3 inválido', 'Pago de deuda',
+        50, 0, 0, 0, 0, 40, 'reduce_term', true, '[]'::jsonb,
+        '[{"installment_number":1,"due_date":"2026-05-02","expected_amount":100,"expected_principal":80,"expected_interest":10,"expected_fees":0,"expected_insurance":0}]'::jsonb,
+        'Cronograma inválido', 'contractual'
+      );
+    `));
+    throw new Error("Invalid V3 schedule was NOT rejected!");
+  } catch (err) {
+    if (!String(err.message).includes("INVALID_DEBT_SCHEDULE")) throw err;
+  }
+  const atomicityCheck = await execSql(`
+    select (select count(*) from public.debt_events where id = '${ids.v3InvalidEvent}')::text || '|'
+      || (select count(*) from public.movements where id = 'mov-v3-invalid-1')::text;
+  `);
+  if (atomicityCheck !== "0|0") throw new Error(`Invalid V3 schedule left financial rows behind: ${atomicityCheck}`);
+
+  try {
+    await execSql(withUser(`
+      select public.record_debt_payment_v3(
+        '${ids.householdA}', '${ids.nonBankDebt}', '${ids.nonBankEvent}', 'mov-v3-nonbank-1',
+        '2026-04-02', 60, '${ids.accountA}', 'Pago no bancario pendiente', 'Pago de deuda',
+        40, 0, 0, 0, 0, 20, 'pending_bank_schedule', true, '[]'::jsonb,
+        '[]'::jsonb, null, null
+      );
+    `));
+    throw new Error("Bank schedule state was accepted for a non-bank debt!");
+  } catch (err) {
+    if (!String(err.message).includes("DEBT_NOT_BANK_LOAN")) throw err;
+  }
+  const nonBankAtomicityCheck = await execSql(`
+    select (select count(*) from public.debt_events where id = '${ids.nonBankEvent}')::text || '|'
+      || (select count(*) from public.movements where id = 'mov-v3-nonbank-1')::text;
+  `);
+  if (nonBankAtomicityCheck !== "0|0") throw new Error(`Non-bank schedule guard left financial rows behind: ${nonBankAtomicityCheck}`);
+
+  await execSql(withUser(`
+    select public.record_debt_payment_v3(
+      '${ids.householdA}', '${ids.debtA}', '${ids.v3PendingEvent}', 'mov-v3-pending-1',
+      '2026-06-01', 60, '${ids.accountA}', 'Pago V3 pendiente', 'Pago de deuda',
+      40, 0, 0, 0, 0, 20, 'pending_bank_schedule', true, '[]'::jsonb,
+      '[]'::jsonb, null, null
+    );
+  `));
+  const pendingCheck = await execSql(`
+    select max(e.prepayment_effect) || '|' || count(s.id)::text
+      from public.debt_events as e
+      left join public.debt_schedule_versions as s on s.trigger_event_id = e.id
+     where e.id = '${ids.v3PendingEvent}';
+  `);
+  if (pendingCheck !== "pending_bank_schedule|0") {
+    throw new Error(`Pending schedule state mismatch: ${pendingCheck}`);
+  }
+
+  const updatedSchedule = '[{"installment_number":1,"due_date":"2026-07-01","expected_amount":120,"expected_principal":90,"expected_interest":30,"expected_fees":0,"expected_insurance":0}]';
+  await execSql(withUser(`
+    select public.update_debt_contractual_schedule_v1(
+      '${ids.householdA}', '${ids.debtA}', '${ids.scheduleUpdateEvent}', '2026-06-15',
+      'rate_change', '${updatedSchedule}'::jsonb, 'Cronograma contractual actualizado'
+    );
+  `));
+  const updateCheck = await execSql(`
+    select e.event_type || '|' || coalesce(e.movement_id::text, '') || '|' || s.reason || '|'
+      || s.schedule_source || '|' || s.is_authoritative::text || '|' || count(i.id)::text
+      from public.debt_events as e
+      join public.debt_schedule_versions as s on s.trigger_event_id = e.id
+      join public.debt_installments as i on i.schedule_version_id = s.id
+     where e.id = '${ids.scheduleUpdateEvent}'
+     group by e.event_type, e.movement_id, s.reason, s.schedule_source, s.is_authoritative;
+  `);
+  if (updateCheck !== "principal_adjustment||rate_change|contractual|true|1") {
+    throw new Error(`Contractual schedule update mismatch: ${updateCheck}`);
+  }
+  await execSql(withUser(`
+    select public.update_debt_contractual_schedule_v1(
+      '${ids.householdA}', '${ids.debtA}', '${ids.scheduleUpdateEvent}', '2026-06-15',
+      'rate_change', '${updatedSchedule}'::jsonb, 'Cronograma contractual actualizado'
+    );
+  `));
+  const updateReplayCheck = await execSql(`select count(*) from public.debt_events where id = '${ids.scheduleUpdateEvent}';`);
+  if (updateReplayCheck !== "1") throw new Error(`Schedule update replay duplicated the event: ${updateReplayCheck}`);
+  try {
+    await execSql(withUser(`
+      select public.update_debt_contractual_schedule_v1(
+        '${ids.householdA}', '${ids.debtA}', '${ids.scheduleUpdateEvent}', '2026-06-15',
+        'rate_change', '[{"installment_number":1,"due_date":"2026-07-02","expected_amount":120,"expected_principal":90,"expected_interest":30,"expected_fees":0,"expected_insurance":0}]'::jsonb,
+        'Cronograma contractual actualizado'
+      );
+    `));
+    throw new Error("Changed contractual schedule update was NOT rejected!");
+  } catch (err) {
+    if (!String(err.message).includes("DEBT_EVENT_ID_CONFLICT")) throw err;
+  }
+
+  console.log("12. K, L, M: Testing Security, RLS & Cross-household Isolation...");
   // Cross-household access attempt by User B on Household A debt
   try {
     await execSql(withUser(`

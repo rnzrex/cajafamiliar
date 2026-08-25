@@ -4,6 +4,8 @@ import type {
   DebtEventInstallmentAllocation,
   DebtInstallment,
   DebtScheduleVersion,
+  DebtScheduleState,
+  ScheduleSource,
 } from "../types.js";
 import {
   allocatedAmountForInstallment,
@@ -60,6 +62,41 @@ export interface DebtInstallmentPlanningItem {
   remainingAmount: number | null; // null when expectedAmount is null
   amountKnown: boolean;
   isCovered: boolean;
+
+  // Schedule provenance/state. Optional for compatibility with older local fixtures.
+  scheduleSource?: ScheduleSource | null;
+  scheduleAuthoritative?: boolean;
+  scheduleState?: DebtScheduleState;
+  pendingBankSchedule?: boolean;
+}
+
+export function getDebtScheduleLifecycleState(
+  debtId: string,
+  debtEvents: DebtEvent[],
+  scheduleVersions: DebtScheduleVersion[]
+): { state: DebtScheduleState; pendingBankSchedule: boolean; currentSchedule: DebtScheduleVersion | null } {
+  const currentSchedule = currentDebtScheduleVersion(debtId, scheduleVersions);
+  const effectiveEvents = effectiveDebtEvents(debtEvents, debtId);
+  const latestPending = effectiveEvents
+    .filter((event) => event.prepaymentEffect === "pending_bank_schedule")
+    .sort(compareDebtEvents)
+    .at(-1);
+  const scheduleTrigger = currentSchedule?.triggerEventId
+    ? effectiveEvents.find((event) => event.id === currentSchedule.triggerEventId) ?? null
+    : null;
+  const pendingBankSchedule = Boolean(
+    latestPending && (!scheduleTrigger || compareDebtEvents(scheduleTrigger, latestPending) < 0)
+  );
+
+  return {
+    state: pendingBankSchedule ? "pending_bank_schedule" : currentSchedule ? "current" : "missing",
+    pendingBankSchedule,
+    currentSchedule,
+  };
+}
+
+function compareDebtEvents(a: DebtEvent, b: DebtEvent): number {
+  return `${a.eventDate}|${a.createdAt}|${a.id}`.localeCompare(`${b.eventDate}|${b.createdAt}|${b.id}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -91,10 +128,17 @@ export function buildDebtPlanningItems(
     if (debt.status !== "active" || debt.isArchived) continue;
 
     const currentSchedule = currentDebtScheduleVersion(debt.id, scheduleVersions);
+    const scheduleLifecycle = debt.debtKind === "bank_loan"
+      ? getDebtScheduleLifecycleState(debt.id, debtEvents, scheduleVersions)
+      : {
+          state: currentSchedule ? ("current" as const) : ("missing" as const),
+          pendingBankSchedule: false,
+          currentSchedule,
+        };
 
     // Only installments of the current schedule version. Open-ended debts do
     // not need a persisted schedule, so an empty list is valid for them.
-    const debtInstallments = currentSchedule
+    const debtInstallments = currentSchedule && !scheduleLifecycle.pendingBankSchedule
       ? installments.filter(
           (i) => i.scheduleVersionId === currentSchedule.id && i.debtId === debt.id
         )
@@ -104,7 +148,7 @@ export function buildDebtPlanningItems(
     // current obligation. Expose that next cycle as a derived planning item so
     // Panorama, Próximos 30 días, alerts and Agenda all consume the same truth
     // already used by the debt detail page. Nothing synthetic is persisted.
-    if (debt.repaymentStructure === "open_ended" && debtInstallments.length === 0) {
+    if (!scheduleLifecycle.pendingBankSchedule && debt.repaymentStructure === "open_ended" && debtInstallments.length === 0) {
       const currentPrincipal = Math.max(0, currentDebtPrincipal(debt, debtEvents));
       const nextPayment = calculateNextPayment({
         debt,
@@ -146,6 +190,10 @@ export function buildDebtPlanningItems(
           remainingAmount,
           amountKnown,
           isCovered,
+          scheduleSource: currentSchedule?.scheduleSource ?? null,
+          scheduleAuthoritative: currentSchedule?.isAuthoritative ?? false,
+          scheduleState: scheduleLifecycle.state,
+          pendingBankSchedule: scheduleLifecycle.pendingBankSchedule,
         });
       }
       continue;
@@ -189,6 +237,10 @@ export function buildDebtPlanningItems(
         remainingAmount,
         amountKnown,
         isCovered,
+        scheduleSource: currentSchedule.scheduleSource ?? null,
+        scheduleAuthoritative: currentSchedule.isAuthoritative ?? false,
+        scheduleState: scheduleLifecycle.state,
+        pendingBankSchedule: scheduleLifecycle.pendingBankSchedule,
       });
     }
   }

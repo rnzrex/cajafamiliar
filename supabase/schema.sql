@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
--- \restrict RIqzal62TNgVViQS1XGc1ZAXIxfEA0CSQtKrQdO6TnSUTdz83iePfzc6s8n4VlC
+-- \restrict 8NMGFRcuc3b8G2cd6sRBdZcodJygsIsGC3KgJiO94yZQn5hafIdgbZM7xYpkPlq
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 17.6
@@ -411,6 +411,96 @@ $_$;
 
 
 ALTER FUNCTION "private"."debt2b2_create_schedule_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid", "p_schedule_source" "text", "p_is_authoritative" boolean) OWNER TO "postgres";
+
+--
+-- Name: debt2b2_create_schedule_v3("uuid", "uuid", "uuid", "date", "text", "text", "jsonb", "uuid", "text"); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."debt2b2_create_schedule_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid", "p_schedule_source" "text") RETURNS "public"."debt_schedule_versions"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_schedule public.debt_schedule_versions%rowtype;
+  v_authoritative boolean;
+begin
+  if p_household_id is null
+     or p_debt_id is null
+     or p_trigger_event_id is null
+     or p_user_id is null
+     or p_schedule_source not in ('contractual', 'estimated') then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
+
+  perform private.debt2b2_validate_schedule_v3(
+    p_event_date,
+    p_reason,
+    p_schedule_installments
+  );
+
+  v_authoritative := p_schedule_source = 'contractual';
+
+  insert into public.debt_schedule_versions (
+    debt_id,
+    household_id,
+    version_number,
+    effective_date,
+    reason,
+    schedule_source,
+    is_authoritative,
+    trigger_event_id,
+    notes,
+    created_by_user_id
+  )
+  select
+    p_debt_id,
+    p_household_id,
+    coalesce(pg_catalog.max(s.version_number), 0) + 1,
+    p_event_date,
+    p_reason,
+    p_schedule_source,
+    v_authoritative,
+    p_trigger_event_id,
+    coalesce(p_notes, ''),
+    p_user_id
+    from public.debt_schedule_versions as s
+   where s.debt_id = p_debt_id
+     and s.household_id = p_household_id
+  returning * into v_schedule;
+
+  insert into public.debt_installments (
+    schedule_version_id,
+    debt_id,
+    household_id,
+    installment_number,
+    due_date,
+    expected_amount,
+    expected_principal,
+    expected_interest,
+    expected_fees,
+    expected_insurance,
+    created_by_user_id
+  )
+  select
+    v_schedule.id,
+    p_debt_id,
+    p_household_id,
+    (e.value->>'installment_number')::integer,
+    (e.value->>'due_date')::date,
+    (e.value->>'expected_amount')::numeric,
+    (e.value->>'expected_principal')::numeric,
+    (e.value->>'expected_interest')::numeric,
+    (e.value->>'expected_fees')::numeric,
+    (e.value->>'expected_insurance')::numeric,
+    p_user_id
+    from pg_catalog.jsonb_array_elements(p_schedule_installments) as e;
+
+  return v_schedule;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."debt2b2_create_schedule_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid", "p_schedule_source" "text") OWNER TO "postgres";
 
 --
 -- Name: debt2b2_current_principal("uuid", "uuid"); Type: FUNCTION; Schema: private; Owner: postgres
@@ -1013,6 +1103,66 @@ $$;
 ALTER FUNCTION "private"."debt2b2_reversal_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) OWNER TO "postgres";
 
 --
+-- Name: debt2b2_schedule_result("uuid", boolean); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."debt2b2_schedule_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) RETURNS "jsonb"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_event public.debt_events%rowtype;
+  v_debt public.debts%rowtype;
+  v_schedule public.debt_schedule_versions%rowtype;
+  v_installments jsonb := '[]'::jsonb;
+begin
+  select e.* into v_event
+    from public.debt_events as e
+   where e.id = p_event_id;
+  if not found then
+    raise exception 'DEBT_EVENT_NOT_FOUND';
+  end if;
+
+  select d.* into v_debt
+    from public.debts as d
+   where d.id = v_event.debt_id
+     and d.household_id = v_event.household_id;
+
+  select s.* into v_schedule
+    from public.debt_schedule_versions as s
+   where s.trigger_event_id = v_event.id
+     and s.debt_id = v_event.debt_id
+     and s.household_id = v_event.household_id
+   order by s.version_number desc
+   limit 1;
+
+  if v_schedule.id is null then
+    raise exception 'DEBT_SCHEDULE_NOT_FOUND';
+  end if;
+
+  select coalesce(
+    pg_catalog.jsonb_agg(pg_catalog.to_jsonb(i) order by i.installment_number),
+    '[]'::jsonb
+  ) into v_installments
+    from public.debt_installments as i
+   where i.schedule_version_id = v_schedule.id
+     and i.debt_id = v_event.debt_id
+     and i.household_id = v_event.household_id;
+
+  return pg_catalog.jsonb_build_object(
+    'idempotentReplay', p_idempotent_replay,
+    'debt', pg_catalog.to_jsonb(v_debt),
+    'event', pg_catalog.to_jsonb(v_event),
+    'scheduleVersion', pg_catalog.to_jsonb(v_schedule),
+    'installments', v_installments
+  );
+end;
+$$;
+
+
+ALTER FUNCTION "private"."debt2b2_schedule_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) OWNER TO "postgres";
+
+--
 -- Name: debt2b2_validate_advance_allocations("uuid", "uuid", "uuid", "date", numeric, numeric, numeric, numeric, numeric, numeric, "jsonb"); Type: FUNCTION; Schema: private; Owner: postgres
 --
 
@@ -1225,6 +1375,113 @@ $$;
 
 
 ALTER FUNCTION "private"."debt2b2_validate_costs"("p_cash_amount" numeric, "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_error_code" "text") OWNER TO "postgres";
+
+--
+-- Name: debt2b2_validate_schedule_v3("date", "text", "jsonb"); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."debt2b2_validate_schedule_v3"("p_event_date" "date", "p_reason" "text", "p_schedule_installments" "jsonb") RETURNS "void"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $_$
+declare
+  v_elem jsonb;
+  v_count integer;
+  v_installment_number integer;
+  v_previous_number integer;
+  v_due_date date;
+  v_previous_due_date date;
+  v_expected_amount numeric;
+  v_expected_principal numeric;
+  v_expected_interest numeric;
+  v_expected_fees numeric;
+  v_expected_insurance numeric;
+begin
+  if p_event_date is null
+     or p_reason not in ('prepayment', 'rate_change', 'manual_adjustment', 'reversal')
+     or p_schedule_installments is null
+     or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array'
+     or pg_catalog.jsonb_array_length(p_schedule_installments) = 0 then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
+
+  v_count := pg_catalog.jsonb_array_length(p_schedule_installments);
+
+  for v_elem in
+    select e.value
+      from pg_catalog.jsonb_array_elements(p_schedule_installments) as e
+  loop
+    if pg_catalog.jsonb_typeof(v_elem) <> 'object'
+       or not (v_elem ? 'installment_number')
+       or v_elem->'installment_number' = 'null'::pg_catalog.jsonb
+       or not (v_elem ? 'due_date')
+       or v_elem->'due_date' = 'null'::pg_catalog.jsonb
+       or not (v_elem ? 'expected_amount')
+       or v_elem->'expected_amount' = 'null'::pg_catalog.jsonb
+       or not (v_elem ? 'expected_principal')
+       or v_elem->'expected_principal' = 'null'::pg_catalog.jsonb
+       or not (v_elem ? 'expected_interest')
+       or v_elem->'expected_interest' = 'null'::pg_catalog.jsonb
+       or not (v_elem ? 'expected_fees')
+       or v_elem->'expected_fees' = 'null'::pg_catalog.jsonb
+       or not (v_elem ? 'expected_insurance')
+       or v_elem->'expected_insurance' = 'null'::pg_catalog.jsonb
+       or pg_catalog.jsonb_typeof(v_elem->'expected_amount') <> 'number'
+       or pg_catalog.jsonb_typeof(v_elem->'expected_principal') <> 'number'
+       or pg_catalog.jsonb_typeof(v_elem->'expected_interest') <> 'number'
+       or pg_catalog.jsonb_typeof(v_elem->'expected_fees') <> 'number'
+       or pg_catalog.jsonb_typeof(v_elem->'expected_insurance') <> 'number' then
+      raise exception 'INVALID_DEBT_SCHEDULE';
+    end if;
+
+    if v_elem->>'installment_number' !~ '^[0-9]+$'
+       or v_elem->>'due_date' !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then
+      raise exception 'INVALID_DEBT_SCHEDULE';
+    end if;
+
+    begin
+      v_installment_number := (v_elem->>'installment_number')::integer;
+      v_due_date := (v_elem->>'due_date')::date;
+      v_expected_amount := (v_elem->>'expected_amount')::numeric;
+      v_expected_principal := (v_elem->>'expected_principal')::numeric;
+      v_expected_interest := (v_elem->>'expected_interest')::numeric;
+      v_expected_fees := (v_elem->>'expected_fees')::numeric;
+      v_expected_insurance := (v_elem->>'expected_insurance')::numeric;
+    exception
+      when invalid_text_representation or numeric_value_out_of_range or datetime_field_overflow then
+        raise exception 'INVALID_DEBT_SCHEDULE';
+    end;
+
+    if v_installment_number < 1
+       or (v_previous_number is not null and v_installment_number <> v_previous_number + 1)
+       or v_due_date <= p_event_date
+       or (v_previous_due_date is not null and v_due_date <= v_previous_due_date)
+       or v_expected_amount <= 0
+       or v_expected_principal < 0
+       or v_expected_interest < 0
+       or v_expected_fees < 0
+       or v_expected_insurance < 0
+       or pg_catalog.abs(
+            pg_catalog.round(
+              v_expected_principal + v_expected_interest + v_expected_fees + v_expected_insurance,
+              2
+            ) - pg_catalog.round(v_expected_amount, 2)
+          ) > 0.01 then
+      raise exception 'INVALID_DEBT_SCHEDULE';
+    end if;
+
+    v_previous_number := v_installment_number;
+    v_previous_due_date := v_due_date;
+  end loop;
+
+  if v_previous_number <> v_count then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
+end;
+$_$;
+
+
+ALTER FUNCTION "private"."debt2b2_validate_schedule_v3"("p_event_date" "date", "p_reason" "text", "p_schedule_installments" "jsonb") OWNER TO "postgres";
 
 --
 -- Name: require_bank_loan_profile(); Type: FUNCTION; Schema: private; Owner: postgres
@@ -5195,6 +5452,133 @@ $$;
 ALTER FUNCTION "public"."record_debt_payment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb") OWNER TO "postgres";
 
 --
+-- Name: record_debt_payment_v3("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text", numeric, numeric, numeric, numeric, numeric, numeric, "text", boolean, "jsonb", "jsonb", "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "public"."record_debt_payment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb", "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_user_id uuid := auth.uid();
+  v_result jsonb;
+  v_schedule public.debt_schedule_versions%rowtype;
+  v_extra numeric := coalesce(p_extra_principal_amount, 0);
+  v_schedule_count integer;
+  v_is_replay boolean;
+  v_debt_kind text;
+begin
+  v_schedule_count := case
+    when p_schedule_installments is null then -1
+    when pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' then -1
+    else pg_catalog.jsonb_array_length(p_schedule_installments)
+  end;
+
+  if p_schedule_installments is null
+     or v_schedule_count < 0
+     or (v_schedule_count = 0 and (p_schedule_source is not null or coalesce(pg_catalog.btrim(p_schedule_notes), '') <> ''))
+     or (v_schedule_count > 0 and p_schedule_source not in ('contractual', 'estimated'))
+     or v_extra < 0
+     or (v_extra > 0 and p_prepayment_effect is null)
+     or (v_extra = 0 and p_prepayment_effect is not null)
+     or (p_prepayment_effect = 'pending_bank_schedule' and (v_extra <= 0 or v_schedule_count > 0))
+     or (v_schedule_count > 0 and p_prepayment_effect = 'pending_bank_schedule') then
+     raise exception 'INVALID_DEBT_PAYMENT';
+   end if;
+
+  if v_schedule_count > 0 or p_prepayment_effect = 'pending_bank_schedule' then
+    select d.debt_kind into v_debt_kind
+      from public.debts as d
+     where d.id = p_debt_id
+       and d.household_id = p_household_id;
+    if found and v_debt_kind <> 'bank_loan' then
+      raise exception 'DEBT_NOT_BANK_LOAN';
+    end if;
+  end if;
+
+  if v_schedule_count > 0 then
+    perform private.debt2b2_validate_schedule_v3(
+      p_event_date,
+      'prepayment',
+      p_schedule_installments
+    );
+  end if;
+
+  v_result := public.record_debt_payment_v2(
+    p_household_id,
+    p_debt_id,
+    p_event_id,
+    p_movement_id,
+    p_event_date,
+    p_cash_amount,
+    p_account_id,
+    p_description,
+    p_category,
+    p_principal_amount,
+    p_interest_paid,
+    p_fees_paid,
+    p_insurance_paid,
+    p_other_cost_paid,
+    p_extra_principal_amount,
+    p_prepayment_effect,
+    p_breakdown_complete,
+    p_allocations
+  );
+
+  v_is_replay := coalesce((v_result->>'idempotentReplay')::boolean, false);
+
+  if v_is_replay then
+    select s.* into v_schedule
+      from public.debt_schedule_versions as s
+     where s.trigger_event_id = p_event_id
+       and s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+     order by s.version_number desc
+     limit 1;
+
+    if v_schedule_count = 0 then
+      if v_schedule.id is not null then
+        raise exception 'DEBT_EVENT_ID_CONFLICT';
+      end if;
+    elsif v_schedule.id is null
+       or private.debt2b2_canonical_schedule(p_schedule_installments)
+            is distinct from private.debt2b2_persisted_schedule(v_schedule.id)
+       or v_schedule.notes is distinct from coalesce(p_schedule_notes, '')
+       or v_schedule.schedule_source is distinct from p_schedule_source then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    return v_result;
+  end if;
+
+  if v_schedule_count > 0 then
+    if v_result->'debt'->>'status' <> 'active' then
+      raise exception 'INVALID_DEBT_SCHEDULE';
+    end if;
+
+    perform private.debt2b2_create_schedule_v3(
+      p_household_id,
+      p_debt_id,
+      p_event_id,
+      p_event_date,
+      'prepayment',
+      p_schedule_notes,
+      p_schedule_installments,
+      v_user_id,
+      p_schedule_source
+    );
+
+    return private.debt2b2_fund_result(p_event_id, false);
+  end if;
+
+  return v_result;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."record_debt_payment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb", "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") OWNER TO "postgres";
+
+--
 -- Name: record_debt_payoff_v1("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text", numeric, numeric, numeric, numeric, boolean); Type: FUNCTION; Schema: public; Owner: postgres
 --
 
@@ -6164,8 +6548,7 @@ begin
     raise exception 'AUTH_REQUIRED';
   end if;
 
-  select hm.display_name
-    into v_person
+  select hm.display_name into v_person
     from public.household_members as hm
    where hm.household_id = p_household_id
      and hm.user_id = v_user_id;
@@ -6185,10 +6568,19 @@ begin
     raise exception 'INVALID_DEBT_REVERSAL';
   end if;
 
-  perform private.debt2b2_lock_operation(null, p_reversal_event_id);
+  -- Locate target first, lock both advisory keys, then re-read the target.
+  select e.* into v_target
+    from public.debt_events as e
+   where e.id = p_target_event_id
+     and e.debt_id = p_debt_id
+     and e.household_id = p_household_id;
+  if not found then
+    raise exception 'DEBT_EVENT_NOT_FOUND';
+  end if;
 
-  select d.*
-    into v_debt
+  perform private.debt2b2_lock_operation(v_target.movement_id, p_reversal_event_id);
+
+  select d.* into v_debt
     from public.debts as d
    where d.id = p_debt_id
      and d.household_id = p_household_id
@@ -6197,8 +6589,7 @@ begin
     raise exception 'DEBT_NOT_FOUND';
   end if;
 
-  select e.*
-    into v_target
+  select e.* into v_target
     from public.debt_events as e
    where e.id = p_target_event_id
      and e.debt_id = p_debt_id
@@ -6214,8 +6605,7 @@ begin
     raise exception 'INVALID_DEBT_REVERSAL';
   end if;
 
-  select s.*
-    into v_target_schedule
+  select s.* into v_target_schedule
     from public.debt_schedule_versions as s
    where s.debt_id = p_debt_id
      and s.household_id = p_household_id
@@ -6225,8 +6615,7 @@ begin
    for update;
   v_target_has_schedule := found;
 
-  select e.*
-    into v_existing_reversal
+  select e.* into v_existing_reversal
     from public.debt_events as e
    where e.id = p_reversal_event_id
    for update;
@@ -6249,8 +6638,7 @@ begin
       raise exception 'DEBT_EVENT_ID_CONFLICT';
     end if;
 
-    select s.*
-      into v_existing_schedule
+    select s.* into v_existing_schedule
       from public.debt_schedule_versions as s
      where s.trigger_event_id = p_reversal_event_id
        and s.debt_id = p_debt_id
@@ -6323,8 +6711,7 @@ begin
   ) returning * into v_reversal;
 
   if v_target_has_schedule then
-    select s.*
-      into v_previous_schedule
+    select s.* into v_previous_schedule
       from public.debt_schedule_versions as s
      where s.debt_id = p_debt_id
        and s.household_id = p_household_id
@@ -6336,18 +6723,44 @@ begin
       raise exception 'DEBT_REVERSAL_SCHEDULE_NOT_FOUND';
     end if;
 
-    perform private.debt2b2_create_schedule_v2(
-      p_household_id,
-      p_debt_id,
-      p_reversal_event_id,
+    perform private.debt2b2_validate_schedule_v3(
       p_event_date,
       'reversal',
-      p_schedule_notes,
-      p_schedule_installments,
-      v_user_id,
-      v_previous_schedule.schedule_source,
-      v_previous_schedule.is_authoritative
+      p_schedule_installments
     );
+    if private.debt2b2_canonical_schedule(p_schedule_installments)
+         is distinct from private.debt2b2_persisted_schedule(v_previous_schedule.id)
+       then
+      raise exception 'DEBT_REVERSAL_SCHEDULE_CONFLICT';
+    end if;
+
+    if coalesce(v_previous_schedule.schedule_source, 'manual') = 'manual' then
+      -- Preserve the source/authority metadata of legacy manual schedules.
+      perform private.debt2b2_create_schedule_v2(
+        p_household_id,
+        p_debt_id,
+        p_reversal_event_id,
+        p_event_date,
+        'reversal',
+        p_schedule_notes,
+        p_schedule_installments,
+        v_user_id,
+        'manual',
+        v_previous_schedule.is_authoritative
+      );
+    else
+      perform private.debt2b2_create_schedule_v3(
+        p_household_id,
+        p_debt_id,
+        p_reversal_event_id,
+        p_event_date,
+        'reversal',
+        p_schedule_notes,
+        p_schedule_installments,
+        v_user_id,
+        v_previous_schedule.schedule_source
+      );
+    end if;
   end if;
 
   v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
@@ -6841,6 +7254,169 @@ $$;
 
 
 ALTER FUNCTION "public"."unregister_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") OWNER TO "postgres";
+
+--
+-- Name: update_debt_contractual_schedule_v1("uuid", "uuid", "uuid", "date", "text", "jsonb", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "public"."update_debt_contractual_schedule_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_user_id uuid := auth.uid();
+  v_person text;
+  v_debt public.debts%rowtype;
+  v_existing_event public.debt_events%rowtype;
+  v_schedule public.debt_schedule_versions%rowtype;
+  v_description text;
+begin
+  if v_user_id is null then
+    raise exception 'AUTH_REQUIRED';
+  end if;
+
+  select hm.display_name into v_person
+    from public.household_members as hm
+   where hm.household_id = p_household_id
+     and hm.user_id = v_user_id;
+  if not found or v_person is null or pg_catalog.btrim(v_person) = '' then
+    raise exception 'HOUSEHOLD_ACCESS_DENIED';
+  end if;
+
+  if p_household_id is null
+     or p_debt_id is null
+     or p_event_id is null
+     or p_event_date is null
+     or p_reason not in ('rate_change', 'manual_adjustment')
+     or p_schedule_installments is null
+     or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array'
+     or pg_catalog.jsonb_array_length(p_schedule_installments) = 0 then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
+
+  perform private.debt2b2_validate_schedule_v3(
+    p_event_date,
+    p_reason,
+    p_schedule_installments
+  );
+
+  perform private.debt2b2_lock_operation(null, p_event_id);
+
+  select d.* into v_debt
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+  if not found then
+    raise exception 'DEBT_NOT_FOUND';
+  end if;
+  if v_debt.debt_kind <> 'bank_loan' then
+    raise exception 'DEBT_NOT_BANK_LOAN';
+  end if;
+  if v_debt.is_archived then
+    raise exception 'DEBT_ARCHIVED';
+  end if;
+  if v_debt.status <> 'active' then
+    raise exception 'DEBT_NOT_ACTIVE';
+  end if;
+
+  v_description := 'Actualización de cronograma contractual (' || p_reason || ')';
+
+  select e.* into v_existing_event
+    from public.debt_events as e
+   where e.id = p_event_id
+   for update;
+
+  if found then
+    if v_existing_event.household_id is distinct from p_household_id
+       or v_existing_event.debt_id is distinct from p_debt_id
+       or v_existing_event.event_type is distinct from 'principal_adjustment'
+       or v_existing_event.event_date is distinct from p_event_date
+       or v_existing_event.cash_amount is distinct from 0::numeric
+       or v_existing_event.principal_delta is distinct from 0::numeric
+       or v_existing_event.interest_paid is distinct from 0::numeric
+       or v_existing_event.fees_paid is distinct from 0::numeric
+       or v_existing_event.insurance_paid is distinct from 0::numeric
+       or v_existing_event.other_cost_paid is distinct from 0::numeric
+       or v_existing_event.breakdown_complete is distinct from false
+       or v_existing_event.movement_id is not null
+       or v_existing_event.description is distinct from v_description then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    select s.* into v_schedule
+      from public.debt_schedule_versions as s
+     where s.trigger_event_id = p_event_id
+       and s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+     order by s.version_number desc
+     limit 1;
+    if v_schedule.id is null
+       or private.debt2b2_canonical_schedule(p_schedule_installments)
+            is distinct from private.debt2b2_persisted_schedule(v_schedule.id)
+       or v_schedule.notes is distinct from coalesce(p_schedule_notes, '')
+       or v_schedule.schedule_source is distinct from 'contractual'
+       or not v_schedule.is_authoritative then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    return private.debt2b2_schedule_result(p_event_id, true);
+  end if;
+
+  insert into public.debt_events (
+    id,
+    debt_id,
+    household_id,
+    event_date,
+    event_type,
+    cash_amount,
+    principal_delta,
+    interest_paid,
+    fees_paid,
+    insurance_paid,
+    other_cost_paid,
+    breakdown_complete,
+    movement_id,
+    reversal_of_event_id,
+    description,
+    registered_by_user_id
+  ) values (
+    p_event_id,
+    p_debt_id,
+    p_household_id,
+    p_event_date,
+    'principal_adjustment',
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    false,
+    null,
+    null,
+    v_description,
+    v_user_id
+  );
+
+  perform private.debt2b2_create_schedule_v3(
+    p_household_id,
+    p_debt_id,
+    p_event_id,
+    p_event_date,
+    p_reason,
+    p_schedule_notes,
+    p_schedule_installments,
+    v_user_id,
+    'contractual'
+  );
+
+  return private.debt2b2_schedule_result(p_event_id, false);
+end;
+$$;
+
+
+ALTER FUNCTION "public"."update_debt_contractual_schedule_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text") OWNER TO "postgres";
 
 --
 -- Name: update_debt_metadata_v1("uuid", "uuid", "text", "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
@@ -9597,6 +10173,13 @@ REVOKE ALL ON FUNCTION "private"."debt2b2_create_schedule"("p_household_id" "uui
 
 
 --
+-- Name: FUNCTION "debt2b2_create_schedule_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid", "p_schedule_source" "text"); Type: ACL; Schema: private; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION "private"."debt2b2_create_schedule_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid", "p_schedule_source" "text") FROM PUBLIC;
+
+
+--
 -- Name: FUNCTION "debt2b2_current_principal"("p_household_id" "uuid", "p_debt_id" "uuid"); Type: ACL; Schema: private; Owner: postgres
 --
 
@@ -9718,10 +10301,24 @@ REVOKE ALL ON FUNCTION "private"."debt2b2_reversal_result"("p_event_id" "uuid", 
 
 
 --
+-- Name: FUNCTION "debt2b2_schedule_result"("p_event_id" "uuid", "p_idempotent_replay" boolean); Type: ACL; Schema: private; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION "private"."debt2b2_schedule_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) FROM PUBLIC;
+
+
+--
 -- Name: FUNCTION "debt2b2_validate_costs"("p_cash_amount" numeric, "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_error_code" "text"); Type: ACL; Schema: private; Owner: postgres
 --
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_validate_costs"("p_cash_amount" numeric, "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_error_code" "text") FROM PUBLIC;
+
+
+--
+-- Name: FUNCTION "debt2b2_validate_schedule_v3"("p_event_date" "date", "p_reason" "text", "p_schedule_installments" "jsonb"); Type: ACL; Schema: private; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION "private"."debt2b2_validate_schedule_v3"("p_event_date" "date", "p_reason" "text", "p_schedule_installments" "jsonb") FROM PUBLIC;
 
 
 --
@@ -9940,6 +10537,14 @@ GRANT ALL ON FUNCTION "public"."record_debt_payment_v2"("p_household_id" "uuid",
 
 
 --
+-- Name: FUNCTION "record_debt_payment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb", "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text"); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION "public"."record_debt_payment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb", "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."record_debt_payment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb", "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") TO "authenticated";
+
+
+--
 -- Name: FUNCTION "record_debt_payoff_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean); Type: ACL; Schema: public; Owner: postgres
 --
 
@@ -10051,6 +10656,14 @@ REVOKE ALL ON FUNCTION "public"."trg_sync_debt_recurring"() FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION "public"."unregister_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."unregister_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") TO "authenticated";
+
+
+--
+-- Name: FUNCTION "update_debt_contractual_schedule_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text"); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION "public"."update_debt_contractual_schedule_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."update_debt_contractual_schedule_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text") TO "authenticated";
 
 
 --
@@ -10328,5 +10941,5 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT REFERENCES
 -- PostgreSQL database dump complete
 --
 
--- \unrestrict RIqzal62TNgVViQS1XGc1ZAXIxfEA0CSQtKrQdO6TnSUTdz83iePfzc6s8n4VlC
+-- \unrestrict 8NMGFRcuc3b8G2cd6sRBdZcodJygsIsGC3KgJiO94yZQn5hafIdgbZM7xYpkPlq
 

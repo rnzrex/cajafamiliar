@@ -143,6 +143,18 @@ describe("buildDebtPlanningItems — schedule version handling", () => {
     // sv2 is current but has no installments; sv1 has installments but is historical
     expect(items).toHaveLength(0);
   });
+
+  it("hides the last known schedule while a bank schedule is pending", () => {
+    const pendingEvent = debtEvent({
+      id: "e_pending",
+      eventType: "principal_prepayment",
+      eventDate: "2026-08-20",
+      prepaymentEffect: "pending_bank_schedule",
+      createdAt: "2026-08-20T00:00:00Z",
+    });
+    const items = build([debt()], [pendingEvent], [scheduleVersion()], [installment()], []);
+    expect(items).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

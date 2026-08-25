@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const container = process.env.DEBT2B2_DB_CONTAINER ?? "supabase_db_debt2b2-local";
+const container = process.env.DEBT2B2_DB_CONTAINER ?? "supabase_db_caja-familiar";
 const ids = {
   user: "00000000-0000-4000-8000-000000000101",
   household: "00000000-0000-4000-8000-000000000102",
@@ -25,7 +25,7 @@ const ids = {
   sharedMovement: "debt2b2-shared-movement",
 };
 
-const schedule = "jsonb_build_array(jsonb_build_object('installment_number', 1, 'due_date', '2026-09-20', 'expected_amount', 100, 'expected_principal', 80, 'expected_interest', 20))";
+const schedule = "jsonb_build_array(jsonb_build_object('installment_number', 1, 'due_date', '2026-09-20', 'expected_amount', 100, 'expected_principal', 80, 'expected_interest', 20, 'expected_fees', 0, 'expected_insurance', 0))";
 
 await execSql(`
   delete from public.debt_event_installment_allocations where household_id = '${ids.household}';
@@ -44,14 +44,36 @@ await execSql(`
     values ('${ids.household}', '${ids.user}', 'owner', 'Harness User');
   insert into public.financial_accounts (id, household_id, name, reconciliation_type, opening_balance, is_active, sort_order)
     values ('${ids.account}', '${ids.household}', 'Harness Bank', 'balance', 0, true, 10);
-  insert into public.debts (id, household_id, name, creditor_name, debt_kind, tracking_start_date, opening_principal_balance, created_by_user_id)
+  insert into public.debts (id, household_id, name, creditor_name, debt_kind, tracking_start_date, opening_principal_balance, planned_installment_count, created_by_user_id)
   values
-    ('${ids.paymentDebt}', '${ids.household}', 'Payment Debt', 'Harness Creditor', 'bank_loan', '2026-08-20', 1000, '${ids.user}'),
-    ('${ids.prepaymentDebt}', '${ids.household}', 'Prepayment Debt', 'Harness Creditor', 'bank_loan', '2026-08-20', 500, '${ids.user}'),
-    ('${ids.payoffDebt}', '${ids.household}', 'Payoff Debt', 'Harness Creditor', 'bank_loan', '2026-08-20', 250, '${ids.user}'),
-    ('${ids.concurrentDebtA}', '${ids.household}', 'Concurrent Debt A', 'Harness Creditor', 'bank_loan', '2026-08-20', 1000, '${ids.user}'),
-    ('${ids.concurrentDebtB}', '${ids.household}', 'Concurrent Debt B', 'Harness Creditor', 'bank_loan', '2026-08-20', 1000, '${ids.user}'),
-    ('${ids.precisionDebt}', '${ids.household}', 'Precision Debt', 'Harness Creditor', 'bank_loan', '2026-08-20', 1000, '${ids.user}');
+    ('${ids.paymentDebt}', '${ids.household}', 'Payment Debt', 'Harness Creditor', 'bank_loan', '2026-08-20', 1000, 1, '${ids.user}'),
+    ('${ids.prepaymentDebt}', '${ids.household}', 'Prepayment Debt', 'Harness Creditor', 'bank_loan', '2026-08-20', 500, 1, '${ids.user}'),
+    ('${ids.payoffDebt}', '${ids.household}', 'Payoff Debt', 'Harness Creditor', 'bank_loan', '2026-08-20', 250, 1, '${ids.user}'),
+    ('${ids.concurrentDebtA}', '${ids.household}', 'Concurrent Debt A', 'Harness Creditor', 'bank_loan', '2026-08-20', 1000, 1, '${ids.user}'),
+    ('${ids.concurrentDebtB}', '${ids.household}', 'Concurrent Debt B', 'Harness Creditor', 'bank_loan', '2026-08-20', 1000, 1, '${ids.user}'),
+    ('${ids.precisionDebt}', '${ids.household}', 'Precision Debt', 'Harness Creditor', 'bank_loan', '2026-08-20', 1000, 1, '${ids.user}');
+  insert into public.debt_schedule_versions (
+    debt_id, household_id, version_number, effective_date, reason,
+    schedule_source, is_authoritative, notes, created_by_user_id
+  )
+  select d.id, d.household_id, 1, '2026-08-20', 'initial', 'contractual', true, '', '${ids.user}'
+    from public.debts as d
+   where d.household_id = '${ids.household}';
+  insert into public.debt_installments (
+    schedule_version_id, debt_id, household_id, installment_number, due_date,
+    expected_amount, expected_principal, expected_interest, expected_fees,
+    expected_insurance, created_by_user_id
+  )
+  select s.id, s.debt_id, s.household_id, 1, '2026-09-20', 100, 80, 20, 0, 0, '${ids.user}'
+    from public.debt_schedule_versions as s
+   where s.household_id = '${ids.household}'
+     and s.version_number = 1;
+  insert into public.bank_loan_profiles (
+    debt_id, household_id, loan_subtype, amortization_method, created_by_user_id
+  )
+  select d.id, d.household_id, 'personal', 'fixed_installment', '${ids.user}'
+    from public.debts as d
+   where d.household_id = '${ids.household}';
 `);
 
 await execSql(withUser(`

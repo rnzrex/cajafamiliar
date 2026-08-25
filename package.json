@@ -10,6 +10,7 @@
     "test": "vitest run",
     "typecheck:api": "tsc -p tsconfig.api.json",
     "test:debt2b2": "node scripts/test-debt2b2.mjs",
+    "test:bank-v2-local": "node scripts/test-bank-v2-local.mjs",
     "test:debt5fa:local": "node scripts/test-debt5fa-local.mjs",
     "test:recon1a:local": "node scripts/test-recon1a-local.mjs",
     "test:recon1c:local": "node scripts/test-recon1c-local.mjs",

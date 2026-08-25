@@ -43,6 +43,7 @@ export type DebtInsurancePricingMode =
   | "unknown";
 
 export type ScheduleSource = "contractual" | "estimated" | "manual";
+export type DebtScheduleState = "current" | "pending_bank_schedule" | "missing";
 
 export type PrepaymentEffect =
   | "reduce_term"
@@ -531,6 +532,9 @@ export interface DebtPaymentInput {
   prepaymentEffect?: PrepaymentEffect | null;
   breakdownComplete: boolean;
   allocations: DebtAllocationInput[];
+  scheduleInstallments?: DebtScheduleInstallmentInput[];
+  scheduleNotes?: string | null;
+  scheduleSource?: Exclude<ScheduleSource, "manual"> | null;
 }
 
 export interface DebtPrepaymentInput {

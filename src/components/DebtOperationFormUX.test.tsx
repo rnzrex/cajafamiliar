@@ -14,6 +14,7 @@ vi.mock("../services/dataRepository", async () => {
     recordDebtPayment: vi.fn().mockResolvedValue({}),
     recordDebtPrepayment: vi.fn().mockResolvedValue({}),
     recordDebtInstallmentAdvance: vi.fn().mockResolvedValue({}),
+    updateDebtContractualSchedule: vi.fn().mockResolvedValue({}),
   };
 });
 
@@ -102,7 +103,7 @@ const installments: DebtInstallment[] = [
   },
 ];
 
-function renderOperation(operationType: "payment" | "prepayment" | "installment_advance", paymentWithExtraPrincipal = false) {
+function renderOperation(operationType: "payment" | "prepayment" | "installment_advance" | "schedule_update", paymentWithExtraPrincipal = false) {
   return render(
     <DebtOperationForm
       debt={debt}
@@ -198,6 +199,30 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
       allocations: [
         { installmentId: installments[0].id, allocatedAmount: 1100 },
         { installmentId: installments[1].id, allocatedAmount: 1200 },
+      ],
+    })));
+  });
+
+  it("submits the current rows through the append-only contractual schedule update", async () => {
+    const user = userEvent.setup();
+    renderOperation("schedule_update");
+
+    await user.click(screen.getByRole("button", { name: "Guardar cronograma oficial" }));
+
+    await waitFor(() => expect(dataRepository.updateDebtContractualSchedule).toHaveBeenCalledWith(expect.objectContaining({
+      debtId: debt.id,
+      reason: "manual_adjustment",
+      scheduleInstallments: [
+        expect.objectContaining({
+          installmentNumber: 1,
+          dueDate: installments[0].dueDate,
+          expectedAmount: installments[0].expectedAmount,
+          expectedPrincipal: installments[0].expectedPrincipal,
+          expectedInterest: installments[0].expectedInterest,
+          expectedFees: installments[0].expectedFees,
+          expectedInsurance: installments[0].expectedInsurance,
+        }),
+        expect.objectContaining({ installmentNumber: 2, dueDate: installments[1].dueDate }),
       ],
     })));
   });

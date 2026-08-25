@@ -18,6 +18,8 @@ export interface DebtLedgerItem {
   isReversal: boolean;
   breakdownComplete: boolean;
   description: string;
+  extraPrincipalAmount?: number;
+  prepaymentEffect?: string | null;
 }
 
 export interface DebtProgressSummary {
@@ -120,6 +122,8 @@ export function buildDebtPaymentLedger(debt: Debt, events: DebtEvent[]): DebtPay
       isReversal,
       breakdownComplete: event.breakdownComplete,
       description: event.description || "",
+      extraPrincipalAmount: event.extraPrincipalAmount ?? 0,
+      prepaymentEffect: event.prepaymentEffect ?? null,
     });
   }
 

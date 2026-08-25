@@ -167,7 +167,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null);
   const selectedDebt = useMemo(() => data.debts.find((d) => d.id === selectedDebtId) ?? null, [data.debts, selectedDebtId]);
   const [debtOperationState, setDebtOperationState] = useState<{
-    type: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance";
+    type: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance" | "schedule_update";
     targetEventId?: string;
     paymentWithExtraPrincipal?: boolean;
   } | null>(null);
@@ -343,6 +343,10 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   );
 
   const debtPlanningAlertSummary = useMemo(() => summarizeDebtPlanningAlerts(debtPlanningItems), [debtPlanningItems]);
+  const pendingBankScheduleDebtNames = useMemo(
+    () => debtIntelligenceItems.filter((item) => item.debtKind === "bank_loan" && item.pendingBankSchedule).map((item) => item.debtName),
+    [debtIntelligenceItems]
+  );
 
   const urgentPaymentSummary = useMemo(() => paymentAlertSummary(data.recurringPayments), [data.recurringPayments]);
   const urgentPaymentLabel = urgentPaymentSummary.total === 1 ? "1 pago requiere atención" : `${urgentPaymentSummary.total} pagos requieren atención`;
@@ -1489,6 +1493,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 cardStatements={data.creditCardStatements}
                 debtPlanningItems={debtPlanningItems}
                 debtPlanningAlertSummary={debtPlanningAlertSummary}
+                pendingBankScheduleDebtNames={pendingBankScheduleDebtNames}
                 debtPortfolioIntelligence={debtPortfolioIntelligence}
                 debtStrategies={debtStrategies}
                 intelligenceItems={debtIntelligenceItems}
