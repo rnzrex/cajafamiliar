@@ -87,10 +87,10 @@ Documented only here; do not execute these steps in this state commit.
 
 ## Safety / Do Not
 
-- Do not modify financial logic.
-- Do not modify committed BANK V2 SQL or create a migration.
-- Do not touch Supabase, remote SQL, Production, or Vercel Production.
-- Do not merge, rewrite commits, reset, clean, or force push.
+- Do not modify validated financial logic or committed BANK V2 migrations during the closing sequence unless a newly discovered blocker requires a separate audited change.
+- Production, Supabase, remote SQL, and Vercel Production actions must follow the documented closing sequence and the authorization available in the current session/environment.
+- Do not create test or junk Production data.
+- Do not rewrite commits, reset, clean, force push, expose secrets, change billing, or perform unrelated/destructive work.
 - Preserve legacy non-bank behavior and the validated QAPAQ/cards regressions.
 
 ## Key Files
