@@ -167,8 +167,9 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [selectedDebtId, setSelectedDebtId] = useState<string | null>(null);
   const selectedDebt = useMemo(() => data.debts.find((d) => d.id === selectedDebtId) ?? null, [data.debts, selectedDebtId]);
   const [debtOperationState, setDebtOperationState] = useState<{
-    type: "payment" | "prepayment" | "payoff" | "reversal";
+    type: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance" | "schedule_update";
     targetEventId?: string;
+    paymentWithExtraPrincipal?: boolean;
   } | null>(null);
   const [dataReady, setDataReady] = useState(!isSupabaseConfigured);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
@@ -342,6 +343,10 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   );
 
   const debtPlanningAlertSummary = useMemo(() => summarizeDebtPlanningAlerts(debtPlanningItems), [debtPlanningItems]);
+  const pendingBankScheduleDebtNames = useMemo(
+    () => debtIntelligenceItems.filter((item) => item.debtKind === "bank_loan" && item.pendingBankSchedule).map((item) => item.debtName),
+    [debtIntelligenceItems]
+  );
 
   const urgentPaymentSummary = useMemo(() => paymentAlertSummary(data.recurringPayments), [data.recurringPayments]);
   const urgentPaymentLabel = urgentPaymentSummary.total === 1 ? "1 pago requiere atención" : `${urgentPaymentSummary.total} pagos requieren atención`;
@@ -1458,11 +1463,13 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 creditCardProfiles={data.creditCardProfiles}
                 creditCardEntries={data.creditCardEntries}
                 cardStatements={data.creditCardStatements}
+                bankLoanProfiles={data.bankLoanProfiles}
+                debtInsuranceTerms={data.debtInsuranceTerms}
                 allDebts={data.debts}
                 canWriteDebt={canWriteDebt}
                 onClose={() => setSelectedDebtId(null)}
-                onOpenOperation={(opType, targetEvId) => {
-                  setDebtOperationState({ type: opType, targetEventId: targetEvId });
+                onOpenOperation={(opType, targetEvId, paymentWithExtraPrincipal) => {
+                  setDebtOperationState({ type: opType, targetEventId: targetEvId, paymentWithExtraPrincipal });
                   setView("operacion-deuda");
                 }}
                 onRefresh={async () => {
@@ -1486,6 +1493,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 cardStatements={data.creditCardStatements}
                 debtPlanningItems={debtPlanningItems}
                 debtPlanningAlertSummary={debtPlanningAlertSummary}
+                pendingBankScheduleDebtNames={pendingBankScheduleDebtNames}
                 debtPortfolioIntelligence={debtPortfolioIntelligence}
                 debtStrategies={debtStrategies}
                 intelligenceItems={debtIntelligenceItems}
@@ -1514,6 +1522,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               debt={selectedDebt}
               operationType={debtOperationState.type}
               targetEventId={debtOperationState.targetEventId}
+              paymentWithExtraPrincipal={debtOperationState.paymentWithExtraPrincipal}
               installments={data.debtInstallments}
               scheduleVersions={data.debtScheduleVersions}
               debtEvents={data.debtEvents}

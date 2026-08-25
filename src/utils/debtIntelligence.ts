@@ -9,6 +9,8 @@ import type {
   DebtKind,
   DebtScheduleVersion,
   DebtStatus,
+  DebtScheduleState,
+  ScheduleSource,
 } from "../types.js";
 import {
   currentDebtPrincipal,
@@ -21,6 +23,7 @@ import {
   currentCreditCardBalance,
   latestCreditCardStatement,
 } from "./creditCardCalculations.js";
+import { getDebtScheduleLifecycleState } from "./debtPlanning.js";
 import type { DebtInstallmentPlanningItem } from "./debtPlanning.js";
 import { dueDateStatus } from "./dueDates.js";
 import type { DueDateKind } from "./dueDates.js";
@@ -108,6 +111,10 @@ export interface DebtIntelligenceItem {
   currentScheduleId: string | null;
   currentScheduleInstallmentCount: number;
   currentScheduleLastDueDate: string | null;
+  scheduleSource?: ScheduleSource | null;
+  scheduleAuthoritative?: boolean;
+  scheduleState?: DebtScheduleState;
+  pendingBankSchedule?: boolean;
 
   remainingInstallmentCount: number;
   knownRemainingInstallmentCount: number;
@@ -335,10 +342,23 @@ export function buildDebtIntelligenceItems({
     const latestCardStatement = isCard ? latestCreditCardStatement(creditCardStatements, debt.id) : null;
 
     const currentSchedule = currentDebtScheduleVersion(debt.id, debtScheduleVersions);
-    const hasCurrentSchedule = isCard ? Boolean(latestCardStatement) : Boolean(currentSchedule);
-    const currentScheduleId = isCard ? (latestCardStatement ? latestCardStatement.id : null) : (currentSchedule ? currentSchedule.id : null);
+    const scheduleLifecycle = isCard
+      ? { state: "current" as DebtScheduleState, pendingBankSchedule: false, currentSchedule: null }
+      : debt.debtKind === "bank_loan"
+        ? getDebtScheduleLifecycleState(debt.id, debtEvents, debtScheduleVersions)
+        : {
+            state: currentSchedule ? ("current" as const) : ("missing" as const),
+            pendingBankSchedule: false,
+            currentSchedule,
+          };
+    const hasCurrentSchedule = isCard
+      ? Boolean(latestCardStatement)
+      : Boolean(currentSchedule) && !scheduleLifecycle.pendingBankSchedule;
+    const currentScheduleId = isCard
+      ? (latestCardStatement ? latestCardStatement.id : null)
+      : (hasCurrentSchedule && currentSchedule ? currentSchedule.id : null);
 
-    const scheduleInstallments = currentSchedule
+    const scheduleInstallments = currentSchedule && !scheduleLifecycle.pendingBankSchedule
       ? debtInstallments.filter((i) => i.scheduleVersionId === currentSchedule.id && i.debtId === debt.id)
       : [];
 
@@ -505,6 +525,10 @@ export function buildDebtIntelligenceItems({
       currentScheduleId,
       currentScheduleInstallmentCount,
       currentScheduleLastDueDate,
+      scheduleSource: isCard ? null : currentSchedule?.scheduleSource ?? null,
+      scheduleAuthoritative: isCard ? true : currentSchedule?.isAuthoritative ?? false,
+      scheduleState: isCard ? "current" : scheduleLifecycle.state,
+      pendingBankSchedule: isCard ? false : scheduleLifecycle.pendingBankSchedule,
 
       remainingInstallmentCount,
       knownRemainingInstallmentCount,

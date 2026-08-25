@@ -15,7 +15,7 @@ export function effectiveDebtEvents(events: DebtEvent[], debtId?: string): DebtE
   );
 }
 
-export const DEBT_FUND_EVENT_TYPES = new Set<string>(["payment", "principal_prepayment", "payoff"]);
+export const DEBT_FUND_EVENT_TYPES = new Set<string>(["payment", "principal_prepayment", "payoff", "installment_advance"]);
 
 export function effectiveDebtFundEvents(events: DebtEvent[], debtId?: string): DebtEvent[] {
   return effectiveDebtEvents(events, debtId).filter((event) => DEBT_FUND_EVENT_TYPES.has(event.eventType));
@@ -37,7 +37,7 @@ export function currentDebtScheduleVersion(debtId: string, versions: DebtSchedul
 export function effectiveInstallmentAllocations(allocations: DebtEventInstallmentAllocation[], events: DebtEvent[], debtId?: string): DebtEventInstallmentAllocation[] {
   const effectivePaymentsById = new Map(
     effectiveDebtEvents(events, debtId)
-      .filter((event) => event.eventType === "payment")
+      .filter((event) => event.eventType === "payment" || event.eventType === "installment_advance")
       .map((event) => [event.id, event])
   );
   return allocations.filter((allocation) => {

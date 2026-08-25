@@ -23,12 +23,14 @@ import { formatLocalDate, localMonthString } from "../utils/date.js";
 interface DebtPlanningPanelProps {
   debtPlanningItems: DebtInstallmentPlanningItem[];
   debtPlanningAlertSummary: DebtPlanningAlertSummary;
+  pendingBankScheduleDebtNames?: string[];
   onSelectDebtId: (debtId: string) => void;
 }
 
 export function DebtPlanningPanel({
   debtPlanningItems,
   debtPlanningAlertSummary,
+  pendingBankScheduleDebtNames = [],
   onSelectDebtId,
 }: DebtPlanningPanelProps) {
   const [selectedMonth, setSelectedMonth] = useState<string>(localMonthString());
@@ -80,6 +82,14 @@ export function DebtPlanningPanel({
           )}
         </div>
       </div>
+
+      {pendingBankScheduleDebtNames.length > 0 && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-black">Cronograma posterior pendiente</p>
+          <p className="mt-1">La Agenda no muestra cuotas nuevas ni proyecta un cronograma que el banco todavía no confirmó.</p>
+          <p className="mt-2 font-semibold">{pendingBankScheduleDebtNames.join(" · ")}</p>
+        </div>
+      )}
 
       {/* Header Nivel 2: Navegación de Mes */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

@@ -27,9 +27,12 @@ export function translateDebtError(error: unknown): string {
       DEBT_EVENT_ID_CONFLICT: "Conflicto con el identificador del registro.",
       DEBT_EVENT_NOT_FOUND: "El registro de deuda especificado no existe.",
       DEBT_EVENT_TYPE_UNSUPPORTED: "Tipo de registro de deuda no soportado.",
+      DEBT_NOT_BANK_LOAN: "Esta actualización solo está disponible para créditos bancarios.",
+      DEBT_SCHEDULE_NOT_FOUND: "No se encontró el cronograma generado por esta operación.",
       DEBT_EVENT_ALREADY_REVERSED: "Este registro ya ha sido revertido previamente.",
       DEBT_REVERSAL_SCHEDULE_REQUIRED: "La reversión de este registro requiere un nuevo cronograma de cuotas.",
       DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED: "La reversión no permite un nuevo cronograma.",
+      DEBT_REVERSAL_SCHEDULE_CONFLICT: "El cronograma restaurado debe coincidir con la versión anterior registrada.",
       DEBT_MOVEMENT_CONFLICT: "Conflicto con el movimiento financiero asociado.",
       DEBT_MOVEMENT_ALREADY_LINKED: "El movimiento financiero ya está vinculado a otra operación o deuda.",
       DEBT_MOVEMENT_NOT_FOUND: "El movimiento financiero no existe.",
@@ -110,6 +113,7 @@ export function formatEventType(eventType: string): string {
     refinance: "Refinanciación",
     payoff: "Liquidación total",
     reversal: "Reversión",
+    installment_advance: "Adelanto de cuotas",
   };
   return map[eventType] ?? eventType;
 }
@@ -155,6 +159,7 @@ export function debtEconomicSummary(
 export function validateDebtPayment(input: {
   cashAmount: number;
   principalAmount: number;
+  extraPrincipalAmount?: number;
   currentPrincipal: number;
   breakdownComplete: boolean;
   interestPaid?: number;
@@ -166,10 +171,13 @@ export function validateDebtPayment(input: {
   const fees = input.feesPaid ?? 0;
   const insurance = input.insurancePaid ?? 0;
   const otherCost = input.otherCostPaid ?? 0;
+  const extraPrincipal = input.extraPrincipalAmount ?? 0;
+  const totalPrincipal = input.principalAmount + extraPrincipal;
 
   if (
     !Number.isFinite(input.cashAmount) ||
     !Number.isFinite(input.principalAmount) ||
+    !Number.isFinite(extraPrincipal) ||
     !Number.isFinite(input.currentPrincipal) ||
     !Number.isFinite(interest) ||
     !Number.isFinite(fees) ||
@@ -184,17 +192,17 @@ export function validateDebtPayment(input: {
   if (input.cashAmount <= 0) {
     return { valid: false, error: "El monto de efectivo debe ser mayor a cero." };
   }
-  if (input.principalAmount < 0) {
+  if (input.principalAmount < 0 || extraPrincipal < 0) {
     return { valid: false, error: "El capital aplicado no puede ser negativo." };
   }
-  if (input.principalAmount > input.currentPrincipal + 0.01) {
+  if (totalPrincipal > input.currentPrincipal + 0.01) {
     return { valid: false, error: translateDebtError(new Error("DEBT_PRINCIPAL_EXCEEDED")) };
   }
-  if (input.principalAmount > input.cashAmount + 0.01) {
+  if (totalPrincipal > input.cashAmount + 0.01) {
     return { valid: false, error: "El capital aplicado no puede superar la salida de dinero." };
   }
   const knownCosts = interest + fees + insurance + otherCost;
-  const economicExpense = input.cashAmount - input.principalAmount;
+  const economicExpense = input.cashAmount - totalPrincipal;
   if (knownCosts > economicExpense + 0.01) {
     return { valid: false, error: "Los costos conocidos no pueden superar el costo financiero total." };
   }

@@ -10,9 +10,86 @@ export type DebtKind = "bank_loan" | "family_loan" | "installment_purchase" | "m
 export type DebtStatus = "active" | "paid_off" | "refinanced";
 export type DebtInstallmentAmountMode = "fixed" | "variable" | "unknown";
 export type DebtPaymentFrequency = "monthly" | "biweekly" | "weekly" | "custom";
-export type DebtEventType = "payment" | "principal_prepayment" | "principal_adjustment" | "refinance" | "payoff" | "reversal";
+export type DebtEventType = "payment" | "principal_prepayment" | "principal_adjustment" | "refinance" | "payoff" | "reversal" | "installment_advance";
 export type DebtScheduleReason = "initial" | "prepayment" | "rate_change" | "refinance" | "manual_adjustment" | "reversal";
 export type DebtCollateralStatus = "pledged" | "released" | "forfeited";
+
+export type BankLoanSubtype =
+  | "personal"
+  | "vehicular"
+  | "mortgage"
+  | "education"
+  | "payroll"
+  | "debt_consolidation"
+  | "business"
+  | "other";
+
+export type AmortizationMethod =
+  | "fixed_installment"
+  | "constant_principal"
+  | "increasing_installment"
+  | "decreasing_installment"
+  | "irregular_contract"
+  | "custom"
+  | "unknown";
+
+export type DebtInsuranceType = "credit_life" | "vehicle" | "property" | "other";
+
+export type DebtInsurancePricingMode =
+  | "fixed_amount"
+  | "percent_outstanding_balance"
+  | "percent_original_principal"
+  | "contract_schedule"
+  | "unknown";
+
+export type ScheduleSource = "contractual" | "estimated" | "manual";
+export type DebtScheduleState = "current" | "pending_bank_schedule" | "missing";
+
+export type PrepaymentEffect =
+  | "reduce_term"
+  | "reduce_installment"
+  | "pending_bank_schedule"
+  | "other"
+  | "unknown";
+
+export interface BankLoanProfile {
+  debtId: string;
+  householdId: string;
+  loanSubtype: BankLoanSubtype;
+  contractNumber: string | null;
+  amortizationMethod: AmortizationMethod;
+  disbursedAmount: number | null;
+  assetPrice: number | null;
+  downPaymentAmount: number | null;
+  financedAmount: number | null;
+  termInstallments: number | null;
+  gracePeriodType: "none" | "total" | "partial";
+  gracePeriodInstallments: number | null;
+  balloonPaymentAmount: number | null;
+  notes: string;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DebtInsuranceTerms {
+  id: string;
+  debtId: string;
+  householdId: string;
+  insuranceType: DebtInsuranceType;
+  label: string;
+  pricingMode: DebtInsurancePricingMode;
+  ratePercent: number | null;
+  fixedAmount: number | null;
+  rateBasis: string | null;
+  isRequired: boolean;
+  provider: string | null;
+  policyReference: string | null;
+  notes: string;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface HouseholdMember {
   householdId: string;
@@ -99,6 +176,8 @@ export interface DebtEvent {
   feesPaid: number;
   insurancePaid: number;
   otherCostPaid: number;
+  extraPrincipalAmount?: number;
+  prepaymentEffect?: PrepaymentEffect | null;
   breakdownComplete: boolean;
   movementId: string | null;
   reversalOfEventId: string | null;
@@ -113,6 +192,8 @@ export interface DebtScheduleVersion {
   versionNumber: number;
   effectiveDate: string;
   reason: DebtScheduleReason;
+  scheduleSource?: ScheduleSource;
+  isAuthoritative?: boolean;
   triggerEventId: string | null;
   notes: string;
   createdByUserId: string;
@@ -447,8 +528,13 @@ export interface DebtPaymentInput {
   feesPaid: number;
   insurancePaid: number;
   otherCostPaid: number;
+  extraPrincipalAmount?: number | null;
+  prepaymentEffect?: PrepaymentEffect | null;
   breakdownComplete: boolean;
   allocations: DebtAllocationInput[];
+  scheduleInstallments?: DebtScheduleInstallmentInput[];
+  scheduleNotes?: string | null;
+  scheduleSource?: Exclude<ScheduleSource, "manual"> | null;
 }
 
 export interface DebtPrepaymentInput {
@@ -465,9 +551,29 @@ export interface DebtPrepaymentInput {
   feesPaid: number;
   insurancePaid: number;
   otherCostPaid: number;
+  prepaymentEffect?: PrepaymentEffect | null;
   breakdownComplete: boolean;
   scheduleInstallments: DebtScheduleInstallmentInput[];
   scheduleNotes?: string | null;
+  scheduleSource?: ScheduleSource | null;
+}
+
+export interface DebtInstallmentAdvanceInput {
+  debtId: string;
+  eventId: string;
+  movementId: string;
+  eventDate: string;
+  cashAmount: number;
+  accountId: string;
+  description: string;
+  category: string;
+  principalAmount: number;
+  interestPaid: number;
+  feesPaid: number;
+  insurancePaid: number;
+  otherCostPaid: number;
+  breakdownComplete: boolean;
+  allocations: DebtAllocationInput[];
 }
 
 export interface DebtPayoffInput {
@@ -549,6 +655,8 @@ export interface AppData {
   initialBalance: number;
   financialAccounts: FinancialAccount[];
   debts: Debt[];
+  bankLoanProfiles?: BankLoanProfile[];
+  debtInsuranceTerms?: DebtInsuranceTerms[];
   debtEvents: DebtEvent[];
   debtScheduleVersions: DebtScheduleVersion[];
   debtInstallments: DebtInstallment[];
