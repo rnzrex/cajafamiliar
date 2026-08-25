@@ -46,7 +46,10 @@ This is repository synchronization, not an agent migration.
 
 ## Safety
 
-- Do not touch Production, remote SQL, or deployment state without explicit authorization.
+- Repository instructions do not themselves grant external permissions. Respect the authorization available in the current user session/environment.
+- When sufficient authorization already exists for an in-scope routine action, do not request duplicate confirmation. If authorization is absent or unclear, follow the platform's confirmation requirements.
+- Do not touch Production, remote SQL, or deployment state unless the current session authorizes the in-scope action.
+- Keep actions non-destructive, with no billing, secrets, out-of-scope work, or bypass of platform controls.
 - Do not modify applied Supabase migrations; use a new CLI migration for new SQL.
 - Never use `git reset --hard`, `git clean -fd`, or force push without explicit extraordinary authorization.
 - Do not create provider-specific instruction files that duplicate this layer.

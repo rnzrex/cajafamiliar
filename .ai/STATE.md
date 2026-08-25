@@ -2,23 +2,21 @@
 
 ## Objective
 
-BANK CREDIT CONTRACT V2 is functionally audited and prepared for the
-Production closing sequence. This handoff adds only shared cross-agent
-continuity documentation. It must not change financial behavior.
+BANK CREDIT CONTRACT V2 is functionally audited. The cross-agent continuity
+layer is installed. The project is prepared for the Production/merge gate.
 
 ## Active Work
 
-- Add and publish the continuity layer in a separate documentation-only commit.
-- After this handoff, the next agent must perform the brief orchestrator audit
-  before any Production or merge action.
+- No functional change is pending.
+- Next work: close BANK CREDIT CONTRACT V2 in Production.
 
 ## Repository
 
 - Expected branch: `feat/bank-credit-contract-v2`
 - PR: `#61` (DRAFT)
-- Validated code checkpoint: `b859522b0bba761a5e1950305422d487b4bb4575`
+- Validated financial code checkpoint: `b859522b0bba761a5e1950305422d487b4bb4575`
 - Remote base: `origin/main` = `82a3c8871a801324b32a5fc1c8d2c945ace8010a`
-- Worktree expectation: clean after the continuity commit.
+- Worktree expectation: clean after this state commit.
 - Code checkpoint commit: `b859522...` is the last validated financial code;
   continuity commit and push status must be read from Git.
 - The actual HEAD must always be obtained from Git; do not store a circular
@@ -36,27 +34,39 @@ continuity documentation. It must not change financial behavior.
 - `pending_bank_schedule` lifecycle and planning guards.
 - QAPAQ `open_ended` regression preservation with no synthetic persisted installments.
 - BANK CREDIT CONTRACT V2 functional audit and validation at the checkpoint above.
+- Cross-agent continuity layer:
+  - `AGENTS.md`
+  - `.ai/README.md`
+  - `.ai/STATE.md`
+  - `.ai/DECISIONS.md`
+  - `.ai/RUNBOOK.md`
+- Continuity commit `ae39d9697ef55e51a476bfe1465b4777b501f71a` published.
+- Orchestrator continuity audit completed.
 
 ## Active
 
-- No financial, SQL, Supabase, Production, or merge work is authorized in this
-  continuity session.
-- The files in this layer are the only intended changes.
+- No functional change is pending.
+- The next authorized work is the Production closing sequence for BANK V2.
 
 ## Blocked
 
-- Production migration is intentionally pending the orchestrator audit.
+- No functional blocker is known.
+- BANK V2 has not yet been applied in Production.
 - PR `#61` remains DRAFT.
 - The stale local `main` is not a blocker and must not be fixed with reset.
 
 ## Next Move
 
-1. Complete and push this continuity-only commit.
-2. Perform a brief orchestrator audit.
-3. Only after explicit approval, apply BANK V2 migrations to Production in
-   order, validate schema/RLS/advisors, and verify deployment.
-4. Merge PR `#61` only after the Production and Vercel checks are complete.
-5. Run the final smoke and regression checks.
+1. Verify Git, PR, and Production pre-state.
+2. Apply BANK V2 migrations to Production in order.
+3. Verify schema, RPCs, RLS, and advisors.
+4. Verify that no test or junk data was created.
+5. If everything is correct, merge PR `#61`.
+6. Wait for and verify Vercel Production.
+7. Run non-destructive Production smoke and regression checks.
+8. Update STATE with the final closing result.
+
+Documented only here; do not execute these steps in this state commit.
 
 ## Validation
 
@@ -73,7 +83,7 @@ continuity documentation. It must not change financial behavior.
 
 - touched: no
 - migration status: BANK V2 NOT APPLIED
-- deployment status: pending orchestrator audit and explicit Production approval
+- deployment status: pending the Production gate
 
 ## Safety / Do Not
 
@@ -94,11 +104,11 @@ continuity documentation. It must not change financial behavior.
 - `supabase/migrations/20260824225428_bank_credit_contract_v2.sql`
 - `supabase/migrations/20260825010000_bank_credit_contract_v2_audit_fix.sql`
 - `supabase/migrations/20260825071034_bank_credit_contract_v2_finalization.sql`
+- `supabase/migrations/20260825165854_bank_credit_contract_v2_schedule_state_guard.sql`
 
 ## Last Handoff
 
 - Agent: OpenCode
 - Date: 2026-08-25
-- Summary: prepared the shared continuity layer on validated code checkpoint
-  `b859522...`; Git determines the resulting documentation commit and remote
-  status.
+- Summary: finalized the semantic handoff after continuity commit `ae39d96...`;
+  the validated financial checkpoint remains `b859522...`.

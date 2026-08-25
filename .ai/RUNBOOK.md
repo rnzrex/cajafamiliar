@@ -56,7 +56,7 @@ the handoff state file.
 For frontend changes that depend on new tables or RPCs:
 
 1. Validate migrations locally.
-2. Apply compatible schema to Production only after explicit authorization.
+2. Apply compatible schema to Production when the current session/environment has sufficient authorization.
 3. Verify schema, RLS, and advisors.
 4. Merge the frontend change.
 5. Wait for deployment.
