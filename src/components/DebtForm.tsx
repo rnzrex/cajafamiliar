@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { ArrowLeft, Check, Plus, Trash2, Shield, CreditCard, Banknote, Building2, Home, PackageCheck, HelpCircle } from "lucide-react";
-import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis } from "../types";
+import { ArrowLeft, Check, Plus, Trash2, Shield, CreditCard, Banknote, Building2, Home, PackageCheck, HelpCircle, AlertCircle } from "lucide-react";
+import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource } from "../types";
 import {
   isCreditCardDebtKind,
   DEBT_KIND_OPTIONS,
@@ -9,11 +9,14 @@ import {
   buildDebtCreateInputPayload,
   validateDebtFinancialTerms,
 } from "../utils/debtFormMode";
-import { createDebt, createCreditCardDebt } from "../services/dataRepository";
+import { createDebt, createCreditCardDebt, createBankLoan } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError } from "../utils/debtViewModel";
 import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
+import { BANK_LOAN_SUBTYPE_OPTIONS, AMORTIZATION_METHOD_OPTIONS } from "../utils/bankCreditFormHelper";
+import { parseContractualScheduleText } from "../utils/debtScheduleParser";
+import { generateEstimatedDebtSchedule } from "../utils/debtEstimation";
 
 interface DebtFormProps {
   currentMember?: HouseholdMember;
@@ -53,7 +56,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
   const [plannedInstallmentCount, setPlannedInstallmentCount] = useState("");
   const [plannedInstallmentAmount, setPlannedInstallmentAmount] = useState("");
-  const [installmentAmountMode] = useState<DebtInstallmentAmountMode>("unknown");
+  const [installmentAmountMode, setInstallmentAmountMode] = useState<DebtInstallmentAmountMode>("fixed");
   const [paymentFrequency, setPaymentFrequency] = useState<DebtPaymentFrequency | null>(null);
   const [customFrequencyDays, setCustomFrequencyDays] = useState("");
   const [firstDueDate, setFirstDueDate] = useState("");
@@ -67,6 +70,31 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [monthlyDueDay, setMonthlyDueDay] = useState("");
   const [notes, setNotes] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Bank Loan V2 specific states
+  const [loanSubtype, setLoanSubtype] = useState<BankLoanSubtype>("personal");
+  const [contractNumber, setContractNumber] = useState("");
+  const [amortizationMethod, setAmortizationMethod] = useState<AmortizationMethod>("fixed_installment");
+  const [scheduleSource, setScheduleSource] = useState<ScheduleSource>("contractual");
+  const [assetPrice, setAssetPrice] = useState("");
+  const [downPaymentAmount, setDownPaymentAmount] = useState("");
+  const [financedAmount, setFinancedAmount] = useState("");
+  const [gracePeriodType, setGracePeriodType] = useState<"none" | "total" | "partial">("none");
+  const [gracePeriodInstallments, setGracePeriodInstallments] = useState("");
+  const [balloonPaymentAmount, setBalloonPaymentAmount] = useState("");
+  const [tsvScheduleText, setTsvScheduleText] = useState("");
+  const [scheduleParseError, setScheduleParseError] = useState<string | null>(null);
+  const [scheduleEstimationError, setScheduleEstimationError] = useState<string | null>(null);
+
+  const [insurances, setInsurances] = useState<Array<{
+    insuranceType: DebtInsuranceType;
+    label: string;
+    pricingMode: DebtInsurancePricingMode;
+    ratePercent: string;
+    fixedAmount: string;
+    provider: string;
+    policyReference: string;
+  }>>([]);
 
   // Credit card specific fields
   const [creditLimit, setCreditLimit] = useState("");
@@ -212,6 +240,65 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           notes,
         });
         setToast({ message: "Tarjeta de crédito registrada exitosamente.", type: "success" });
+      } else if (debtKind === "bank_loan") {
+        const payload = buildDebtCreateInputPayload({
+          debtId,
+          debtKind,
+          onboardingMode,
+          currencyCode,
+          name: name.trim() || `Crédito ${loanSubtype}`,
+          creditorName: creditorName.trim(),
+          openingPrincipalBalance: openingPrincipalBalance || financedAmount || originalPrincipal,
+          originalPrincipal: originalPrincipal || financedAmount || openingPrincipalBalance,
+          originDate,
+          trackingStartDate,
+          paymentFrequency,
+          customFrequencyDays,
+          firstDueDate,
+          plannedInstallmentCount,
+          plannedInstallmentAmount,
+          installmentAmountMode: scheduleSource === "contractual" ? installmentAmountMode : "fixed",
+          teaPercent,
+          tceaPercent,
+          notes,
+          pledgeItemDescription,
+          pledgeRedemptionDeadline,
+          pledgeEstimatedValue,
+          pledgePledgedValue,
+          installments,
+          extraCollaterals: collaterals,
+          repaymentStructure: scheduleSource === "contractual" ? "fixed_schedule" : (repaymentStructure || "fixed_schedule"),
+          interestCalculationMode: scheduleSource === "contractual" ? "contract_schedule" : (interestCalculationMode || "tea_estimate"),
+          periodicRatePercent,
+          periodicRateBasis,
+          minimumPrincipalPayment,
+        });
+
+        await createBankLoan({
+          ...payload,
+          loanSubtype,
+          contractNumber: contractNumber || null,
+          amortizationMethod,
+          disbursedAmount: originalPrincipal ? Number(originalPrincipal) : null,
+          assetPrice: assetPrice ? Number(assetPrice) : null,
+          downPaymentAmount: downPaymentAmount ? Number(downPaymentAmount) : null,
+          financedAmount: financedAmount ? Number(financedAmount) : null,
+          termInstallments: plannedInstallmentCount ? Number(plannedInstallmentCount) : null,
+          gracePeriodType,
+          gracePeriodInstallments: gracePeriodInstallments ? Number(gracePeriodInstallments) : null,
+          balloonPaymentAmount: balloonPaymentAmount ? Number(balloonPaymentAmount) : null,
+          insurances: insurances.map((ins) => ({
+            insuranceType: ins.insuranceType,
+            label: ins.label,
+            pricingMode: ins.pricingMode,
+            ratePercent: ins.ratePercent ? Number(ins.ratePercent) : null,
+            fixedAmount: ins.fixedAmount ? Number(ins.fixedAmount) : null,
+            provider: ins.provider || null,
+            policyReference: ins.policyReference || null,
+          })),
+          scheduleSource,
+        });
+        setToast({ message: "Crédito bancario registrado exitosamente.", type: "success" });
       } else {
         const payload = buildDebtCreateInputPayload({
           debtId,
@@ -588,8 +675,313 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
               </div>
             </div>
           ) : (
-            /* General Debt Form */
-            <div className="space-y-4">
+            /* General & Bank Loan Debt Form */
+            <div className="space-y-6">
+              {debtKind === "bank_loan" && (
+                <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-5 space-y-4">
+                  <h3 className="text-lg font-bold text-blue-950 flex items-center gap-2">
+                    <Building2 className="h-5 w-5 text-blue-600" /> Datos del Crédito Bancario / Financiero
+                  </h3>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-800 mb-1">Tipo de Crédito Bancario *</label>
+                      <select
+                        value={loanSubtype}
+                        onChange={(e) => setLoanSubtype(e.target.value as BankLoanSubtype)}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 font-medium focus:border-blue-600 focus:outline-none"
+                      >
+                        {BANK_LOAN_SUBTYPE_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-bold text-slate-800 mb-1">Modalidad de Amortización *</label>
+                      <select
+                        value={amortizationMethod}
+                        onChange={(e) => setAmortizationMethod(e.target.value as AmortizationMethod)}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 font-medium focus:border-blue-600 focus:outline-none"
+                      >
+                        {AMORTIZATION_METHOD_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Subtype-specific fields */}
+                  {loanSubtype === "vehicular" && (
+                    <div className="rounded-xl bg-white p-4 border border-blue-100 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700">Valor del Vehículo (Precio de Lista)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={assetPrice}
+                          onChange={(e) => setAssetPrice(e.target.value)}
+                          placeholder="Ej. 50000"
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700">Cuota Inicial Pagada</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={downPaymentAmount}
+                          onChange={(e) => setDownPaymentAmount(e.target.value)}
+                          placeholder="Ej. 10000"
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700">Monto Financiado Banco</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={financedAmount}
+                          onChange={(e) => {
+                            setFinancedAmount(e.target.value);
+                            setOpeningPrincipalBalance(e.target.value);
+                          }}
+                          placeholder="Ej. 40000"
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {loanSubtype === "mortgage" && (
+                    <div className="rounded-xl bg-white p-4 border border-blue-100 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700">Valor del Inmueble (Tasación)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={assetPrice}
+                          onChange={(e) => setAssetPrice(e.target.value)}
+                          placeholder="Ej. 300000"
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700">Cuota Inicial Contado</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={downPaymentAmount}
+                          onChange={(e) => setDownPaymentAmount(e.target.value)}
+                          placeholder="Ej. 60000"
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700">Monto Hipotecario Financiado</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={financedAmount}
+                          onChange={(e) => {
+                            setFinancedAmount(e.target.value);
+                            setOpeningPrincipalBalance(e.target.value);
+                          }}
+                          placeholder="Ej. 240000"
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {loanSubtype === "education" && (
+                    <div className="rounded-xl bg-white p-4 border border-blue-100 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700">Periodo de Gracia</label>
+                        <select
+                          value={gracePeriodType}
+                          onChange={(e) => setGracePeriodType(e.target.value as "none" | "total" | "partial")}
+                          className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white"
+                        >
+                          <option value="none">Sin periodo de gracia</option>
+                          <option value="partial">Gracia parcial (Solo interés/seguro)</option>
+                          <option value="total">Gracia total (Sin pago durante estudios)</option>
+                        </select>
+                      </div>
+                      {gracePeriodType !== "none" && (
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700">Meses de Gracia</label>
+                          <input
+                            type="number"
+                            value={gracePeriodInstallments}
+                            onChange={(e) => setGracePeriodInstallments(e.target.value)}
+                            placeholder="Ej. 12"
+                            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Schedule Source Selection */}
+                  <div className="space-y-3 pt-2">
+                    <label className="block text-sm font-bold text-slate-800">Fuente del Cronograma *</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setScheduleSource("contractual")}
+                        className={`p-3.5 rounded-xl border text-left transition ${
+                          scheduleSource === "contractual"
+                            ? "border-blue-600 bg-white ring-2 ring-blue-600/20 shadow-sm"
+                            : "border-slate-200 bg-white/70 hover:bg-white"
+                        }`}
+                      >
+                        <p className="font-bold text-sm text-slate-900 mb-0.5">A) Tengo el cronograma del banco</p>
+                        <p className="text-xs text-slate-500">Pega las filas tabuladas del cronograma oficial del banco.</p>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setScheduleSource("estimated")}
+                        className={`p-3.5 rounded-xl border text-left transition ${
+                          scheduleSource === "estimated"
+                            ? "border-blue-600 bg-white ring-2 ring-blue-600/20 shadow-sm"
+                            : "border-slate-200 bg-white/70 hover:bg-white"
+                        }`}
+                      >
+                        <p className="font-bold text-sm text-slate-900 mb-0.5">B) No tengo cronograma; estimar cuota</p>
+                        <p className="text-xs text-slate-500">Caja Familiar calculará las cuotas estimadas por Sistema Francés o Capital Constante.</p>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Option A: TSV Contractual Parser */}
+                  {scheduleSource === "contractual" && (
+                    <div className="rounded-xl bg-white p-4 border border-slate-200 space-y-3">
+                      <label className="block text-xs font-bold text-slate-800">
+                        Pegar filas del cronograma (Cuota, Fecha, Total, Capital, Interés, Seguro, Gastos)
+                      </label>
+                      <textarea
+                        rows={4}
+                        value={tsvScheduleText}
+                        onChange={(e) => setTsvScheduleText(e.target.value)}
+                        placeholder={`Ejemplo:\n1\t2026-09-15\t850.00\t500.00\t250.00\t80.00\t20.00\n2\t2026-10-15\t850.00\t510.00\t240.00\t80.00\t20.00`}
+                        className="w-full rounded-xl border border-slate-300 p-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                      />
+                      <div className="flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const res = parseContractualScheduleText(tsvScheduleText);
+                            if (!res.valid) {
+                              setScheduleParseError(res.errors.join("; "));
+                            } else {
+                              setScheduleParseError(null);
+                              setInstallments(
+                                res.rows.map((r) => ({
+                                  installmentNumber: r.installmentNumber,
+                                  dueDate: r.dueDate,
+                                  expectedAmount: r.expectedAmount.toString(),
+                                  expectedPrincipal: r.expectedPrincipal.toString(),
+                                  expectedInterest: r.expectedInterest.toString(),
+                                  expectedInsurance: r.expectedInsurance.toString(),
+                                  expectedFees: r.expectedFees.toString(),
+                                }))
+                              );
+                              setInstallmentAmountMode(res.installmentAmountMode);
+                              setPaymentFrequency(res.detectedFrequency);
+                              if (res.rows.length > 0) {
+                                setFirstDueDate(res.rows[0].dueDate);
+                                setPlannedInstallmentCount(res.rows.length.toString());
+                                setPlannedInstallmentAmount(res.rows[0].expectedAmount.toString());
+                              }
+                            }
+                          }}
+                          className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 shadow"
+                        >
+                          Interpretar Cronograma
+                        </button>
+                        {installments.length > 0 && (
+                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-lg border border-emerald-200">
+                            {installments.length} cuotas contractuales cargadas ({installmentAmountMode === "fixed" ? "Cuota fija" : "Cuota variable"})
+                          </span>
+                        )}
+                      </div>
+                      {scheduleParseError && (
+                        <div className="rounded-xl bg-red-50 p-3 text-xs font-bold text-red-800 border border-red-200">
+                          {scheduleParseError}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Option B: Estimated Schedule Generator */}
+                  {scheduleSource === "estimated" && (
+                    <div className="rounded-xl bg-white p-4 border border-slate-200 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            try {
+                              setScheduleEstimationError(null);
+                              const finAmt = Number(openingPrincipalBalance || financedAmount || 0);
+                              const teaNum = teaPercent ? Number(teaPercent) : 0;
+                              const termsNum = plannedInstallmentCount ? Number(plannedInstallmentCount) : 12;
+
+                              const est = generateEstimatedDebtSchedule({
+                                financedAmount: finAmt,
+                                teaPercent: teaNum,
+                                termInstallments: termsNum,
+                                paymentFrequency: paymentFrequency || "monthly",
+                                customFrequencyDays: customFrequencyDays ? Number(customFrequencyDays) : null,
+                                firstDueDate: firstDueDate || localDateString(new Date()),
+                                amortizationMethod,
+                                gracePeriodType,
+                                balloonPaymentAmount: balloonPaymentAmount ? Number(balloonPaymentAmount) : 0,
+                              });
+
+                              setInstallments(
+                                est.rows.map((r) => ({
+                                  installmentNumber: r.installmentNumber,
+                                  dueDate: r.dueDate,
+                                  expectedAmount: r.expectedAmount.toString(),
+                                  expectedPrincipal: r.expectedPrincipal.toString(),
+                                  expectedInterest: r.expectedInterest.toString(),
+                                  expectedInsurance: r.expectedInsurance.toString(),
+                                  expectedFees: r.expectedFees.toString(),
+                                }))
+                              );
+                              setInstallmentAmountMode("fixed");
+                              setPlannedInstallmentAmount(est.financialInstallmentAmount.toString());
+                            } catch (err: any) {
+                              setScheduleEstimationError(err.message || "Error al estimar cronograma");
+                            }
+                          }}
+                          className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 shadow"
+                        >
+                          Generar Cronograma Estimado (Caja Familiar)
+                        </button>
+                        {installments.length > 0 && (
+                          <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-3 py-1 rounded-lg border border-indigo-200">
+                            {installments.length} cuotas estimadas generadas (Sistema Francés/Constante)
+                          </span>
+                        )}
+                      </div>
+                      {scheduleEstimationError && (
+                        <div className="rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-900 border border-amber-200 flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-700 shrink-0" />
+                          <span>{scheduleEstimationError}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700">Nombre de la deuda *</label>
@@ -598,7 +990,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="Ej. Préstamo personal BCP"
+                    placeholder={debtKind === "bank_loan" ? `Ej. Crédito ${loanSubtype} BCP` : "Ej. Préstamo personal BCP"}
                     className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
                   />
                 </div>

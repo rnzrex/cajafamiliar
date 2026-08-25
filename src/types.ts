@@ -527,6 +527,8 @@ export interface DebtPaymentInput {
   feesPaid: number;
   insurancePaid: number;
   otherCostPaid: number;
+  extraPrincipalAmount?: number | null;
+  prepaymentEffect?: PrepaymentEffect | null;
   breakdownComplete: boolean;
   allocations: DebtAllocationInput[];
 }
@@ -629,6 +631,8 @@ export interface AppData {
   initialBalance: number;
   financialAccounts: FinancialAccount[];
   debts: Debt[];
+  bankLoanProfiles?: BankLoanProfile[];
+  debtInsuranceTerms?: DebtInsuranceTerms[];
   debtEvents: DebtEvent[];
   debtScheduleVersions: DebtScheduleVersion[];
   debtInstallments: DebtInstallment[];

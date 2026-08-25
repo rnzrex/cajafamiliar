@@ -1,7 +1,8 @@
--- DEBT-BANK-V2: Bank Credit Contract V2 SQL Migration
+-- DEBT-BANK-V2: Bank Credit Contract V2 SQL Migration (Audit Fix 1)
 -- Introduces public.bank_loan_profiles, public.debt_insurance_terms,
--- schedule_source in debt_schedule_versions, extra_principal_amount / prepayment_effect in debt_events,
--- installment_advance event_type, and SECURITY DEFINER RPCs for transactional operations.
+-- schedule_source & is_authoritative in debt_schedule_versions,
+-- extra_principal_amount & prepayment_effect in debt_events,
+-- installment_advance event_type, updated allocation SSOT, and SECURITY DEFINER RPCs.
 
 -- ============================================================
 -- 1. PUBLIC.BANK_LOAN_PROFILES
@@ -370,8 +371,106 @@ alter table public.debt_events
       )
     );
 
+
 -- ============================================================
--- 4. RPC: CREATE_BANK_LOAN_V1
+-- 4. UPDATE PRIVATE DEBT ALLOCATION SSOT
+-- ============================================================
+
+create or replace function private.debt2b2_insert_allocations(
+  p_event_id uuid,
+  p_debt_id uuid,
+  p_household_id uuid,
+  p_user_id uuid,
+  p_cash_amount numeric,
+  p_allocations jsonb
+)
+returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_elem pg_catalog.jsonb;
+  v_inst_id uuid;
+  v_alloc_amt numeric;
+  v_inst public.debt_installments%rowtype;
+  v_total_alloc numeric := 0;
+  v_current_sched public.debt_schedule_versions%rowtype;
+  v_allocated_before numeric;
+begin
+  select s.*
+    into v_current_sched
+    from public.debt_schedule_versions as s
+   where s.debt_id = p_debt_id
+     and s.household_id = p_household_id
+   order by s.version_number desc
+   limit 1;
+
+  for v_elem in
+    select e.value
+      from pg_catalog.jsonb_array_elements(p_allocations) as e
+  loop
+    v_inst_id := (v_elem->>'installment_id')::uuid;
+    v_alloc_amt := (v_elem->>'allocated_amount')::numeric;
+
+    if v_inst_id is null or v_alloc_amt is null or v_alloc_amt <= 0 then
+      raise exception 'INVALID_DEBT_ALLOCATION';
+    end if;
+
+    select i.*
+      into v_inst
+      from public.debt_installments as i
+     where i.id = v_inst_id
+       and i.debt_id = p_debt_id
+       and i.household_id = p_household_id;
+    if not found then
+      raise exception 'INVALID_DEBT_ALLOCATION';
+    end if;
+
+    if v_current_sched.id is null or v_inst.schedule_version_id <> v_current_sched.id then
+      raise exception 'INVALID_DEBT_ALLOCATION';
+    end if;
+
+    -- SSOT: sum allocations from active payments AND installment advances
+    select coalesce(pg_catalog.sum(a.allocated_amount), 0::numeric)
+      into v_allocated_before
+      from public.debt_event_installment_allocations as a
+      join public.debt_events as e on e.id = a.event_id
+     where a.installment_id = v_inst_id
+       and a.household_id = p_household_id
+       and e.event_type in ('payment', 'installment_advance')
+       and not exists (
+         select 1
+           from public.debt_events as r
+          where r.household_id = e.household_id
+            and r.debt_id = e.debt_id
+            and r.event_type = 'reversal'
+            and r.reversal_of_event_id = e.id
+       );
+
+    if v_inst.expected_amount is not null
+       and (v_allocated_before + v_alloc_amt) > v_inst.expected_amount then
+      raise exception 'INVALID_DEBT_ALLOCATION';
+    end if;
+
+    insert into public.debt_event_installment_allocations (
+      event_id, installment_id, debt_id, household_id, allocated_amount, created_by_user_id, created_at
+    ) values (
+      p_event_id, v_inst_id, p_debt_id, p_household_id, v_alloc_amt, p_user_id, now()
+    );
+
+    v_total_alloc := v_total_alloc + v_alloc_amt;
+  end loop;
+
+  if v_total_alloc > p_cash_amount then
+    raise exception 'INVALID_DEBT_ALLOCATION';
+  end if;
+end;
+$function$;
+
+
+-- ============================================================
+-- 5. RPC: CREATE_BANK_LOAN_V1 (ALIGNED SIGNATURE & NO PRIVATE.IF)
 -- ============================================================
 
 create or replace function public.create_bank_loan_v1(
@@ -394,6 +493,11 @@ create or replace function public.create_bank_loan_v1(
   p_tea_percent numeric,
   p_tcea_percent numeric,
   p_notes text,
+  p_repayment_structure text,
+  p_interest_calculation_mode text,
+  p_periodic_rate_percent numeric,
+  p_periodic_rate_basis text,
+  p_minimum_principal_payment numeric,
   p_profile jsonb,
   p_insurances jsonb,
   p_schedule_source text,
@@ -417,8 +521,8 @@ declare
   v_insurances_json pg_catalog.jsonb := '[]'::pg_catalog.jsonb;
   v_collaterals_json pg_catalog.jsonb := '[]'::pg_catalog.jsonb;
   v_elem pg_catalog.jsonb;
-  v_installment_count integer;
   v_schedule_source text;
+  v_is_authoritative boolean;
 begin
   if v_user_id is null then
     raise exception 'AUTH_REQUIRED';
@@ -446,25 +550,31 @@ begin
   if v_schedule_source not in ('contractual', 'estimated', 'manual') then
     v_schedule_source := 'manual';
   end if;
+  v_is_authoritative := (v_schedule_source = 'contractual');
 
-  -- Create main Debt row
+  -- Create Debt row
   insert into public.debts (
     id, household_id, name, creditor_name, debt_kind, currency_code,
     origin_date, tracking_start_date, original_principal, opening_principal_balance,
     planned_installment_count, planned_installment_amount, installment_amount_mode,
     payment_frequency, custom_frequency_days, first_due_date, tea_percent, tcea_percent,
-    notes, status, is_archived, created_by_user_id, created_at, updated_at
+    notes, status, is_archived, repayment_structure, interest_calculation_mode,
+    periodic_rate_percent, periodic_rate_basis, minimum_principal_payment,
+    created_by_user_id, created_at, updated_at
   ) values (
     p_debt_id, p_household_id, pg_catalog.btrim(p_name), pg_catalog.btrim(p_creditor_name),
     p_debt_kind, coalesce(p_currency_code, 'PEN'), p_origin_date, p_tracking_start_date,
     p_original_principal, p_opening_principal_balance, p_planned_installment_count,
     p_planned_installment_amount, coalesce(p_installment_amount_mode, 'unknown'),
     p_payment_frequency, p_custom_frequency_days, p_first_due_date, p_tea_percent,
-    p_tcea_percent, coalesce(p_notes, ''), 'active', false, v_user_id, now(), now()
+    p_tcea_percent, coalesce(p_notes, ''), 'active', false,
+    coalesce(p_repayment_structure, 'unknown'), coalesce(p_interest_calculation_mode, 'unknown'),
+    p_periodic_rate_percent, p_periodic_rate_basis, p_minimum_principal_payment,
+    v_user_id, now(), now()
   )
   returning * into v_debt;
 
-  -- Create BankLoanProfile row if profile JSON provided
+  -- Create BankLoanProfile row if profile provided
   if p_profile is not null and pg_catalog.jsonb_typeof(p_profile) = 'object' then
     insert into public.bank_loan_profiles (
       debt_id, household_id, loan_subtype, contract_number, amortization_method,
@@ -516,12 +626,12 @@ begin
     end loop;
   end if;
 
-  -- Create Schedule Version 1 and Installments if installments provided
+  -- Create Schedule Version 1 and Installments if provided
   if p_installments is not null and pg_catalog.jsonb_typeof(p_installments) = 'array' and pg_catalog.jsonb_array_length(p_installments) > 0 then
     insert into public.debt_schedule_versions (
       debt_id, household_id, version_number, effective_date, reason, schedule_source, is_authoritative, notes, created_by_user_id, created_at
     ) values (
-      p_debt_id, p_household_id, 1, p_tracking_start_date, 'initial', v_schedule_source, true, '', v_user_id, now()
+      p_debt_id, p_household_id, 1, p_tracking_start_date, 'initial', v_schedule_source, v_is_authoritative, '', v_user_id, now()
     )
     returning * into v_schedule;
 
@@ -568,8 +678,8 @@ begin
 
   return pg_catalog.jsonb_build_object(
     'debt', pg_catalog.to_jsonb(v_debt),
-    'profile', if(v_profile.debt_id is not null, pg_catalog.to_jsonb(v_profile), 'null'::pg_catalog.jsonb),
-    'scheduleVersion', if(v_schedule.id is not null, pg_catalog.to_jsonb(v_schedule), 'null'::pg_catalog.jsonb),
+    'profile', case when v_profile.debt_id is not null then pg_catalog.to_jsonb(v_profile) else 'null'::pg_catalog.jsonb end,
+    'scheduleVersion', case when v_schedule.id is not null then pg_catalog.to_jsonb(v_schedule) else 'null'::pg_catalog.jsonb end,
     'installments', v_installments_json,
     'insurances', v_insurances_json,
     'collaterals', v_collaterals_json
@@ -577,21 +687,12 @@ begin
 end;
 $function$;
 
--- Helper function for if expression inside PL/pgSQL
-create or replace function private.if(p_cond boolean, p_true pg_catalog.jsonb, p_false pg_catalog.jsonb)
-returns pg_catalog.jsonb
-language sql
-immutable
-as $sql$
-  select case when p_cond then p_true else p_false end;
-$sql$;
-
-revoke all privileges on function public.create_bank_loan_v1(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, jsonb, jsonb, text, jsonb, jsonb) from public, anon, authenticated;
-grant execute on function public.create_bank_loan_v1(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, jsonb, jsonb, text, jsonb, jsonb) to authenticated;
+revoke all privileges on function public.create_bank_loan_v1(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, text, text, numeric, text, numeric, jsonb, jsonb, text, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.create_bank_loan_v1(uuid, uuid, text, text, text, text, date, date, numeric, numeric, integer, numeric, text, text, integer, date, numeric, numeric, text, text, text, numeric, text, numeric, jsonb, jsonb, text, jsonb, jsonb) to authenticated;
 
 
 -- ============================================================
--- 5. RPC: RECORD_DEBT_INSTALLMENT_ADVANCE_V1
+-- 6. RPC: RECORD_DEBT_INSTALLMENT_ADVANCE_V1 (ROBUST ENGINE)
 -- ============================================================
 
 create or replace function public.record_debt_installment_advance_v1(
@@ -627,9 +728,8 @@ declare
   v_movement public.movements%rowtype;
   v_event public.debt_events%rowtype;
   v_existing_event public.debt_events%rowtype;
-  v_elem pg_catalog.jsonb;
-  v_inst_id uuid;
-  v_alloc_amt numeric;
+  v_current_principal numeric;
+  v_schedule public.debt_schedule_versions%rowtype;
 begin
   if v_user_id is null then
     raise exception 'AUTH_REQUIRED';
@@ -646,23 +746,49 @@ begin
   v_description := pg_catalog.btrim(p_description);
   v_category := pg_catalog.btrim(p_category);
 
+  if p_household_id is null or p_debt_id is null or p_event_id is null
+     or v_movement_id is null or v_movement_id = '' or p_event_date is null
+     or p_account_id is null or v_description is null or v_description = ''
+     or v_category is null or v_category = '' or p_cash_amount is null
+     or p_principal_amount is null or p_breakdown_complete is null
+     or p_allocations is null or pg_catalog.jsonb_typeof(p_allocations) <> 'array' then
+    raise exception 'INVALID_DEBT_PAYMENT';
+  end if;
+
   select d.* into v_debt from public.debts as d where d.id = p_debt_id and d.household_id = p_household_id for update;
   if not found then raise exception 'DEBT_NOT_FOUND'; end if;
+
+  if v_debt.is_archived then raise exception 'DEBT_ARCHIVED'; end if;
+  if v_debt.status <> 'active' then raise exception 'DEBT_NOT_ACTIVE'; end if;
+
+  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
+  if v_current_principal <= 0 then raise exception 'DEBT_ALREADY_PAID_OFF'; end if;
+  if p_principal_amount > v_current_principal then raise exception 'INVALID_DEBT_PAYMENT'; end if;
+
+  perform private.debt2b2_validate_costs(
+    p_cash_amount, p_principal_amount, p_interest_paid, p_fees_paid, p_insurance_paid, p_other_cost_paid, p_breakdown_complete, 'INVALID_DEBT_PAYMENT'
+  );
 
   perform private.debt2b2_lock_operation(v_movement_id, p_event_id);
 
   select e.* into v_existing_event from public.debt_events as e where e.id = p_event_id for update;
   if found then
+    if v_existing_event.household_id is distinct from p_household_id
+       or v_existing_event.debt_id is distinct from p_debt_id
+       or v_existing_event.event_type is distinct from 'installment_advance'
+       or v_existing_event.movement_id is distinct from v_movement_id
+       or v_existing_event.event_date is distinct from p_event_date
+       or v_existing_event.cash_amount is distinct from p_cash_amount
+       or v_existing_event.principal_delta is distinct from -p_principal_amount then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
     return private.debt2b2_fund_result(p_event_id, true);
   end if;
 
-  -- Create Movement outflow
-  insert into public.movements (
-    id, household_id, account_id, date, amount, type, description, method, category, person, registered_by_user_id, movement_context
-  ) values (
-    v_movement_id, p_household_id, p_account_id, p_event_date, p_cash_amount, 'egreso',
-    v_description, 'transferencia', v_category, v_person, v_user_id, 'debt_service'
-  ) returning * into v_movement;
+  -- Create Movement via helper
+  v_movement := private.debt2b2_prepare_movement(
+    p_household_id, v_movement_id, p_event_date, p_cash_amount, p_account_id, v_description, v_category, v_user_id, 'debt_service'
+  );
 
   -- Create Debt Event (installment_advance)
   insert into public.debt_events (
@@ -676,18 +802,20 @@ begin
     v_movement_id, null, v_description, v_user_id, now()
   ) returning * into v_event;
 
-  -- Create Allocations for advanced installments
-  if p_allocations is not null and pg_catalog.jsonb_typeof(p_allocations) = 'array' then
-    for v_elem in select value from pg_catalog.jsonb_array_elements(p_allocations) loop
-      v_inst_id := (v_elem->>'installment_id')::uuid;
-      v_alloc_amt := (v_elem->>'allocated_amount')::numeric;
-      insert into public.debt_event_installment_allocations (
-        event_id, installment_id, debt_id, household_id, allocated_amount, created_by_user_id, created_at
-      ) values (
-        p_event_id, v_inst_id, p_debt_id, p_household_id, v_alloc_amt, v_user_id, now()
-      );
-    end loop;
-  end if;
+  -- Insert Allocations via SSOT helper
+  select s.* into v_schedule
+    from public.debt_schedule_versions as s
+   where s.debt_id = p_debt_id and s.household_id = p_household_id
+   order by s.version_number desc limit 1 for update;
+  perform private.debt2b2_insert_allocations(
+    p_household_id, p_debt_id, p_event_id,
+    case when found then v_schedule.id else null end,
+    p_cash_amount, p_allocations, v_user_id
+  );
+
+  perform private.debt2b2_reconcile_status(
+    p_household_id, p_debt_id, v_current_principal - p_principal_amount
+  );
 
   return private.debt2b2_fund_result(p_event_id, false);
 end;
@@ -695,3 +823,223 @@ $function$;
 
 revoke all privileges on function public.record_debt_installment_advance_v1(uuid, uuid, uuid, text, date, numeric, uuid, text, text, numeric, numeric, numeric, numeric, numeric, boolean, jsonb) from public, anon, authenticated;
 grant execute on function public.record_debt_installment_advance_v1(uuid, uuid, uuid, text, date, numeric, uuid, text, text, numeric, numeric, numeric, numeric, numeric, boolean, jsonb) to authenticated;
+
+
+-- ============================================================
+-- 7. RPC: RECORD_DEBT_PAYMENT_V2 (PAYMENT + EXTRA PRINCIPAL)
+-- ============================================================
+
+create or replace function public.record_debt_payment_v2(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_event_id uuid,
+  p_movement_id text,
+  p_event_date date,
+  p_cash_amount numeric,
+  p_account_id uuid,
+  p_description text,
+  p_category text,
+  p_principal_amount numeric,
+  p_interest_paid numeric,
+  p_fees_paid numeric,
+  p_insurance_paid numeric,
+  p_other_cost_paid numeric,
+  p_extra_principal_amount numeric,
+  p_prepayment_effect text,
+  p_breakdown_complete boolean,
+  p_allocations jsonb
+)
+returns pg_catalog.jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_person text;
+  v_description text;
+  v_category text;
+  v_movement_id text;
+  v_debt public.debts%rowtype;
+  v_movement public.movements%rowtype;
+  v_event public.debt_events%rowtype;
+  v_existing_event public.debt_events%rowtype;
+  v_current_principal numeric;
+  v_extra_principal numeric := coalesce(p_extra_principal_amount, 0);
+  v_schedule public.debt_schedule_versions%rowtype;
+begin
+  if v_user_id is null then
+    raise exception 'AUTH_REQUIRED';
+  end if;
+
+  select hm.display_name into v_person
+    from public.household_members as hm
+   where hm.household_id = p_household_id and hm.user_id = v_user_id;
+  if not found or v_person is null or pg_catalog.btrim(v_person) = '' then
+    raise exception 'HOUSEHOLD_ACCESS_DENIED';
+  end if;
+
+  v_movement_id := pg_catalog.btrim(p_movement_id);
+  v_description := pg_catalog.btrim(p_description);
+  v_category := pg_catalog.btrim(p_category);
+
+  if p_household_id is null or p_debt_id is null or p_event_id is null
+     or v_movement_id is null or v_movement_id = '' or p_event_date is null
+     or p_account_id is null or v_description is null or v_description = ''
+     or v_category is null or v_category = '' or p_cash_amount is null
+     or p_principal_amount is null or p_breakdown_complete is null
+     or p_allocations is null or pg_catalog.jsonb_typeof(p_allocations) <> 'array' then
+    raise exception 'INVALID_DEBT_PAYMENT';
+  end if;
+
+  select d.* into v_debt from public.debts as d where d.id = p_debt_id and d.household_id = p_household_id for update;
+  if not found then raise exception 'DEBT_NOT_FOUND'; end if;
+
+  if v_debt.is_archived then raise exception 'DEBT_ARCHIVED'; end if;
+  if v_debt.status <> 'active' then raise exception 'DEBT_NOT_ACTIVE'; end if;
+
+  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
+  if v_current_principal <= 0 then raise exception 'DEBT_ALREADY_PAID_OFF'; end if;
+  if (p_principal_amount + v_extra_principal) > v_current_principal then raise exception 'INVALID_DEBT_PAYMENT'; end if;
+
+  perform private.debt2b2_validate_costs(
+    p_cash_amount, p_principal_amount + v_extra_principal, p_interest_paid, p_fees_paid, p_insurance_paid, p_other_cost_paid, p_breakdown_complete, 'INVALID_DEBT_PAYMENT'
+  );
+
+  perform private.debt2b2_lock_operation(v_movement_id, p_event_id);
+
+  select e.* into v_existing_event from public.debt_events as e where e.id = p_event_id for update;
+  if found then
+    return private.debt2b2_fund_result(p_event_id, true);
+  end if;
+
+  v_movement := private.debt2b2_prepare_movement(
+    p_household_id, v_movement_id, p_event_date, p_cash_amount, p_account_id, v_description, v_category, v_user_id, 'debt_service'
+  );
+
+  insert into public.debt_events (
+    id, debt_id, household_id, event_date, event_type, cash_amount, principal_delta,
+    interest_paid, fees_paid, insurance_paid, other_cost_paid, extra_principal_amount, prepayment_effect,
+    breakdown_complete, movement_id, reversal_of_event_id, description, registered_by_user_id, created_at
+  ) values (
+    p_event_id, p_debt_id, p_household_id, p_event_date, 'payment',
+    p_cash_amount, -(p_principal_amount + v_extra_principal), coalesce(p_interest_paid, 0), coalesce(p_fees_paid, 0),
+    coalesce(p_insurance_paid, 0), coalesce(p_other_cost_paid, 0), v_extra_principal, p_prepayment_effect,
+    p_breakdown_complete, v_movement_id, null, v_description, v_user_id, now()
+  ) returning * into v_event;
+
+  select s.* into v_schedule
+    from public.debt_schedule_versions as s
+   where s.debt_id = p_debt_id and s.household_id = p_household_id
+   order by s.version_number desc limit 1 for update;
+  perform private.debt2b2_insert_allocations(
+    p_household_id, p_debt_id, p_event_id,
+    case when found then v_schedule.id else null end,
+    p_cash_amount, p_allocations, v_user_id
+  );
+
+  perform private.debt2b2_reconcile_status(
+    p_household_id, p_debt_id, v_current_principal - (p_principal_amount + v_extra_principal)
+  );
+
+  return private.debt2b2_fund_result(p_event_id, false);
+end;
+$function$;
+
+revoke all privileges on function public.record_debt_payment_v2(uuid, uuid, uuid, text, date, numeric, uuid, text, text, numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, jsonb) from public, anon, authenticated;
+grant execute on function public.record_debt_payment_v2(uuid, uuid, uuid, text, date, numeric, uuid, text, text, numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, jsonb) to authenticated;
+
+
+-- ============================================================
+-- 8. UPDATE REVERSE_DEBT_EVENT_V1 TO SUPPORT INSTALLMENT_ADVANCE
+-- ============================================================
+
+create or replace function public.reverse_debt_event_v1(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_reversal_event_id uuid,
+  p_target_event_id uuid,
+  p_event_date date,
+  p_description text,
+  p_schedule_installments jsonb,
+  p_schedule_notes text
+)
+returns pg_catalog.jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_person text;
+  v_debt public.debts%rowtype;
+  v_target public.debt_events%rowtype;
+  v_existing_reversal public.debt_events%rowtype;
+  v_reversal_event public.debt_events%rowtype;
+  v_restored_schedule public.debt_schedule_versions%rowtype;
+  v_has_gen_schedule boolean;
+  v_installments_json pg_catalog.jsonb := '[]'::pg_catalog.jsonb;
+begin
+  if v_user_id is null then raise exception 'AUTH_REQUIRED'; end if;
+
+  select hm.display_name into v_person
+    from public.household_members as hm
+   where hm.household_id = p_household_id and hm.user_id = v_user_id;
+  if not found or v_person is null or pg_catalog.btrim(v_person) = '' then
+    raise exception 'HOUSEHOLD_ACCESS_DENIED';
+  end if;
+
+  if p_household_id is null or p_debt_id is null or p_reversal_event_id is null or p_target_event_id is null or p_event_date is null then
+    raise exception 'INVALID_REVERSAL_INPUT';
+  end if;
+
+  select d.* into v_debt from public.debts as d where d.id = p_debt_id and d.household_id = p_household_id for update;
+  if not found then raise exception 'DEBT_NOT_FOUND'; end if;
+  if v_debt.is_archived then raise exception 'DEBT_ARCHIVED'; end if;
+
+  select e.* into v_target from public.debt_events as e where e.id = p_target_event_id for update;
+  if not found or v_target.household_id <> p_household_id or v_target.debt_id <> p_debt_id then
+    raise exception 'REVERSAL_TARGET_NOT_FOUND';
+  end if;
+
+  if v_target.event_type not in ('payment', 'principal_prepayment', 'payoff', 'installment_advance') then
+    raise exception 'REVERSAL_TARGET_INVALID';
+  end if;
+
+  perform private.debt2b2_lock_operation(v_target.movement_id, p_reversal_event_id);
+
+  select e.* into v_existing_reversal from public.debt_events as e where e.id = p_reversal_event_id for update;
+  if found then
+    if v_existing_reversal.reversal_of_event_id is distinct from p_target_event_id then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+    return private.debt2b2_reversal_result(p_reversal_event_id, true);
+  end if;
+
+  if exists (
+    select 1 from public.debt_events as r
+     where r.household_id = p_household_id and r.debt_id = p_debt_id
+       and r.event_type = 'reversal' and r.reversal_of_event_id = p_target_event_id
+  ) then
+    raise exception 'TARGET_ALREADY_REVERSED';
+  end if;
+
+  insert into public.debt_events (
+    id, debt_id, household_id, event_date, event_type, cash_amount, principal_delta,
+    interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete,
+    movement_id, reversal_of_event_id, description, registered_by_user_id, created_at
+  ) values (
+    p_reversal_event_id, p_debt_id, p_household_id, p_event_date, 'reversal',
+    0, 0, 0, 0, 0, 0, false, null, p_target_event_id, coalesce(p_description, 'Reversión'), v_user_id, now()
+  ) returning * into v_reversal_event;
+
+  perform private.debt2b2_reconcile_status(
+    p_household_id, p_debt_id, private.debt2b2_current_principal(p_household_id, p_debt_id)
+  );
+
+  return private.debt2b2_reversal_result(p_reversal_event_id, false);
+end;
+$function$;
+
+revoke all privileges on function public.reverse_debt_event_v1(uuid, uuid, uuid, uuid, date, text, jsonb, text) from public, anon, authenticated;
+grant execute on function public.reverse_debt_event_v1(uuid, uuid, uuid, uuid, date, text, jsonb, text) to authenticated;

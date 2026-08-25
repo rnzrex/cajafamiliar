@@ -1458,6 +1458,8 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 creditCardProfiles={data.creditCardProfiles}
                 creditCardEntries={data.creditCardEntries}
                 cardStatements={data.creditCardStatements}
+                bankLoanProfiles={data.bankLoanProfiles}
+                debtInsuranceTerms={data.debtInsuranceTerms}
                 allDebts={data.debts}
                 canWriteDebt={canWriteDebt}
                 onClose={() => setSelectedDebtId(null)}

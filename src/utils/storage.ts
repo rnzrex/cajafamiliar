@@ -19,6 +19,8 @@ export interface AppDataSnapshotInput {
   initialBalance: number;
   financialAccounts?: FinancialAccount[];
   debts?: Debt[];
+  bankLoanProfiles?: any[];
+  debtInsuranceTerms?: any[];
   debtEvents?: DebtEvent[];
   debtScheduleVersions?: DebtScheduleVersion[];
   debtInstallments?: DebtInstallment[];
@@ -188,6 +190,8 @@ export const defaultData: AppData = {
   initialBalance: 100,
   financialAccounts: [],
   debts: [],
+  bankLoanProfiles: [],
+  debtInsuranceTerms: [],
   debtEvents: [],
   debtScheduleVersions: [],
   debtInstallments: [],

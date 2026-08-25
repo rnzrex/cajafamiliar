@@ -17,6 +17,8 @@ import type {
   DebtInterestCalculationMode,
   PeriodicRateBasis,
   DebtPaymentFrequency,
+  BankLoanProfile,
+  DebtInsuranceTerms,
 } from "../types";
 import type { DebtIntelligenceItem } from "../utils/debtIntelligence";
 import { currentDebtScheduleVersion, effectiveDebtEvents } from "../utils/debtCalculations";
@@ -51,6 +53,8 @@ interface DebtDetailModalProps {
   creditCardProfiles?: CreditCardProfile[];
   creditCardEntries?: CreditCardEntry[];
   cardStatements?: CreditCardStatement[];
+  bankLoanProfiles?: BankLoanProfile[];
+  debtInsuranceTerms?: DebtInsuranceTerms[];
   allDebts?: Debt[];
   canWriteDebt?: boolean;
   onClose: () => void;

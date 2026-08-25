@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination.js";
 import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors.js";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource } from "../types.js";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource, BankLoanProfile, DebtInsuranceTerms } from "../types.js";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage.js";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient.js";
 
@@ -53,6 +53,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       paymentsRows,
       accountsRows,
       debtsRows,
+      bankLoanProfilesRows,
+      debtInsuranceTermsRows,
       debtEventsRows,
       debtScheduleVersionsRows,
       debtInstallmentsRows,
@@ -116,6 +118,25 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       fetchAllSupabaseRows({
         supabase,
         table: "debts",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: true },
+          { column: "id", ascending: true },
+        ],
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "bank_loan_profiles",
+        householdId,
+        orders: [
+          { column: "created_at", ascending: true },
+          { column: "debt_id", ascending: true },
+        ],
+        pkField: "debt_id",
+      }),
+      fetchAllSupabaseRows({
+        supabase,
+        table: "debt_insurance_terms",
         householdId,
         orders: [
           { column: "created_at", ascending: true },
@@ -251,6 +272,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       recurringPayments: paymentsRows.map(fromRecurringPaymentRow),
       financialAccounts: accountsRows.map(fromFinancialAccountRow),
       debts: debtsRows.map(fromDebtRow),
+      bankLoanProfiles: (bankLoanProfilesRows ?? []).map(fromBankLoanProfileRow),
+      debtInsuranceTerms: (debtInsuranceTermsRows ?? []).map(fromDebtInsuranceTermsRow),
       debtEvents: debtEventsRows.map(fromDebtEventRow),
       debtScheduleVersions: debtScheduleVersionsRows.map(fromDebtScheduleVersionRow),
       debtInstallments: debtInstallmentsRows.map(fromDebtInstallmentRow),
@@ -735,10 +758,7 @@ export async function createBankLoan(input: BankLoanCreateInput): Promise<DebtCr
   };
 
   const { data, error } = await supabase.rpc("create_bank_loan_v1", rpcArgs);
-  if (error) {
-    // Fall back to create_debt_v2 if create_bank_loan_v1 RPC is not present remotely yet
-    return createDebt(input);
-  }
+  if (error) throw mapDebtOperationError(error.message) ?? error;
   if (!data || typeof data !== "object") throw new Error("La RPC create_bank_loan_v1 no devolvió un resultado válido.");
   const row = data as Record<string, any>;
   return {
@@ -835,6 +855,8 @@ export function toDebtPaymentRpcArgs(input: DebtPaymentInput) {
     p_fees_paid: input.feesPaid,
     p_insurance_paid: input.insurancePaid,
     p_other_cost_paid: input.otherCostPaid,
+    p_extra_principal_amount: input.extraPrincipalAmount ?? 0,
+    p_prepayment_effect: input.prepaymentEffect ?? null,
     p_breakdown_complete: input.breakdownComplete,
     p_allocations: input.allocations.map(toDebtAllocationRow),
   };
@@ -895,7 +917,7 @@ export function toDebtReversalRpcArgs(input: DebtReversalInput) {
 }
 
 export async function recordDebtPayment(input: DebtPaymentInput): Promise<DebtFundOperationResult> {
-  return callDebtOperation("record_debt_payment_v1", toDebtPaymentRpcArgs(input), fromDebtFundOperationResult);
+  return callDebtOperation("record_debt_payment_v2", toDebtPaymentRpcArgs(input), fromDebtFundOperationResult);
 }
 
 export async function recordDebtPrepayment(input: DebtPrepaymentInput): Promise<DebtFundOperationResult> {
@@ -1656,6 +1678,49 @@ function fromDebtCollateralRow(row: Record<string, any>): DebtCollateral {
     estimatedValue: row.estimated_value == null ? null : Number(row.estimated_value),
     redemptionDeadline: row.redemption_deadline ?? null,
     status: row.status,
+    notes: row.notes ?? "",
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function fromBankLoanProfileRow(row: Record<string, any>): BankLoanProfile {
+  return {
+    debtId: row.debt_id,
+    householdId: row.household_id,
+    loanSubtype: row.loan_subtype,
+    contractNumber: row.contract_number ?? null,
+    amortizationMethod: row.amortization_method,
+    disbursedAmount: row.disbursed_amount != null ? Number(row.disbursed_amount) : null,
+    assetPrice: row.asset_price != null ? Number(row.asset_price) : null,
+    downPaymentAmount: row.down_payment_amount != null ? Number(row.down_payment_amount) : null,
+    financedAmount: row.financed_amount != null ? Number(row.financed_amount) : null,
+    termInstallments: row.term_installments != null ? Number(row.term_installments) : null,
+    gracePeriodType: row.grace_period_type ?? "none",
+    gracePeriodInstallments: row.grace_period_installments != null ? Number(row.grace_period_installments) : null,
+    balloonPaymentAmount: row.balloon_payment_amount != null ? Number(row.balloon_payment_amount) : null,
+    notes: row.notes ?? "",
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function fromDebtInsuranceTermsRow(row: Record<string, any>): DebtInsuranceTerms {
+  return {
+    id: row.id,
+    debtId: row.debt_id,
+    householdId: row.household_id,
+    insuranceType: row.insurance_type,
+    label: row.label,
+    pricingMode: row.pricing_mode,
+    ratePercent: row.rate_percent != null ? Number(row.rate_percent) : null,
+    fixedAmount: row.fixed_amount != null ? Number(row.fixed_amount) : null,
+    rateBasis: row.rate_basis ?? null,
+    isRequired: Boolean(row.is_required),
+    provider: row.provider ?? null,
+    policyReference: row.policy_reference ?? null,
     notes: row.notes ?? "",
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
