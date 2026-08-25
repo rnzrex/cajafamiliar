@@ -36,6 +36,7 @@ import { buildDebtPaymentLedger } from "../utils/debtPaymentLedger";
 import { getCurrencySymbol, formatReviewDate, validateDebtFinancialTerms } from "../utils/debtFormMode";
 import { calculateNextPayment } from "../utils/debtNextPayment";
 import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
+import { getAmortizationMethodLabel, getBankLoanSubtypeLabel } from "../utils/bankCreditFormHelper";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 
@@ -60,7 +61,8 @@ interface DebtDetailModalProps {
   onClose: () => void;
   onOpenOperation: (
     operationType: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance",
-    targetEventId?: string
+    targetEventId?: string,
+    paymentWithExtraPrincipal?: boolean
   ) => void;
   onRefresh: () => Promise<void> | void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
@@ -80,6 +82,8 @@ export function DebtDetailModal({
   creditCardProfiles,
   creditCardEntries,
   cardStatements,
+  bankLoanProfiles,
+  debtInsuranceTerms,
   allDebts,
   canWriteDebt = true,
   onClose,
@@ -288,6 +292,8 @@ export function DebtDetailModal({
     (i) => currentSchedule && i.scheduleVersionId === currentSchedule.id
   );
   const debtCollaterals = collaterals.filter((c) => c.debtId === debt.id);
+  const bankProfile = bankLoanProfiles?.find((profile) => profile.debtId === debt.id) ?? null;
+  const bankInsurances = (debtInsuranceTerms || []).filter((insurance) => insurance.debtId === debt.id);
   const ledgerResult = buildDebtPaymentLedger(debt, allEventsForDebt);
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
@@ -470,6 +476,15 @@ export function DebtDetailModal({
                 >
                   <DollarSign className="h-4 w-4" /> {isFlexOpenEnded ? "Registrar pago" : "Registrar pago"}
                 </button>
+                {!isFlexOpenEnded && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenOperation("payment", undefined, true)}
+                    className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white shadow hover:bg-indigo-700"
+                  >
+                    <DollarSign className="h-4 w-4" /> Pagar cuota + abono al capital
+                  </button>
+                )}
                 {!isFlexOpenEnded && (
                   <>
                     <button
@@ -751,6 +766,41 @@ export function DebtDetailModal({
                     </button>
                   </div>
                 </div>
+              )}
+
+              {debt.debtKind === "bank_loan" && bankProfile && (
+                <section className="rounded-2xl border border-blue-200 bg-blue-50/40 p-5 space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-black uppercase tracking-wider text-blue-900">Perfil del crédito bancario</h3>
+                    {currentSchedule && (
+                      <div className="flex items-center gap-2 text-xs font-bold">
+                        <span className="rounded-full bg-white px-2.5 py-1 text-blue-800">{currentSchedule.scheduleSource === "contractual" ? "Contractual" : currentSchedule.scheduleSource === "estimated" ? "Estimado" : "Manual"}</span>
+                        <span className={`rounded-full px-2.5 py-1 ${currentSchedule.isAuthoritative ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{currentSchedule.isAuthoritative ? "Autoritativo" : "No autoritativo"}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
+                    <div><p className="text-xs text-slate-500">Subtipo</p><p className="font-bold">{getBankLoanSubtypeLabel(bankProfile.loanSubtype)}</p></div>
+                    <div><p className="text-xs text-slate-500">Banco</p><p className="font-bold">{debt.creditorName}</p></div>
+                    <div><p className="text-xs text-slate-500">Número contrato</p><p className="font-bold">{bankProfile.contractNumber || "—"}</p></div>
+                    <div><p className="text-xs text-slate-500">Modalidad</p><p className="font-bold">{getAmortizationMethodLabel(bankProfile.amortizationMethod)}</p></div>
+                    <div><p className="text-xs text-slate-500">Monto desembolsado</p><p className="font-bold">{bankProfile.disbursedAmount == null ? "—" : `${currencySymbol} ${bankProfile.disbursedAmount.toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Importe financiado</p><p className="font-bold">{bankProfile.financedAmount == null ? "—" : `${currencySymbol} ${bankProfile.financedAmount.toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Precio activo</p><p className="font-bold">{bankProfile.assetPrice == null ? "—" : `${currencySymbol} ${bankProfile.assetPrice.toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Cuota inicial</p><p className="font-bold">{bankProfile.downPaymentAmount == null ? "—" : `${currencySymbol} ${bankProfile.downPaymentAmount.toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Plazo</p><p className="font-bold">{bankProfile.termInstallments == null ? "—" : `${bankProfile.termInstallments} cuotas`}</p></div>
+                    <div><p className="text-xs text-slate-500">Gracia</p><p className="font-bold">{bankProfile.gracePeriodType}{bankProfile.gracePeriodInstallments == null ? "" : ` (${bankProfile.gracePeriodInstallments})`}</p></div>
+                    <div><p className="text-xs text-slate-500">Balloon</p><p className="font-bold">{bankProfile.balloonPaymentAmount == null ? "—" : `${currencySymbol} ${bankProfile.balloonPaymentAmount.toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">TEA</p><p className="font-bold">{debt.teaPercent == null ? "—" : `${debt.teaPercent}%`}</p></div>
+                    <div><p className="text-xs text-slate-500">TCEA</p><p className="font-bold">{debt.tceaPercent == null ? "—" : `${debt.tceaPercent}%`}</p></div>
+                    <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-bold">{debtInstallments.filter((installment) => !getInstallmentProgress(installment, allocations, debtEvents).isPaid).length}</p></div>
+                    <div><p className="text-xs text-slate-500">Total pendiente conocido</p><p className="font-bold">{currencySymbol} {debtInstallments.reduce((total, installment) => Math.max(0, total + (installment.expectedAmount ?? 0) - getInstallmentProgress(installment, allocations, debtEvents).allocated), 0).toFixed(2)}</p></div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold uppercase text-slate-500">Seguros</p>
+                    {bankInsurances.length === 0 ? <p className="text-sm text-slate-600">No definidos.</p> : <ul className="mt-1 space-y-1 text-sm text-slate-700">{bankInsurances.map((insurance) => <li key={insurance.id}>{insurance.label} · {insurance.pricingMode}{insurance.provider ? ` · ${insurance.provider}` : ""}{insurance.isRequired ? " · requerido" : " · opcional"}</li>)}</ul>}
+                  </div>
+                </section>
               )}
 
               {/* Prominent Próximo Pago Section */}
@@ -1040,6 +1090,12 @@ export function DebtDetailModal({
                     <h3 className="text-lg font-bold text-slate-900">
                       Cronograma vigente {currentSchedule ? `(Versión #${currentSchedule.versionNumber})` : ""}
                     </h3>
+                    {currentSchedule && (
+                      <div className="text-right text-xs font-bold text-slate-600">
+                        <p>Fuente: {currentSchedule.scheduleSource === "contractual" ? "Contractual" : currentSchedule.scheduleSource === "estimated" ? "Estimado" : "Manual"}</p>
+                        <p>{currentSchedule.isAuthoritative ? "Cronograma autoritativo" : "No autoritativo"}</p>
+                      </div>
+                    )}
                   </div>
                   {debtInstallments.length === 0 ? (
                     <p className="text-sm text-slate-500 italic">No hay cuotas registradas en el cronograma actual.</p>

@@ -1,9 +1,16 @@
+--
+-- PostgreSQL database dump
+--
 
+-- \restrict RIqzal62TNgVViQS1XGc1ZAXIxfEA0CSQtKrQdO6TnSUTdz83iePfzc6s8n4VlC
 
+-- Dumped from database version 17.6
+-- Dumped by pg_dump version 17.6
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+-- SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -12,55 +19,104 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
-
-CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA "extensions";
-
-
-
-
-
+--
+-- Name: private; Type: SCHEMA; Schema: -; Owner: postgres
+--
 
 CREATE SCHEMA IF NOT EXISTS "private";
 
 
 ALTER SCHEMA "private" OWNER TO "postgres";
 
+--
+-- Name: public; Type: SCHEMA; Schema: -; Owner: pg_database_owner
+--
+
+CREATE SCHEMA IF NOT EXISTS "public";
+
+
+ALTER SCHEMA "public" OWNER TO "pg_database_owner";
+
+--
+-- Name: SCHEMA "public"; Type: COMMENT; Schema: -; Owner: pg_database_owner
+--
 
 COMMENT ON SCHEMA "public" IS 'standard public schema';
 
 
+--
+-- Name: debt2b2_canonical_allocations("jsonb"); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
-CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
+CREATE OR REPLACE FUNCTION "private"."debt2b2_canonical_allocations"("p_allocations" "jsonb") RETURNS "jsonb"
+    LANGUAGE "sql" IMMUTABLE
+    SET "search_path" TO ''
+    AS $$
+  select coalesce(
+    pg_catalog.jsonb_agg(
+      pg_catalog.jsonb_build_object(
+        'installment_id', x.installment_id::text,
+        'allocated_amount', x.allocated_amount
+      ) order by x.installment_id::text
+    ),
+    '[]'::jsonb
+  )
+    from (
+      select
+        (value->>'installment_id')::uuid as installment_id,
+        (value->>'allocated_amount')::numeric as allocated_amount
+        from pg_catalog.jsonb_array_elements(p_allocations) as item(value)
+    ) as x;
+$$;
 
 
+ALTER FUNCTION "private"."debt2b2_canonical_allocations"("p_allocations" "jsonb") OWNER TO "postgres";
+
+--
+-- Name: debt2b2_canonical_schedule("jsonb"); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."debt2b2_canonical_schedule"("p_schedule_installments" "jsonb") RETURNS "jsonb"
+    LANGUAGE "sql" IMMUTABLE
+    SET "search_path" TO ''
+    AS $$
+  select coalesce(
+    pg_catalog.jsonb_agg(
+      pg_catalog.jsonb_build_object(
+        'installment_number', x.installment_number,
+        'due_date', x.due_date,
+        'expected_amount', x.expected_amount,
+        'expected_principal', x.expected_principal,
+        'expected_interest', x.expected_interest,
+        'expected_fees', x.expected_fees,
+        'expected_insurance', x.expected_insurance
+      ) order by x.installment_number
+    ),
+    '[]'::jsonb
+  )
+    from (
+      select
+        (value->>'installment_number')::integer as installment_number,
+        (value->>'due_date')::date::text as due_date,
+        case when value ? 'expected_amount' and value->'expected_amount' <> 'null'::jsonb then (value->>'expected_amount')::numeric else null end as expected_amount,
+        case when value ? 'expected_principal' and value->'expected_principal' <> 'null'::jsonb then (value->>'expected_principal')::numeric else null end as expected_principal,
+        case when value ? 'expected_interest' and value->'expected_interest' <> 'null'::jsonb then (value->>'expected_interest')::numeric else null end as expected_interest,
+        case when value ? 'expected_fees' and value->'expected_fees' <> 'null'::jsonb then (value->>'expected_fees')::numeric else null end as expected_fees,
+        case when value ? 'expected_insurance' and value->'expected_insurance' <> 'null'::jsonb then (value->>'expected_insurance')::numeric else null end as expected_insurance
+        from pg_catalog.jsonb_array_elements(p_schedule_installments) as item(value)
+    ) as x;
+$$;
 
 
-
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
-
-
-
-
-
-
-CREATE EXTENSION IF NOT EXISTS "supabase_vault" WITH SCHEMA "vault";
-
-
-
-
-
-
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
-
-
-
-
+ALTER FUNCTION "private"."debt2b2_canonical_schedule"("p_schedule_installments" "jsonb") OWNER TO "postgres";
 
 SET default_tablespace = '';
 
 SET default_table_access_method = "heap";
 
+--
+-- Name: debt_schedule_versions; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."debt_schedule_versions" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -83,12 +139,58 @@ CREATE TABLE IF NOT EXISTS "public"."debt_schedule_versions" (
 
 ALTER TABLE "public"."debt_schedule_versions" OWNER TO "postgres";
 
+--
+-- Name: TABLE "debt_schedule_versions"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON TABLE "public"."debt_schedule_versions" IS 'Cronogramas versionados (append-only): nunca se sobrescriben. La versión vigente es la de mayor version_number. Si un evento que originó un cambio de cronograma es revertido, DEBT-2 debe crear en la misma operación una NUEVA versión superior que represente el cronograma restaurado/corregido. Nunca se reactiva ni modifica una versión antigua: MAX(version_number) sigue siendo la SSOT. Sin implementar todavía.';
 
 
+--
+-- Name: debt2b2_create_schedule("uuid", "uuid", "uuid", "date", "text", "text", "jsonb", "uuid"); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "private"."debt2b2_create_schedule"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid") RETURNS "public"."debt_schedule_versions"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_source text := 'manual';
+  v_authoritative boolean := true;
+  v_schedule public.debt_schedule_versions%rowtype;
+begin
+  select s.schedule_source, s.is_authoritative
+    into v_source, v_authoritative
+    from public.debt_schedule_versions as s
+   where s.debt_id = p_debt_id
+     and s.household_id = p_household_id
+   order by s.version_number desc
+   limit 1;
+
+  v_schedule := private.debt2b2_create_schedule_v2(
+    p_household_id,
+    p_debt_id,
+    p_trigger_event_id,
+    p_event_date,
+    p_reason,
+    p_notes,
+    p_schedule_installments,
+    p_user_id,
+    coalesce(v_source, 'manual'),
+    coalesce(v_authoritative, true)
+  );
+  return v_schedule;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."debt2b2_create_schedule"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid") OWNER TO "postgres";
+
+--
+-- Name: debt2b2_create_schedule_v2("uuid", "uuid", "uuid", "date", "text", "text", "jsonb", "uuid", "text", boolean); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."debt2b2_create_schedule_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid", "p_schedule_source" "text", "p_is_authoritative" boolean) RETURNS "public"."debt_schedule_versions"
     LANGUAGE "plpgsql"
     SET "search_path" TO ''
     AS $_$
@@ -103,11 +205,22 @@ declare
   v_expected_interest numeric;
   v_expected_fees numeric;
   v_expected_insurance numeric;
+  v_source text := coalesce(p_schedule_source, 'manual');
+  v_authoritative boolean := coalesce(p_is_authoritative, false);
 begin
   if p_schedule_installments is null
      or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array'
      or pg_catalog.jsonb_array_length(p_schedule_installments) = 0
-     or p_reason not in ('prepayment', 'reversal') then
+     or p_reason not in ('prepayment', 'reversal')
+     or p_event_date is null
+     or v_source not in ('contractual', 'estimated', 'manual') then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
+
+  if v_source = 'contractual' and not v_authoritative then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
+  if v_source = 'estimated' and v_authoritative then
     raise exception 'INVALID_DEBT_SCHEDULE';
   end if;
 
@@ -149,8 +262,7 @@ begin
     end;
 
     v_expected_amount := null;
-    if v_elem ? 'expected_amount'
-       and v_elem->'expected_amount' <> 'null'::pg_catalog.jsonb then
+    if v_elem ? 'expected_amount' and v_elem->'expected_amount' <> 'null'::pg_catalog.jsonb then
       if pg_catalog.jsonb_typeof(v_elem->'expected_amount') <> 'number' then
         raise exception 'INVALID_DEBT_SCHEDULE';
       end if;
@@ -166,8 +278,7 @@ begin
     end if;
 
     v_expected_principal := null;
-    if v_elem ? 'expected_principal'
-       and v_elem->'expected_principal' <> 'null'::pg_catalog.jsonb then
+    if v_elem ? 'expected_principal' and v_elem->'expected_principal' <> 'null'::pg_catalog.jsonb then
       if pg_catalog.jsonb_typeof(v_elem->'expected_principal') <> 'number' then
         raise exception 'INVALID_DEBT_SCHEDULE';
       end if;
@@ -183,8 +294,7 @@ begin
     end if;
 
     v_expected_interest := null;
-    if v_elem ? 'expected_interest'
-       and v_elem->'expected_interest' <> 'null'::pg_catalog.jsonb then
+    if v_elem ? 'expected_interest' and v_elem->'expected_interest' <> 'null'::pg_catalog.jsonb then
       if pg_catalog.jsonb_typeof(v_elem->'expected_interest') <> 'number' then
         raise exception 'INVALID_DEBT_SCHEDULE';
       end if;
@@ -200,8 +310,7 @@ begin
     end if;
 
     v_expected_fees := null;
-    if v_elem ? 'expected_fees'
-       and v_elem->'expected_fees' <> 'null'::pg_catalog.jsonb then
+    if v_elem ? 'expected_fees' and v_elem->'expected_fees' <> 'null'::pg_catalog.jsonb then
       if pg_catalog.jsonb_typeof(v_elem->'expected_fees') <> 'number' then
         raise exception 'INVALID_DEBT_SCHEDULE';
       end if;
@@ -217,8 +326,7 @@ begin
     end if;
 
     v_expected_insurance := null;
-    if v_elem ? 'expected_insurance'
-       and v_elem->'expected_insurance' <> 'null'::pg_catalog.jsonb then
+    if v_elem ? 'expected_insurance' and v_elem->'expected_insurance' <> 'null'::pg_catalog.jsonb then
       if pg_catalog.jsonb_typeof(v_elem->'expected_insurance') <> 'number' then
         raise exception 'INVALID_DEBT_SCHEDULE';
       end if;
@@ -235,10 +343,9 @@ begin
 
     if v_expected_amount is not null
        and coalesce(v_expected_principal, 0::numeric)
-           + coalesce(v_expected_interest, 0::numeric)
-           + coalesce(v_expected_fees, 0::numeric)
-           + coalesce(v_expected_insurance, 0::numeric)
-           > v_expected_amount then
+         + coalesce(v_expected_interest, 0::numeric)
+         + coalesce(v_expected_fees, 0::numeric)
+         + coalesce(v_expected_insurance, 0::numeric) > v_expected_amount then
       raise exception 'INVALID_DEBT_SCHEDULE';
     end if;
   end loop;
@@ -255,13 +362,8 @@ begin
   end if;
 
   insert into public.debt_schedule_versions (
-    debt_id,
-    household_id,
-    version_number,
-    effective_date,
-    reason,
-    trigger_event_id,
-    notes,
+    debt_id, household_id, version_number, effective_date, reason,
+    schedule_source, is_authoritative, trigger_event_id, notes,
     created_by_user_id
   )
   select
@@ -270,6 +372,8 @@ begin
     coalesce(pg_catalog.max(s.version_number), 0) + 1,
     p_event_date,
     p_reason,
+    v_source,
+    v_authoritative,
     p_trigger_event_id,
     coalesce(p_notes, ''),
     p_user_id
@@ -291,29 +395,13 @@ begin
     v_expected_insurance := case when v_elem ? 'expected_insurance' and v_elem->'expected_insurance' <> 'null'::pg_catalog.jsonb then (v_elem->>'expected_insurance')::numeric else null end;
 
     insert into public.debt_installments (
-      schedule_version_id,
-      debt_id,
-      household_id,
-      installment_number,
-      due_date,
-      expected_amount,
-      expected_principal,
-      expected_interest,
-      expected_fees,
-      expected_insurance,
-      created_by_user_id
+      schedule_version_id, debt_id, household_id, installment_number, due_date,
+      expected_amount, expected_principal, expected_interest, expected_fees,
+      expected_insurance, created_by_user_id
     ) values (
-      v_schedule.id,
-      p_debt_id,
-      p_household_id,
-      v_installment_number,
-      v_due_date,
-      v_expected_amount,
-      v_expected_principal,
-      v_expected_interest,
-      v_expected_fees,
-      v_expected_insurance,
-      p_user_id
+      v_schedule.id, p_debt_id, p_household_id, v_installment_number, v_due_date,
+      v_expected_amount, v_expected_principal, v_expected_interest, v_expected_fees,
+      v_expected_insurance, p_user_id
     );
   end loop;
 
@@ -322,8 +410,11 @@ end;
 $_$;
 
 
-ALTER FUNCTION "private"."debt2b2_create_schedule"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid") OWNER TO "postgres";
+ALTER FUNCTION "private"."debt2b2_create_schedule_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid", "p_schedule_source" "text", "p_is_authoritative" boolean) OWNER TO "postgres";
 
+--
+-- Name: debt2b2_current_principal("uuid", "uuid"); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "private"."debt2b2_current_principal"("p_household_id" "uuid", "p_debt_id" "uuid") RETURNS numeric
     LANGUAGE "sql"
@@ -356,6 +447,35 @@ $$;
 
 ALTER FUNCTION "private"."debt2b2_current_principal"("p_household_id" "uuid", "p_debt_id" "uuid") OWNER TO "postgres";
 
+--
+-- Name: debt2b2_event_allocations("uuid", "uuid", "uuid"); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."debt2b2_event_allocations"("p_event_id" "uuid", "p_debt_id" "uuid", "p_household_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "sql"
+    SET "search_path" TO ''
+    AS $$
+  select coalesce(
+    pg_catalog.jsonb_agg(
+      pg_catalog.jsonb_build_object(
+        'installment_id', a.installment_id::text,
+        'allocated_amount', a.allocated_amount
+      ) order by a.installment_id::text
+    ),
+    '[]'::jsonb
+  )
+    from public.debt_event_installment_allocations as a
+   where a.event_id = p_event_id
+     and a.debt_id = p_debt_id
+     and a.household_id = p_household_id;
+$$;
+
+
+ALTER FUNCTION "private"."debt2b2_event_allocations"("p_event_id" "uuid", "p_debt_id" "uuid", "p_household_id" "uuid") OWNER TO "postgres";
+
+--
+-- Name: debt2b2_fund_result("uuid", boolean); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "private"."debt2b2_fund_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) RETURNS "jsonb"
     LANGUAGE "plpgsql"
@@ -424,93 +544,9 @@ $$;
 
 ALTER FUNCTION "private"."debt2b2_fund_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) OWNER TO "postgres";
 
-
-CREATE OR REPLACE FUNCTION "private"."debt2b2_insert_allocations"("p_event_id" "uuid", "p_debt_id" "uuid", "p_household_id" "uuid", "p_user_id" "uuid", "p_cash_amount" numeric, "p_allocations" "jsonb") RETURNS "void"
-    LANGUAGE "plpgsql"
-    SET "search_path" TO ''
-    AS $$
-declare
-  v_elem pg_catalog.jsonb;
-  v_inst_id uuid;
-  v_alloc_amt numeric;
-  v_inst public.debt_installments%rowtype;
-  v_total_alloc numeric := 0;
-  v_current_sched public.debt_schedule_versions%rowtype;
-  v_allocated_before numeric;
-begin
-  select s.*
-    into v_current_sched
-    from public.debt_schedule_versions as s
-   where s.debt_id = p_debt_id
-     and s.household_id = p_household_id
-   order by s.version_number desc
-   limit 1;
-
-  for v_elem in
-    select e.value
-      from pg_catalog.jsonb_array_elements(p_allocations) as e
-  loop
-    v_inst_id := (v_elem->>'installment_id')::uuid;
-    v_alloc_amt := (v_elem->>'allocated_amount')::numeric;
-
-    if v_inst_id is null or v_alloc_amt is null or v_alloc_amt <= 0 then
-      raise exception 'INVALID_DEBT_ALLOCATION';
-    end if;
-
-    select i.*
-      into v_inst
-      from public.debt_installments as i
-     where i.id = v_inst_id
-       and i.debt_id = p_debt_id
-       and i.household_id = p_household_id;
-    if not found then
-      raise exception 'INVALID_DEBT_ALLOCATION';
-    end if;
-
-    if v_current_sched.id is null or v_inst.schedule_version_id <> v_current_sched.id then
-      raise exception 'INVALID_DEBT_ALLOCATION';
-    end if;
-
-    -- SSOT: sum allocations from active payments AND installment advances
-    select coalesce(pg_catalog.sum(a.allocated_amount), 0::numeric)
-      into v_allocated_before
-      from public.debt_event_installment_allocations as a
-      join public.debt_events as e on e.id = a.event_id
-     where a.installment_id = v_inst_id
-       and a.household_id = p_household_id
-       and e.event_type in ('payment', 'installment_advance')
-       and not exists (
-         select 1
-           from public.debt_events as r
-          where r.household_id = e.household_id
-            and r.debt_id = e.debt_id
-            and r.event_type = 'reversal'
-            and r.reversal_of_event_id = e.id
-       );
-
-    if v_inst.expected_amount is not null
-       and (v_allocated_before + v_alloc_amt) > v_inst.expected_amount then
-      raise exception 'INVALID_DEBT_ALLOCATION';
-    end if;
-
-    insert into public.debt_event_installment_allocations (
-      event_id, installment_id, debt_id, household_id, allocated_amount, created_by_user_id, created_at
-    ) values (
-      p_event_id, v_inst_id, p_debt_id, p_household_id, v_alloc_amt, p_user_id, now()
-    );
-
-    v_total_alloc := v_total_alloc + v_alloc_amt;
-  end loop;
-
-  if v_total_alloc > p_cash_amount then
-    raise exception 'INVALID_DEBT_ALLOCATION';
-  end if;
-end;
-$$;
-
-
-ALTER FUNCTION "private"."debt2b2_insert_allocations"("p_event_id" "uuid", "p_debt_id" "uuid", "p_household_id" "uuid", "p_user_id" "uuid", "p_cash_amount" numeric, "p_allocations" "jsonb") OWNER TO "postgres";
-
+--
+-- Name: debt2b2_insert_allocations("uuid", "uuid", "uuid", "uuid", numeric, "jsonb", "uuid"); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "private"."debt2b2_insert_allocations"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_schedule_version_id" "uuid", "p_cash_amount" numeric, "p_allocations" "jsonb", "p_user_id" "uuid") RETURNS "void"
     LANGUAGE "plpgsql"
@@ -525,12 +561,17 @@ declare
   v_total numeric := 0;
   v_seen_installments uuid[] := '{}'::uuid[];
 begin
-  if p_allocations is null or pg_catalog.jsonb_typeof(p_allocations) <> 'array' then
+  if p_allocations is null
+     or pg_catalog.jsonb_typeof(p_allocations) <> 'array'
+     or p_cash_amount is null
+     or p_cash_amount <= 0 then
     raise exception 'INVALID_DEBT_ALLOCATIONS';
   end if;
+
   if pg_catalog.jsonb_array_length(p_allocations) = 0 then
     return;
   end if;
+
   if p_schedule_version_id is null then
     raise exception 'INVALID_DEBT_ALLOCATIONS';
   end if;
@@ -585,7 +626,7 @@ begin
      where a.installment_id = v_installment_id
        and a.debt_id = p_debt_id
        and a.household_id = p_household_id
-       and e.event_type = 'payment'
+       and e.event_type in ('payment', 'installment_advance')
        and not exists (
          select 1
            from public.debt_events as r
@@ -626,6 +667,9 @@ $$;
 
 ALTER FUNCTION "private"."debt2b2_insert_allocations"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_schedule_version_id" "uuid", "p_cash_amount" numeric, "p_allocations" "jsonb", "p_user_id" "uuid") OWNER TO "postgres";
 
+--
+-- Name: debt2b2_lock_operation("text", "uuid"); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "private"."debt2b2_lock_operation"("p_movement_id" "text", "p_event_id" "uuid") RETURNS "void"
     LANGUAGE "plpgsql"
@@ -656,6 +700,38 @@ $$;
 
 ALTER FUNCTION "private"."debt2b2_lock_operation"("p_movement_id" "text", "p_event_id" "uuid") OWNER TO "postgres";
 
+--
+-- Name: debt2b2_persisted_schedule("uuid"); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."debt2b2_persisted_schedule"("p_schedule_version_id" "uuid") RETURNS "jsonb"
+    LANGUAGE "sql"
+    SET "search_path" TO ''
+    AS $$
+  select coalesce(
+    pg_catalog.jsonb_agg(
+      pg_catalog.jsonb_build_object(
+        'installment_number', i.installment_number,
+        'due_date', i.due_date::text,
+        'expected_amount', i.expected_amount,
+        'expected_principal', i.expected_principal,
+        'expected_interest', i.expected_interest,
+        'expected_fees', i.expected_fees,
+        'expected_insurance', i.expected_insurance
+      ) order by i.installment_number
+    ),
+    '[]'::jsonb
+  )
+    from public.debt_installments as i
+   where i.schedule_version_id = p_schedule_version_id;
+$$;
+
+
+ALTER FUNCTION "private"."debt2b2_persisted_schedule"("p_schedule_version_id" "uuid") OWNER TO "postgres";
+
+--
+-- Name: movements; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."movements" (
     "id" "text" NOT NULL,
@@ -681,10 +757,16 @@ CREATE TABLE IF NOT EXISTS "public"."movements" (
 
 ALTER TABLE "public"."movements" OWNER TO "postgres";
 
+--
+-- Name: COLUMN "movements"."movement_context"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON COLUMN "public"."movements"."movement_context" IS 'Clasifica el contexto financiero del movimiento: standard es un movimiento normal; debt_service queda reservado para futuras RPC Debt SECURITY DEFINER. Es inmutable y no cambia la semantica de cash-flow del movimiento.';
 
 
+--
+-- Name: debt2b2_prepare_movement("uuid", "text", "date", numeric, "uuid", "text", "text", "uuid", "text"); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "private"."debt2b2_prepare_movement"("p_household_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_user_id" "uuid", "p_person" "text") RETURNS "public"."movements"
     LANGUAGE "plpgsql"
@@ -695,6 +777,10 @@ declare
   v_account_type text;
   v_expected_method text;
 begin
+  if p_person is null or pg_catalog.btrim(p_person) = '' then
+    raise exception 'HOUSEHOLD_ACCESS_DENIED';
+  end if;
+
   select m.*
     into v_movement
     from public.movements as m
@@ -711,13 +797,11 @@ begin
       from public.financial_accounts as fa
      where fa.id = v_movement.account_id
        and fa.household_id = p_household_id;
-
     if not found then
       raise exception 'DEBT_MOVEMENT_CONFLICT';
     end if;
 
     v_expected_method := case when v_account_type = 'cash' then 'efectivo' else 'transferencia' end;
-
     if v_movement.type is distinct from 'egreso'
        or v_movement.movement_context is distinct from 'debt_service'
        or v_movement.date is distinct from p_event_date
@@ -725,10 +809,10 @@ begin
        or v_movement.account_id is distinct from p_account_id
        or v_movement.description is distinct from p_description
        or v_movement.category is distinct from p_category
+       or v_movement.person is distinct from p_person
        or v_movement.method is distinct from v_expected_method then
       raise exception 'DEBT_MOVEMENT_CONFLICT';
     end if;
-
     return v_movement;
   end if;
 
@@ -742,39 +826,18 @@ begin
    where fa.id = p_account_id
      and fa.household_id = p_household_id
      and fa.is_active = true;
-
   if not found then
     raise exception 'ACCOUNT_NOT_AVAILABLE';
   end if;
 
   v_expected_method := case when v_account_type = 'cash' then 'efectivo' else 'transferencia' end;
-
   insert into public.movements (
-    id,
-    household_id,
-    type,
-    date,
-    amount,
-    description,
-    method,
-    category,
-    person,
-    registered_by_user_id,
-    account_id,
-    movement_context
+    id, household_id, type, date, amount, description, method, category,
+    person, registered_by_user_id, account_id, movement_context
   ) values (
-    p_movement_id,
-    p_household_id,
-    'egreso',
-    p_event_date,
-    p_cash_amount,
-    p_description,
-    v_expected_method,
-    p_category,
-    p_person,
-    p_user_id,
-    p_account_id,
-    'debt_service'
+    p_movement_id, p_household_id, 'egreso', p_event_date, p_cash_amount,
+    p_description, v_expected_method, p_category, p_person, p_user_id,
+    p_account_id, 'debt_service'
   )
   returning * into v_movement;
 
@@ -785,6 +848,9 @@ $$;
 
 ALTER FUNCTION "private"."debt2b2_prepare_movement"("p_household_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_user_id" "uuid", "p_person" "text") OWNER TO "postgres";
 
+--
+-- Name: debts; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."debts" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -843,18 +909,30 @@ CREATE TABLE IF NOT EXISTS "public"."debts" (
 
 ALTER TABLE "public"."debts" OWNER TO "postgres";
 
+--
+-- Name: COLUMN "debts"."debt_kind"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON COLUMN "public"."debts"."debt_kind" IS 'credit_card está reservado para DEBT-5 y no implica funcionalidad de tarjetas en esta migración.';
 
 
+--
+-- Name: COLUMN "debts"."tracking_start_date"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON COLUMN "public"."debts"."tracking_start_date" IS 'Inicio del seguimiento. Forma parte del baseline financiero bloqueado por protect_debt_financial_baseline.';
 
 
+--
+-- Name: COLUMN "debts"."opening_principal_balance"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON COLUMN "public"."debts"."opening_principal_balance" IS 'Saldo de principal al comenzar el seguimiento (baseline). No es un saldo mutable: queda bloqueado al existir el primer event.';
 
 
+--
+-- Name: debt2b2_reconcile_status("uuid", "uuid", numeric); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "private"."debt2b2_reconcile_status"("p_household_id" "uuid", "p_debt_id" "uuid", "p_current_principal" numeric) RETURNS "public"."debts"
     LANGUAGE "plpgsql"
@@ -879,6 +957,9 @@ $$;
 
 ALTER FUNCTION "private"."debt2b2_reconcile_status"("p_household_id" "uuid", "p_debt_id" "uuid", "p_current_principal" numeric) OWNER TO "postgres";
 
+--
+-- Name: debt2b2_reversal_result("uuid", boolean); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "private"."debt2b2_reversal_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) RETURNS "jsonb"
     LANGUAGE "plpgsql"
@@ -931,6 +1012,175 @@ $$;
 
 ALTER FUNCTION "private"."debt2b2_reversal_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) OWNER TO "postgres";
 
+--
+-- Name: debt2b2_validate_advance_allocations("uuid", "uuid", "uuid", "date", numeric, numeric, numeric, numeric, numeric, numeric, "jsonb"); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."debt2b2_validate_advance_allocations"("p_household_id" "uuid", "p_debt_id" "uuid", "p_schedule_version_id" "uuid", "p_event_date" "date", "p_cash_amount" numeric, "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_allocations" "jsonb") RETURNS "void"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_elem jsonb;
+  v_installment_id uuid;
+  v_amount numeric;
+  v_seen uuid[] := '{}'::uuid[];
+  v_count integer;
+  v_distinct_count integer;
+  v_first_number integer;
+  v_last_number integer;
+  v_earliest_unpaid integer;
+  v_cash numeric;
+  v_principal numeric;
+  v_interest numeric;
+  v_fees numeric;
+  v_insurance numeric;
+  v_expected_amount numeric;
+begin
+  if p_schedule_version_id is null
+     or p_allocations is null
+     or pg_catalog.jsonb_typeof(p_allocations) <> 'array'
+     or pg_catalog.jsonb_array_length(p_allocations) = 0 then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  for v_elem in
+    select e.value
+      from pg_catalog.jsonb_array_elements(p_allocations) as e
+  loop
+    if pg_catalog.jsonb_typeof(v_elem) <> 'object'
+       or not (v_elem ? 'installment_id')
+       or not (v_elem ? 'allocated_amount')
+       or pg_catalog.jsonb_typeof(v_elem->'allocated_amount') <> 'number' then
+      raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end if;
+    begin
+      v_installment_id := (v_elem->>'installment_id')::uuid;
+      v_amount := (v_elem->>'allocated_amount')::numeric;
+    exception
+      when invalid_text_representation or numeric_value_out_of_range then
+        raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end;
+    if v_amount <= 0 or v_installment_id = any(v_seen) then
+      raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end if;
+    v_seen := pg_catalog.array_append(v_seen, v_installment_id);
+  end loop;
+
+  select
+    pg_catalog.count(*),
+    pg_catalog.count(distinct i.id),
+    coalesce(pg_catalog.sum(i.expected_amount), 0::numeric),
+    coalesce(pg_catalog.sum(i.expected_principal), 0::numeric),
+    coalesce(pg_catalog.sum(i.expected_interest), 0::numeric),
+    coalesce(pg_catalog.sum(i.expected_fees), 0::numeric),
+    coalesce(pg_catalog.sum(i.expected_insurance), 0::numeric),
+    min(i.installment_number),
+    max(i.installment_number)
+    into v_count, v_distinct_count, v_expected_amount, v_principal,
+         v_interest, v_fees, v_insurance, v_first_number, v_last_number
+    from pg_catalog.jsonb_array_elements(p_allocations) as e
+    join public.debt_installments as i
+      on i.id = (e.value->>'installment_id')::uuid
+     and i.debt_id = p_debt_id
+     and i.household_id = p_household_id
+     and i.schedule_version_id = p_schedule_version_id
+     and i.due_date > p_event_date;
+
+  if v_count <> pg_catalog.jsonb_array_length(p_allocations)
+     or v_distinct_count <> v_count
+     or v_first_number is null
+     or v_last_number - v_first_number + 1 <> v_count then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  select coalesce(min(i.installment_number), null)
+    into v_earliest_unpaid
+    from public.debt_installments as i
+   where i.debt_id = p_debt_id
+     and i.household_id = p_household_id
+     and i.schedule_version_id = p_schedule_version_id
+     and i.due_date > p_event_date
+     and i.expected_amount is not null
+     and i.expected_amount > coalesce((
+       select pg_catalog.sum(a.allocated_amount)
+         from public.debt_event_installment_allocations as a
+         join public.debt_events as e2
+           on e2.id = a.event_id
+          and e2.debt_id = a.debt_id
+          and e2.household_id = a.household_id
+        where a.installment_id = i.id
+          and a.debt_id = p_debt_id
+          and a.household_id = p_household_id
+          and e2.event_type in ('payment', 'installment_advance')
+          and not exists (
+            select 1
+              from public.debt_events as r
+             where r.debt_id = e2.debt_id
+               and r.household_id = e2.household_id
+               and r.event_type = 'reversal'
+               and r.reversal_of_event_id = e2.id
+          )
+     ), 0::numeric);
+
+  if v_earliest_unpaid is null or v_first_number <> v_earliest_unpaid then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  if exists (
+    select 1
+      from pg_catalog.jsonb_array_elements(p_allocations) as e
+      join public.debt_installments as i
+        on i.id = (e.value->>'installment_id')::uuid
+       and i.debt_id = p_debt_id
+       and i.household_id = p_household_id
+       and i.schedule_version_id = p_schedule_version_id
+      where coalesce((
+        select pg_catalog.sum(a.allocated_amount)
+          from public.debt_event_installment_allocations as a
+          join public.debt_events as e2
+            on e2.id = a.event_id
+           and e2.debt_id = a.debt_id
+           and e2.household_id = a.household_id
+         where a.installment_id = i.id
+           and a.debt_id = p_debt_id
+           and a.household_id = p_household_id
+           and e2.event_type in ('payment', 'installment_advance')
+           and not exists (
+             select 1
+               from public.debt_events as r
+              where r.debt_id = e2.debt_id
+                and r.household_id = e2.household_id
+                and r.event_type = 'reversal'
+                and r.reversal_of_event_id = e2.id
+           )
+      ), 0::numeric) <> 0
+  ) then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  select coalesce(pg_catalog.sum((e.value->>'allocated_amount')::numeric), 0::numeric)
+    into v_cash
+    from pg_catalog.jsonb_array_elements(p_allocations) as e;
+
+  if v_cash <> p_cash_amount
+     or v_principal <> p_principal_amount
+     or v_interest <> p_interest_paid
+     or v_fees <> p_fees_paid
+     or v_insurance <> p_insurance_paid
+     or p_other_cost_paid <> 0
+     or v_expected_amount <> p_cash_amount then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."debt2b2_validate_advance_allocations"("p_household_id" "uuid", "p_debt_id" "uuid", "p_schedule_version_id" "uuid", "p_event_date" "date", "p_cash_amount" numeric, "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_allocations" "jsonb") OWNER TO "postgres";
+
+--
+-- Name: debt2b2_validate_costs(numeric, numeric, numeric, numeric, numeric, numeric, boolean, "text"); Type: FUNCTION; Schema: private; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "private"."debt2b2_validate_costs"("p_cash_amount" numeric, "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_error_code" "text") RETURNS numeric
     LANGUAGE "plpgsql"
@@ -976,6 +1226,123 @@ $$;
 
 ALTER FUNCTION "private"."debt2b2_validate_costs"("p_cash_amount" numeric, "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_error_code" "text") OWNER TO "postgres";
 
+--
+-- Name: require_bank_loan_profile(); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."require_bank_loan_profile"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+begin
+  if tg_op = 'INSERT'
+     and new.debt_kind = 'bank_loan'
+     and not exists (
+       select 1
+         from public.bank_loan_profiles as p
+        where p.debt_id = new.id
+          and p.household_id = new.household_id
+     ) then
+    raise exception 'BANK_PROFILE_REQUIRED';
+  end if;
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."require_bank_loan_profile"() OWNER TO "postgres";
+
+--
+-- Name: require_bank_loan_schedule(); Type: FUNCTION; Schema: private; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "private"."require_bank_loan_schedule"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_schedule_id uuid;
+  v_schedule_source text;
+  v_schedule_count integer;
+  v_first_installment integer;
+  v_last_installment integer;
+  v_distinct_installments integer;
+  v_planned_installment_count integer;
+  v_complete_rows boolean;
+  v_chronological_rows boolean;
+begin
+  select pg_catalog.count(*)
+    into v_schedule_count
+    from public.debt_schedule_versions as s
+   where s.debt_id = new.debt_id
+     and s.household_id = new.household_id;
+
+  select s.id, s.schedule_source
+    into v_schedule_id, v_schedule_source
+    from public.debt_schedule_versions as s
+   where s.debt_id = new.debt_id
+     and s.household_id = new.household_id
+   order by s.version_number desc
+   limit 1;
+
+  select d.planned_installment_count
+    into v_planned_installment_count
+    from public.debts as d
+   where d.id = new.debt_id
+     and d.household_id = new.household_id;
+
+  select
+    min(i.installment_number),
+    max(i.installment_number),
+    pg_catalog.count(distinct i.installment_number),
+    coalesce(pg_catalog.bool_and(
+      i.expected_amount is not null
+      and i.expected_principal is not null
+      and i.expected_interest is not null
+      and i.expected_fees is not null
+      and i.expected_insurance is not null
+    ), false)
+    into v_first_installment, v_last_installment, v_distinct_installments, v_complete_rows
+    from public.debt_installments as i
+   where i.schedule_version_id = v_schedule_id
+     and i.debt_id = new.debt_id
+     and i.household_id = new.household_id;
+
+  select not exists (
+    select 1
+      from (
+        select i.due_date,
+               pg_catalog.lag(i.due_date) over (order by i.installment_number) as previous_due_date
+          from public.debt_installments as i
+         where i.schedule_version_id = v_schedule_id
+           and i.debt_id = new.debt_id
+           and i.household_id = new.household_id
+      ) as ordered_rows
+     where ordered_rows.previous_due_date is not null
+       and ordered_rows.due_date <= ordered_rows.previous_due_date
+  ) into v_chronological_rows;
+
+  if v_schedule_count = 0
+     or v_schedule_source not in ('contractual', 'estimated')
+     or v_planned_installment_count is null
+     or v_planned_installment_count <> v_distinct_installments
+     or v_first_installment is null
+     or v_first_installment <> 1
+     or v_last_installment <> v_distinct_installments
+     or not v_complete_rows
+     or not v_chronological_rows then
+    raise exception 'BANK_SCHEDULE_REQUIRED';
+  end if;
+  return new;
+end;
+$$;
+
+
+ALTER FUNCTION "private"."require_bank_loan_schedule"() OWNER TO "postgres";
+
+--
+-- Name: cash_counts_legacy_account_sync(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."cash_counts_legacy_account_sync"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -1003,6 +1370,9 @@ $$;
 
 ALTER FUNCTION "public"."cash_counts_legacy_account_sync"() OWNER TO "postgres";
 
+--
+-- Name: close_credit_card_statement_v1("uuid", "uuid", "uuid", "date", "date", numeric); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."close_credit_card_statement_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_statement_id" "uuid", "p_statement_date" "date", "p_due_date" "date", "p_minimum_payment_amount" numeric DEFAULT NULL::numeric) RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -1156,6 +1526,9 @@ $$;
 
 ALTER FUNCTION "public"."close_credit_card_statement_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_statement_id" "uuid", "p_statement_date" "date", "p_due_date" "date", "p_minimum_payment_amount" numeric) OWNER TO "postgres";
 
+--
+-- Name: complete_recurring_payment("text", boolean, "text", "date", numeric, "text", "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."complete_recurring_payment"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql"
@@ -1338,6 +1711,9 @@ $$;
 
 ALTER FUNCTION "public"."complete_recurring_payment"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text") OWNER TO "postgres";
 
+--
+-- Name: complete_recurring_payment_v2("text", boolean, "text", "date", numeric, "text", "text", "text", "uuid"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."complete_recurring_payment_v2"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text", "p_account_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql"
@@ -1554,6 +1930,9 @@ $$;
 
 ALTER FUNCTION "public"."complete_recurring_payment_v2"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text", "p_account_id" "uuid") OWNER TO "postgres";
 
+--
+-- Name: correct_reconciled_movement_v1("uuid", "text", "uuid", timestamp with time zone, "text", numeric, "text", "text", "text", "text", "uuid", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."correct_reconciled_movement_v1"("p_household_id" "uuid", "p_movement_id" "text", "p_correction_id" "uuid", "p_expected_updated_at" timestamp with time zone DEFAULT NULL::timestamp with time zone, "p_date" "text" DEFAULT NULL::"text", "p_amount" numeric DEFAULT NULL::numeric, "p_description" "text" DEFAULT NULL::"text", "p_method" "text" DEFAULT NULL::"text", "p_category" "text" DEFAULT NULL::"text", "p_person" "text" DEFAULT NULL::"text", "p_account_id" "uuid" DEFAULT NULL::"uuid", "p_reason" "text" DEFAULT NULL::"text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -1771,6 +2150,9 @@ $$;
 
 ALTER FUNCTION "public"."correct_reconciled_movement_v1"("p_household_id" "uuid", "p_movement_id" "text", "p_correction_id" "uuid", "p_expected_updated_at" timestamp with time zone, "p_date" "text", "p_amount" numeric, "p_description" "text", "p_method" "text", "p_category" "text", "p_person" "text", "p_account_id" "uuid", "p_reason" "text") OWNER TO "postgres";
 
+--
+-- Name: create_bank_loan_v1("uuid", "uuid", "text", "text", "text", "text", "date", "date", numeric, numeric, integer, numeric, "text", "text", integer, "date", numeric, numeric, "text", "text", "text", numeric, "text", numeric, "jsonb", "jsonb", "text", "jsonb", "jsonb"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."create_bank_loan_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric, "p_profile" "jsonb", "p_insurances" "jsonb", "p_schedule_source" "text", "p_installments" "jsonb", "p_collaterals" "jsonb") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -1957,6 +2339,9 @@ $$;
 
 ALTER FUNCTION "public"."create_bank_loan_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric, "p_profile" "jsonb", "p_insurances" "jsonb", "p_schedule_source" "text", "p_installments" "jsonb", "p_collaterals" "jsonb") OWNER TO "postgres";
 
+--
+-- Name: create_credit_card_debt_v1("uuid", "uuid", "text", "text", "text", "date", "date", numeric, numeric, integer, integer, "text", numeric, numeric, "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."create_credit_card_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_opening_balance" numeric, "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -2108,6 +2493,9 @@ $_$;
 
 ALTER FUNCTION "public"."create_credit_card_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_opening_balance" numeric, "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text") OWNER TO "postgres";
 
+--
+-- Name: create_debt_v1("uuid", "uuid", "text", "text", "text", "text", "date", "date", numeric, numeric, integer, numeric, "text", "text", integer, "date", numeric, numeric, "text", "jsonb", "jsonb"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb") RETURNS "jsonb"
     LANGUAGE "sql" SECURITY DEFINER
@@ -2126,10 +2514,16 @@ $$;
 
 ALTER FUNCTION "public"."create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb") OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb"); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb") IS 'DEBT-2A: onboarding transaccional de una obligación. Una sola RPC atómica crea Debt + cronograma inicial opcional (ScheduleVersion v1 reason=initial, solo si p_installments no está vacío) + installments numerados 1..N + collaterals con status pledged. El servidor controla status/is_archived/created_by_user_id: nunca se aceptan del cliente. No escribe debt_events ni movements. Cualquier error revierte TODO (rollback total). Errores estables: AUTH_REQUIRED, HOUSEHOLD_ACCESS_DENIED, INVALID_DEBT_INPUT, DEBT_ALREADY_EXISTS (p_debt_id duplicado, el frontend puede resolverlo recargando por id), INVALID_INSTALLMENTS, INVALID_COLLATERALS. Campos nullable (expected_* de installments; pledged_value, estimated_value, redemption_deadline de collaterals): ausentes o JSON null se convierten a SQL NULL; nunca se inventan ceros ni fechas. DEBT-2B será responsable de payments, partial/multi-installment allocations, prepayments, payoff, reversals, movement integration y concurrency/current principal safety (nuevas RPC atómicas DebtEvent + Movement + Allocation + locking), nunca como UPDATE directo sobre las tablas.';
 
 
+--
+-- Name: create_debt_v1("uuid", "uuid", "text", "text", "text", "text", "date", "date", numeric, numeric, integer, numeric, "text", "text", integer, "date", numeric, numeric, "text", "jsonb", "jsonb", "text", "text", numeric, "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -2412,6 +2806,9 @@ $_$;
 
 ALTER FUNCTION "public"."create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text") OWNER TO "postgres";
 
+--
+-- Name: create_debt_v2("uuid", "uuid", "text", "text", "text", "text", "date", "date", numeric, numeric, integer, numeric, "text", "text", integer, "date", numeric, numeric, "text", "jsonb", "jsonb", "text", "text", numeric, "text", numeric); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."create_debt_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric DEFAULT NULL::numeric) RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -2453,10 +2850,16 @@ $$;
 
 ALTER FUNCTION "public"."create_debt_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric) OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "create_debt_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."create_debt_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric) IS 'DEBT-6B.2: Permite registrar una nueva deuda especificando abono mínimo a capital y sincronización automática con pagos recurrentes.';
 
 
+--
+-- Name: delete_pristine_debt_v1("uuid", "uuid"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."delete_pristine_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -2550,10 +2953,16 @@ $$;
 
 ALTER FUNCTION "public"."delete_pristine_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid") OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "delete_pristine_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid"); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."delete_pristine_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid") IS 'DEBT-6B.3: Permite eliminar permanentemente una deuda o tarjeta solo si no tiene registros de historial financiero (eventos, consumos o estados de cuenta).';
 
 
+--
+-- Name: get_push_subscription_status("uuid", "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."get_push_subscription_status"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") RETURNS boolean
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -2598,6 +3007,9 @@ $$;
 
 ALTER FUNCTION "public"."get_push_subscription_status"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") OWNER TO "postgres";
 
+--
+-- Name: movements_legacy_cash_account_sync(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."movements_legacy_cash_account_sync"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -2639,6 +3051,9 @@ $$;
 
 ALTER FUNCTION "public"."movements_legacy_cash_account_sync"() OWNER TO "postgres";
 
+--
+-- Name: protect_debt_collateral_identity(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."protect_debt_collateral_identity"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -2660,6 +3075,9 @@ $$;
 
 ALTER FUNCTION "public"."protect_debt_collateral_identity"() OWNER TO "postgres";
 
+--
+-- Name: protect_debt_financial_baseline(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."protect_debt_financial_baseline"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -2685,6 +3103,9 @@ $$;
 
 ALTER FUNCTION "public"."protect_debt_financial_baseline"() OWNER TO "postgres";
 
+--
+-- Name: protect_debt_identity(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."protect_debt_identity"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -2705,6 +3126,9 @@ $$;
 
 ALTER FUNCTION "public"."protect_debt_identity"() OWNER TO "postgres";
 
+--
+-- Name: protect_movement_semantics(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."protect_movement_semantics"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -2780,6 +3204,9 @@ $$;
 
 ALTER FUNCTION "public"."protect_movement_semantics"() OWNER TO "postgres";
 
+--
+-- Name: provision_default_cash_account(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."provision_default_cash_account"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -2824,6 +3251,9 @@ $$;
 
 ALTER FUNCTION "public"."provision_default_cash_account"() OWNER TO "postgres";
 
+--
+-- Name: record_account_reconciliation_v1("uuid", "uuid", "uuid", numeric, "jsonb"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_account_reconciliation_v1"("p_household_id" "uuid", "p_reconciliation_id" "uuid", "p_account_id" "uuid", "p_actual_balance" numeric DEFAULT NULL::numeric, "p_denominations" "jsonb" DEFAULT NULL::"jsonb") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -3080,6 +3510,9 @@ $$;
 
 ALTER FUNCTION "public"."record_account_reconciliation_v1"("p_household_id" "uuid", "p_reconciliation_id" "uuid", "p_account_id" "uuid", "p_actual_balance" numeric, "p_denominations" "jsonb") OWNER TO "postgres";
 
+--
+-- Name: record_credit_card_credit_v1("uuid", "uuid", "uuid", "text", "uuid", "date", numeric, "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_credit_card_credit_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_target_entry_id" "uuid", "p_credit_date" "date", "p_amount" numeric, "p_description" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -3388,6 +3821,9 @@ $$;
 
 ALTER FUNCTION "public"."record_credit_card_credit_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_target_entry_id" "uuid", "p_credit_date" "date", "p_amount" numeric, "p_description" "text") OWNER TO "postgres";
 
+--
+-- Name: record_credit_card_fee_v1("uuid", "uuid", "uuid", "text", "date", numeric, "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_credit_card_fee_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_fee_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -3616,6 +4052,9 @@ $$;
 
 ALTER FUNCTION "public"."record_credit_card_fee_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_fee_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text") OWNER TO "postgres";
 
+--
+-- Name: record_credit_card_payment_v1("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_credit_card_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_payment_date" "date", "p_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -3870,6 +4309,9 @@ $$;
 
 ALTER FUNCTION "public"."record_credit_card_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_payment_date" "date", "p_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text") OWNER TO "postgres";
 
+--
+-- Name: record_credit_card_purchase_v1("uuid", "uuid", "uuid", "text", "date", numeric, "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_credit_card_purchase_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_purchase_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -4073,6 +4515,9 @@ $$;
 
 ALTER FUNCTION "public"."record_credit_card_purchase_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_purchase_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text") OWNER TO "postgres";
 
+--
+-- Name: record_debt_installment_advance_v1("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text", numeric, numeric, numeric, numeric, numeric, boolean, "jsonb"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_debt_installment_advance_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -4081,57 +4526,67 @@ CREATE OR REPLACE FUNCTION "public"."record_debt_installment_advance_v1"("p_hous
 declare
   v_user_id uuid := auth.uid();
   v_person text;
-  v_description text;
-  v_category text;
-  v_movement_id text;
+  v_description text := pg_catalog.btrim(p_description);
+  v_category text := pg_catalog.btrim(p_category);
+  v_movement_id text := pg_catalog.btrim(p_movement_id);
   v_debt public.debts%rowtype;
   v_movement public.movements%rowtype;
-  v_event public.debt_events%rowtype;
   v_existing_event public.debt_events%rowtype;
-  v_current_principal numeric;
+  v_linked_event public.debt_events%rowtype;
   v_schedule public.debt_schedule_versions%rowtype;
+  v_current_principal numeric;
 begin
   if v_user_id is null then
     raise exception 'AUTH_REQUIRED';
   end if;
 
-  select hm.display_name into v_person
+  select hm.display_name
+    into v_person
     from public.household_members as hm
-   where hm.household_id = p_household_id and hm.user_id = v_user_id;
+   where hm.household_id = p_household_id
+     and hm.user_id = v_user_id;
   if not found or v_person is null or pg_catalog.btrim(v_person) = '' then
     raise exception 'HOUSEHOLD_ACCESS_DENIED';
   end if;
 
-  v_movement_id := pg_catalog.btrim(p_movement_id);
-  v_description := pg_catalog.btrim(p_description);
-  v_category := pg_catalog.btrim(p_category);
-
-  if p_household_id is null or p_debt_id is null or p_event_id is null
-     or v_movement_id is null or v_movement_id = '' or p_event_date is null
-     or p_account_id is null or v_description is null or v_description = ''
-     or v_category is null or v_category = '' or p_cash_amount is null
-     or p_principal_amount is null or p_breakdown_complete is null
-     or p_allocations is null or pg_catalog.jsonb_typeof(p_allocations) <> 'array' then
+  if p_household_id is null
+     or p_debt_id is null
+     or p_event_id is null
+     or v_movement_id is null
+     or v_movement_id = ''
+     or p_event_date is null
+     or p_account_id is null
+     or v_description is null
+     or v_description = ''
+     or v_category is null
+     or v_category = ''
+     or p_cash_amount is null
+     or p_principal_amount is null
+     or p_breakdown_complete is null
+     or p_allocations is null
+     or pg_catalog.jsonb_typeof(p_allocations) <> 'array'
+     or pg_catalog.jsonb_array_length(p_allocations) = 0 then
     raise exception 'INVALID_DEBT_PAYMENT';
   end if;
 
-  select d.* into v_debt from public.debts as d where d.id = p_debt_id and d.household_id = p_household_id for update;
-  if not found then raise exception 'DEBT_NOT_FOUND'; end if;
-
-  if v_debt.is_archived then raise exception 'DEBT_ARCHIVED'; end if;
-  if v_debt.status <> 'active' then raise exception 'DEBT_NOT_ACTIVE'; end if;
-
-  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
-  if v_current_principal <= 0 then raise exception 'DEBT_ALREADY_PAID_OFF'; end if;
-  if p_principal_amount > v_current_principal then raise exception 'INVALID_DEBT_PAYMENT'; end if;
-
-  perform private.debt2b2_validate_costs(
-    p_cash_amount, p_principal_amount, p_interest_paid, p_fees_paid, p_insurance_paid, p_other_cost_paid, p_breakdown_complete, 'INVALID_DEBT_PAYMENT'
-  );
-
   perform private.debt2b2_lock_operation(v_movement_id, p_event_id);
 
-  select e.* into v_existing_event from public.debt_events as e where e.id = p_event_id for update;
+  select d.*
+    into v_debt
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+  if not found then
+    raise exception 'DEBT_NOT_FOUND';
+  end if;
+
+  select e.*
+    into v_existing_event
+    from public.debt_events as e
+   where e.id = p_event_id
+   for update;
+
   if found then
     if v_existing_event.household_id is distinct from p_household_id
        or v_existing_event.debt_id is distinct from p_debt_id
@@ -4139,42 +4594,141 @@ begin
        or v_existing_event.movement_id is distinct from v_movement_id
        or v_existing_event.event_date is distinct from p_event_date
        or v_existing_event.cash_amount is distinct from p_cash_amount
-       or v_existing_event.principal_delta is distinct from -p_principal_amount then
+       or v_existing_event.principal_delta is distinct from -p_principal_amount
+       or v_existing_event.interest_paid is distinct from p_interest_paid
+       or v_existing_event.fees_paid is distinct from p_fees_paid
+       or v_existing_event.insurance_paid is distinct from p_insurance_paid
+       or v_existing_event.other_cost_paid is distinct from p_other_cost_paid
+       or v_existing_event.breakdown_complete is distinct from p_breakdown_complete
+       or v_existing_event.description is distinct from v_description then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    select m.*
+      into v_movement
+      from public.movements as m
+     where m.id = v_movement_id
+       and m.household_id = p_household_id
+     for update;
+    if not found then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+    v_movement := private.debt2b2_prepare_movement(
+      p_household_id, v_movement_id, p_event_date, p_cash_amount,
+      p_account_id, v_description, v_category, v_user_id, v_person
+    );
+    if private.debt2b2_canonical_allocations(p_allocations)
+       is distinct from private.debt2b2_event_allocations(p_event_id, p_debt_id, p_household_id) then
       raise exception 'DEBT_EVENT_ID_CONFLICT';
     end if;
     return private.debt2b2_fund_result(p_event_id, true);
   end if;
 
-  -- Create Movement via helper
-  v_movement := private.debt2b2_prepare_movement(
-    p_household_id, v_movement_id, p_event_date, p_cash_amount, p_account_id, v_description, v_category, v_user_id, 'debt_service'
+  if v_debt.is_archived then
+    raise exception 'DEBT_ARCHIVED';
+  end if;
+  if v_debt.status <> 'active' then
+    raise exception 'DEBT_NOT_ACTIVE';
+  end if;
+
+  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
+  if v_current_principal <= 0 then
+    raise exception 'DEBT_ALREADY_PAID_OFF';
+  end if;
+  if p_principal_amount <= 0 or p_principal_amount > v_current_principal then
+    raise exception 'DEBT_PRINCIPAL_EXCEEDED';
+  end if;
+
+  perform private.debt2b2_validate_costs(
+    p_cash_amount,
+    p_principal_amount,
+    p_interest_paid,
+    p_fees_paid,
+    p_insurance_paid,
+    p_other_cost_paid,
+    p_breakdown_complete,
+    'INVALID_DEBT_PAYMENT'
   );
 
-  -- Create Debt Event (installment_advance)
+  select e.*
+    into v_linked_event
+    from public.debt_events as e
+   where e.movement_id = v_movement_id
+     and e.household_id = p_household_id
+     and e.debt_id = p_debt_id
+     and e.event_type in ('payment', 'principal_prepayment', 'payoff', 'installment_advance')
+     and not exists (
+       select 1
+         from public.debt_events as r
+        where r.debt_id = e.debt_id
+          and r.household_id = e.household_id
+          and r.event_type = 'reversal'
+          and r.reversal_of_event_id = e.id
+     )
+   order by e.created_at, e.id
+   limit 1
+   for update;
+  if found then
+    raise exception 'DEBT_MOVEMENT_ALREADY_LINKED';
+  end if;
+
+  select s.*
+    into v_schedule
+    from public.debt_schedule_versions as s
+   where s.debt_id = p_debt_id
+     and s.household_id = p_household_id
+   order by s.version_number desc
+   limit 1
+   for update;
+  if not found then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  perform private.debt2b2_validate_advance_allocations(
+    p_household_id,
+    p_debt_id,
+    v_schedule.id,
+    p_event_date,
+    p_cash_amount,
+    p_principal_amount,
+    p_interest_paid,
+    p_fees_paid,
+    p_insurance_paid,
+    p_other_cost_paid,
+    p_allocations
+  );
+
+  v_movement := private.debt2b2_prepare_movement(
+    p_household_id, v_movement_id, p_event_date, p_cash_amount,
+    p_account_id, v_description, v_category, v_user_id, v_person
+  );
+
   insert into public.debt_events (
-    id, debt_id, household_id, event_date, event_type, cash_amount, principal_delta,
-    interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete,
-    movement_id, reversal_of_event_id, description, registered_by_user_id, created_at
+    id, debt_id, household_id, event_date, event_type, cash_amount,
+    principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid,
+    breakdown_complete, movement_id, reversal_of_event_id, description,
+    registered_by_user_id
   ) values (
     p_event_id, p_debt_id, p_household_id, p_event_date, 'installment_advance',
-    p_cash_amount, -p_principal_amount, coalesce(p_interest_paid, 0), coalesce(p_fees_paid, 0),
-    coalesce(p_insurance_paid, 0), coalesce(p_other_cost_paid, 0), p_breakdown_complete,
-    v_movement_id, null, v_description, v_user_id, now()
-  ) returning * into v_event;
+    p_cash_amount, -p_principal_amount, p_interest_paid, p_fees_paid,
+    p_insurance_paid, p_other_cost_paid, p_breakdown_complete, v_movement_id,
+    null, v_description, v_user_id
+  );
 
-  -- Insert Allocations via SSOT helper
-  select s.* into v_schedule
-    from public.debt_schedule_versions as s
-   where s.debt_id = p_debt_id and s.household_id = p_household_id
-   order by s.version_number desc limit 1 for update;
   perform private.debt2b2_insert_allocations(
-    p_household_id, p_debt_id, p_event_id,
-    case when found then v_schedule.id else null end,
-    p_cash_amount, p_allocations, v_user_id
+    p_household_id,
+    p_debt_id,
+    p_event_id,
+    v_schedule.id,
+    p_cash_amount,
+    p_allocations,
+    v_user_id
   );
 
   perform private.debt2b2_reconcile_status(
-    p_household_id, p_debt_id, v_current_principal - p_principal_amount
+    p_household_id,
+    p_debt_id,
+    v_current_principal - p_principal_amount
   );
 
   return private.debt2b2_fund_result(p_event_id, false);
@@ -4184,6 +4738,9 @@ $$;
 
 ALTER FUNCTION "public"."record_debt_installment_advance_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb") OWNER TO "postgres";
 
+--
+-- Name: record_debt_payment_v1("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text", numeric, numeric, numeric, numeric, numeric, boolean, "jsonb"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_debt_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -4411,10 +4968,16 @@ $$;
 
 ALTER FUNCTION "public"."record_debt_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb") OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "record_debt_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb"); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."record_debt_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb") IS 'DEBT-2B.2: atomic authenticated Debt payment. The server derives principal_delta, Movement method, person, registered_by_user_id, effective principal, allocations and status. p_event_id is the idempotency key; Debt and Movement are locked before any write.';
 
 
+--
+-- Name: record_debt_payment_v2("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text", numeric, numeric, numeric, numeric, numeric, numeric, "text", boolean, "jsonb"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_debt_payment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -4423,89 +4986,205 @@ CREATE OR REPLACE FUNCTION "public"."record_debt_payment_v2"("p_household_id" "u
 declare
   v_user_id uuid := auth.uid();
   v_person text;
-  v_description text;
-  v_category text;
-  v_movement_id text;
+  v_description text := pg_catalog.btrim(p_description);
+  v_category text := pg_catalog.btrim(p_category);
+  v_movement_id text := pg_catalog.btrim(p_movement_id);
   v_debt public.debts%rowtype;
   v_movement public.movements%rowtype;
-  v_event public.debt_events%rowtype;
   v_existing_event public.debt_events%rowtype;
+  v_linked_event public.debt_events%rowtype;
+  v_schedule public.debt_schedule_versions%rowtype;
   v_current_principal numeric;
   v_extra_principal numeric := coalesce(p_extra_principal_amount, 0);
-  v_schedule public.debt_schedule_versions%rowtype;
+  v_total_principal numeric;
+  v_has_schedule boolean := false;
 begin
   if v_user_id is null then
     raise exception 'AUTH_REQUIRED';
   end if;
 
-  select hm.display_name into v_person
+  select hm.display_name
+    into v_person
     from public.household_members as hm
-   where hm.household_id = p_household_id and hm.user_id = v_user_id;
+   where hm.household_id = p_household_id
+     and hm.user_id = v_user_id;
   if not found or v_person is null or pg_catalog.btrim(v_person) = '' then
     raise exception 'HOUSEHOLD_ACCESS_DENIED';
   end if;
 
-  v_movement_id := pg_catalog.btrim(p_movement_id);
-  v_description := pg_catalog.btrim(p_description);
-  v_category := pg_catalog.btrim(p_category);
-
-  if p_household_id is null or p_debt_id is null or p_event_id is null
-     or v_movement_id is null or v_movement_id = '' or p_event_date is null
-     or p_account_id is null or v_description is null or v_description = ''
-     or v_category is null or v_category = '' or p_cash_amount is null
-     or p_principal_amount is null or p_breakdown_complete is null
-     or p_allocations is null or pg_catalog.jsonb_typeof(p_allocations) <> 'array' then
+  if p_household_id is null
+     or p_debt_id is null
+     or p_event_id is null
+     or v_movement_id is null
+     or v_movement_id = ''
+     or p_event_date is null
+     or p_account_id is null
+     or v_description is null
+     or v_description = ''
+     or v_category is null
+     or v_category = ''
+     or p_cash_amount is null
+     or p_principal_amount is null
+     or p_breakdown_complete is null
+     or p_allocations is null
+     or pg_catalog.jsonb_typeof(p_allocations) <> 'array'
+     or p_principal_amount < 0
+     or v_extra_principal < 0
+     or (
+       p_prepayment_effect is not null
+       and p_prepayment_effect not in ('reduce_term', 'reduce_installment', 'pending_bank_schedule', 'other', 'unknown')
+     ) then
     raise exception 'INVALID_DEBT_PAYMENT';
   end if;
 
-  select d.* into v_debt from public.debts as d where d.id = p_debt_id and d.household_id = p_household_id for update;
-  if not found then raise exception 'DEBT_NOT_FOUND'; end if;
-
-  if v_debt.is_archived then raise exception 'DEBT_ARCHIVED'; end if;
-  if v_debt.status <> 'active' then raise exception 'DEBT_NOT_ACTIVE'; end if;
-
-  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
-  if v_current_principal <= 0 then raise exception 'DEBT_ALREADY_PAID_OFF'; end if;
-  if (p_principal_amount + v_extra_principal) > v_current_principal then raise exception 'INVALID_DEBT_PAYMENT'; end if;
-
-  perform private.debt2b2_validate_costs(
-    p_cash_amount, p_principal_amount + v_extra_principal, p_interest_paid, p_fees_paid, p_insurance_paid, p_other_cost_paid, p_breakdown_complete, 'INVALID_DEBT_PAYMENT'
-  );
-
   perform private.debt2b2_lock_operation(v_movement_id, p_event_id);
 
-  select e.* into v_existing_event from public.debt_events as e where e.id = p_event_id for update;
+  select d.*
+    into v_debt
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+  if not found then
+    raise exception 'DEBT_NOT_FOUND';
+  end if;
+
+  select e.*
+    into v_existing_event
+    from public.debt_events as e
+   where e.id = p_event_id
+   for update;
+
   if found then
+    if v_existing_event.household_id is distinct from p_household_id
+       or v_existing_event.debt_id is distinct from p_debt_id
+       or v_existing_event.event_type is distinct from 'payment'
+       or v_existing_event.movement_id is distinct from v_movement_id
+       or v_existing_event.event_date is distinct from p_event_date
+       or v_existing_event.cash_amount is distinct from p_cash_amount
+       or v_existing_event.principal_delta is distinct from -(p_principal_amount + v_extra_principal)
+       or v_existing_event.interest_paid is distinct from p_interest_paid
+       or v_existing_event.fees_paid is distinct from p_fees_paid
+       or v_existing_event.insurance_paid is distinct from p_insurance_paid
+       or v_existing_event.other_cost_paid is distinct from p_other_cost_paid
+       or v_existing_event.extra_principal_amount is distinct from v_extra_principal
+       or v_existing_event.prepayment_effect is distinct from p_prepayment_effect
+       or v_existing_event.breakdown_complete is distinct from p_breakdown_complete
+       or v_existing_event.description is distinct from v_description then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    select m.*
+      into v_movement
+      from public.movements as m
+     where m.id = v_movement_id
+       and m.household_id = p_household_id
+     for update;
+    if not found then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+    v_movement := private.debt2b2_prepare_movement(
+      p_household_id, v_movement_id, p_event_date, p_cash_amount,
+      p_account_id, v_description, v_category, v_user_id, v_person
+    );
+
+    if private.debt2b2_canonical_allocations(p_allocations)
+       is distinct from private.debt2b2_event_allocations(p_event_id, p_debt_id, p_household_id) then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
     return private.debt2b2_fund_result(p_event_id, true);
   end if;
 
+  if v_debt.is_archived then
+    raise exception 'DEBT_ARCHIVED';
+  end if;
+  if v_debt.status <> 'active' then
+    raise exception 'DEBT_NOT_ACTIVE';
+  end if;
+
+  v_total_principal := p_principal_amount + v_extra_principal;
+  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
+  if v_current_principal <= 0 then
+    raise exception 'DEBT_ALREADY_PAID_OFF';
+  end if;
+  if v_total_principal < 0 or v_total_principal > v_current_principal then
+    raise exception 'DEBT_PRINCIPAL_EXCEEDED';
+  end if;
+
+  perform private.debt2b2_validate_costs(
+    p_cash_amount,
+    v_total_principal,
+    p_interest_paid,
+    p_fees_paid,
+    p_insurance_paid,
+    p_other_cost_paid,
+    p_breakdown_complete,
+    'INVALID_DEBT_PAYMENT'
+  );
+
+  select e.*
+    into v_linked_event
+    from public.debt_events as e
+   where e.movement_id = v_movement_id
+     and e.household_id = p_household_id
+     and e.debt_id = p_debt_id
+     and e.event_type in ('payment', 'principal_prepayment', 'payoff', 'installment_advance')
+     and not exists (
+       select 1
+         from public.debt_events as r
+        where r.debt_id = e.debt_id
+          and r.household_id = e.household_id
+          and r.event_type = 'reversal'
+          and r.reversal_of_event_id = e.id
+     )
+   order by e.created_at, e.id
+   limit 1
+   for update;
+  if found then
+    raise exception 'DEBT_MOVEMENT_ALREADY_LINKED';
+  end if;
+
   v_movement := private.debt2b2_prepare_movement(
-    p_household_id, v_movement_id, p_event_date, p_cash_amount, p_account_id, v_description, v_category, v_user_id, 'debt_service'
+    p_household_id, v_movement_id, p_event_date, p_cash_amount,
+    p_account_id, v_description, v_category, v_user_id, v_person
   );
 
   insert into public.debt_events (
-    id, debt_id, household_id, event_date, event_type, cash_amount, principal_delta,
-    interest_paid, fees_paid, insurance_paid, other_cost_paid, extra_principal_amount, prepayment_effect,
-    breakdown_complete, movement_id, reversal_of_event_id, description, registered_by_user_id, created_at
+    id, debt_id, household_id, event_date, event_type, cash_amount,
+    principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid,
+    extra_principal_amount, prepayment_effect, breakdown_complete, movement_id,
+    reversal_of_event_id, description, registered_by_user_id
   ) values (
-    p_event_id, p_debt_id, p_household_id, p_event_date, 'payment',
-    p_cash_amount, -(p_principal_amount + v_extra_principal), coalesce(p_interest_paid, 0), coalesce(p_fees_paid, 0),
-    coalesce(p_insurance_paid, 0), coalesce(p_other_cost_paid, 0), v_extra_principal, p_prepayment_effect,
-    p_breakdown_complete, v_movement_id, null, v_description, v_user_id, now()
-  ) returning * into v_event;
+    p_event_id, p_debt_id, p_household_id, p_event_date, 'payment', p_cash_amount,
+    -v_total_principal, p_interest_paid, p_fees_paid, p_insurance_paid,
+    p_other_cost_paid, v_extra_principal, p_prepayment_effect, p_breakdown_complete,
+    v_movement_id, null, v_description, v_user_id
+  );
 
-  select s.* into v_schedule
+  select s.*
+    into v_schedule
     from public.debt_schedule_versions as s
-   where s.debt_id = p_debt_id and s.household_id = p_household_id
-   order by s.version_number desc limit 1 for update;
+   where s.debt_id = p_debt_id
+     and s.household_id = p_household_id
+   order by s.version_number desc
+   limit 1
+   for update;
+  v_has_schedule := found;
+
   perform private.debt2b2_insert_allocations(
-    p_household_id, p_debt_id, p_event_id,
-    case when found then v_schedule.id else null end,
-    p_cash_amount, p_allocations, v_user_id
+    p_household_id,
+    p_debt_id,
+    p_event_id,
+    case when v_has_schedule then v_schedule.id else null end,
+    p_cash_amount,
+    p_allocations,
+    v_user_id
   );
 
   perform private.debt2b2_reconcile_status(
-    p_household_id, p_debt_id, v_current_principal - (p_principal_amount + v_extra_principal)
+    p_household_id,
+    p_debt_id,
+    v_current_principal - v_total_principal
   );
 
   return private.debt2b2_fund_result(p_event_id, false);
@@ -4515,6 +5194,9 @@ $$;
 
 ALTER FUNCTION "public"."record_debt_payment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb") OWNER TO "postgres";
 
+--
+-- Name: record_debt_payoff_v1("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text", numeric, numeric, numeric, numeric, boolean); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_debt_payoff_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean) RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -4523,12 +5205,11 @@ CREATE OR REPLACE FUNCTION "public"."record_debt_payoff_v1"("p_household_id" "uu
 declare
   v_user_id uuid := auth.uid();
   v_person text;
-  v_description text;
-  v_category text;
-  v_movement_id text;
+  v_description text := pg_catalog.btrim(p_description);
+  v_category text := pg_catalog.btrim(p_category);
+  v_movement_id text := pg_catalog.btrim(p_movement_id);
   v_debt public.debts%rowtype;
   v_movement public.movements%rowtype;
-  v_event public.debt_events%rowtype;
   v_existing_event public.debt_events%rowtype;
   v_linked_event public.debt_events%rowtype;
   v_current_principal numeric;
@@ -4546,9 +5227,6 @@ begin
     raise exception 'HOUSEHOLD_ACCESS_DENIED';
   end if;
 
-  v_movement_id := pg_catalog.btrim(p_movement_id);
-  v_description := pg_catalog.btrim(p_description);
-  v_category := pg_catalog.btrim(p_category);
   if p_household_id is null
      or p_debt_id is null
      or p_event_id is null
@@ -4565,6 +5243,8 @@ begin
     raise exception 'INVALID_DEBT_PAYOFF';
   end if;
 
+  perform private.debt2b2_lock_operation(v_movement_id, p_event_id);
+
   select d.*
     into v_debt
     from public.debts as d
@@ -4574,15 +5254,6 @@ begin
   if not found then
     raise exception 'DEBT_NOT_FOUND';
   end if;
-
-  perform private.debt2b2_lock_operation(v_movement_id, p_event_id);
-
-  select m.*
-    into v_movement
-   from public.movements as m
-    where m.id = v_movement_id
-      and m.household_id = p_household_id
-    for update;
 
   select e.*
     into v_existing_event
@@ -4601,9 +5272,24 @@ begin
        or v_existing_event.fees_paid is distinct from p_fees_paid
        or v_existing_event.insurance_paid is distinct from p_insurance_paid
        or v_existing_event.other_cost_paid is distinct from p_other_cost_paid
-       or v_existing_event.breakdown_complete is distinct from p_breakdown_complete then
+       or v_existing_event.breakdown_complete is distinct from p_breakdown_complete
+       or v_existing_event.description is distinct from v_description then
       raise exception 'DEBT_EVENT_ID_CONFLICT';
     end if;
+
+    select m.*
+      into v_movement
+      from public.movements as m
+     where m.id = v_movement_id
+       and m.household_id = p_household_id
+     for update;
+    if not found then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+    v_movement := private.debt2b2_prepare_movement(
+      p_household_id, v_movement_id, p_event_date, p_cash_amount,
+      p_account_id, v_description, v_category, v_user_id, v_person
+    );
     return private.debt2b2_fund_result(p_event_id, true);
   end if;
 
@@ -4637,7 +5323,9 @@ begin
     into v_linked_event
     from public.debt_events as e
    where e.movement_id = v_movement_id
-     and e.event_type in ('payment', 'principal_prepayment', 'payoff')
+     and e.household_id = p_household_id
+     and e.debt_id = p_debt_id
+     and e.event_type in ('payment', 'principal_prepayment', 'payoff', 'installment_advance')
      and not exists (
        select 1
          from public.debt_events as r
@@ -4654,60 +5342,23 @@ begin
   end if;
 
   v_movement := private.debt2b2_prepare_movement(
-    p_household_id,
-    v_movement_id,
-    p_event_date,
-    p_cash_amount,
-    p_account_id,
-    v_description,
-    v_category,
-    v_user_id,
-    v_person
+    p_household_id, v_movement_id, p_event_date, p_cash_amount,
+    p_account_id, v_description, v_category, v_user_id, v_person
   );
 
   insert into public.debt_events (
-    id,
-    debt_id,
-    household_id,
-    event_date,
-    event_type,
-    cash_amount,
-    principal_delta,
-    interest_paid,
-    fees_paid,
-    insurance_paid,
-    other_cost_paid,
-    breakdown_complete,
-    movement_id,
-    reversal_of_event_id,
-    description,
+    id, debt_id, household_id, event_date, event_type, cash_amount,
+    principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid,
+    breakdown_complete, movement_id, reversal_of_event_id, description,
     registered_by_user_id
   ) values (
-    p_event_id,
-    p_debt_id,
-    p_household_id,
-    p_event_date,
-    'payoff',
-    p_cash_amount,
-    -v_current_principal,
-    p_interest_paid,
-    p_fees_paid,
-    p_insurance_paid,
-    p_other_cost_paid,
-    p_breakdown_complete,
-    v_movement_id,
-    null,
-    v_description,
-    v_user_id
-  )
-  returning * into v_event;
-
-  perform private.debt2b2_reconcile_status(
-    p_household_id,
-    p_debt_id,
-    0::numeric
+    p_event_id, p_debt_id, p_household_id, p_event_date, 'payoff', p_cash_amount,
+    -v_current_principal, p_interest_paid, p_fees_paid, p_insurance_paid,
+    p_other_cost_paid, p_breakdown_complete, v_movement_id, null,
+    v_description, v_user_id
   );
 
+  perform private.debt2b2_reconcile_status(p_household_id, p_debt_id, 0::numeric);
   return private.debt2b2_fund_result(p_event_id, false);
 end;
 $$;
@@ -4715,10 +5366,16 @@ $$;
 
 ALTER FUNCTION "public"."record_debt_payoff_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean) OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "record_debt_payoff_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."record_debt_payoff_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean) IS 'DEBT-2B.2: atomic authenticated payoff. The server locks the Debt, calculates current principal, writes principal_delta = -current_principal and reconciles paid_off status.';
 
 
+--
+-- Name: record_debt_prepayment_v1("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text", numeric, numeric, numeric, numeric, numeric, boolean, "jsonb", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."record_debt_prepayment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -4943,10 +5600,272 @@ $$;
 
 ALTER FUNCTION "public"."record_debt_prepayment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text") OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "record_debt_prepayment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text"); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."record_debt_prepayment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text") IS 'DEBT-2B.2: atomic authenticated principal prepayment. The server derives principal_delta and appends an optional prepayment schedule version. A prepayment equal to current principal must use payoff.';
 
 
+--
+-- Name: record_debt_prepayment_v2("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text", numeric, numeric, numeric, numeric, numeric, "text", boolean, "jsonb", "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "public"."record_debt_prepayment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_user_id uuid := auth.uid();
+  v_person text;
+  v_description text := pg_catalog.btrim(p_description);
+  v_category text := pg_catalog.btrim(p_category);
+  v_movement_id text := pg_catalog.btrim(p_movement_id);
+  v_debt public.debts%rowtype;
+  v_movement public.movements%rowtype;
+  v_existing_event public.debt_events%rowtype;
+  v_linked_event public.debt_events%rowtype;
+  v_schedule public.debt_schedule_versions%rowtype;
+  v_current_principal numeric;
+  v_source text;
+  v_authoritative boolean;
+begin
+  if v_user_id is null then
+    raise exception 'AUTH_REQUIRED';
+  end if;
+
+  select hm.display_name
+    into v_person
+    from public.household_members as hm
+   where hm.household_id = p_household_id
+     and hm.user_id = v_user_id;
+  if not found or v_person is null or pg_catalog.btrim(v_person) = '' then
+    raise exception 'HOUSEHOLD_ACCESS_DENIED';
+  end if;
+
+  if p_household_id is null
+     or p_debt_id is null
+     or p_event_id is null
+     or v_movement_id is null
+     or v_movement_id = ''
+     or p_event_date is null
+     or p_account_id is null
+     or v_description is null
+     or v_description = ''
+     or v_category is null
+     or v_category = ''
+     or p_cash_amount is null
+     or p_principal_amount is null
+     or p_breakdown_complete is null
+     or p_schedule_installments is null
+     or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array'
+     or (
+       p_prepayment_effect is not null
+       and p_prepayment_effect not in ('reduce_term', 'reduce_installment', 'pending_bank_schedule', 'other', 'unknown')
+     )
+     or (
+       p_schedule_source is not null
+       and p_schedule_source not in ('contractual', 'estimated', 'manual')
+     ) then
+    raise exception 'INVALID_DEBT_PREPAYMENT';
+  end if;
+
+  perform private.debt2b2_lock_operation(v_movement_id, p_event_id);
+
+  select d.*
+    into v_debt
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+  if not found then
+    raise exception 'DEBT_NOT_FOUND';
+  end if;
+
+  select e.*
+    into v_existing_event
+    from public.debt_events as e
+   where e.id = p_event_id
+   for update;
+
+  if found then
+    if v_existing_event.household_id is distinct from p_household_id
+       or v_existing_event.debt_id is distinct from p_debt_id
+       or v_existing_event.event_type is distinct from 'principal_prepayment'
+       or v_existing_event.movement_id is distinct from v_movement_id
+       or v_existing_event.event_date is distinct from p_event_date
+       or v_existing_event.cash_amount is distinct from p_cash_amount
+       or v_existing_event.principal_delta is distinct from -p_principal_amount
+       or v_existing_event.interest_paid is distinct from p_interest_paid
+       or v_existing_event.fees_paid is distinct from p_fees_paid
+       or v_existing_event.insurance_paid is distinct from p_insurance_paid
+       or v_existing_event.other_cost_paid is distinct from p_other_cost_paid
+       or v_existing_event.prepayment_effect is distinct from p_prepayment_effect
+       or v_existing_event.breakdown_complete is distinct from p_breakdown_complete
+       or v_existing_event.description is distinct from v_description then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    select m.*
+      into v_movement
+      from public.movements as m
+     where m.id = v_movement_id
+       and m.household_id = p_household_id
+     for update;
+    if not found then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+    v_movement := private.debt2b2_prepare_movement(
+      p_household_id, v_movement_id, p_event_date, p_cash_amount,
+      p_account_id, v_description, v_category, v_user_id, v_person
+    );
+
+    select s.*
+      into v_schedule
+      from public.debt_schedule_versions as s
+     where s.trigger_event_id = p_event_id
+       and s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+     order by s.version_number desc
+     limit 1;
+    if pg_catalog.jsonb_array_length(p_schedule_installments) = 0 then
+      if found then
+        raise exception 'DEBT_EVENT_ID_CONFLICT';
+      end if;
+    elsif not found
+       or private.debt2b2_canonical_schedule(p_schedule_installments)
+          is distinct from private.debt2b2_persisted_schedule(v_schedule.id)
+       or v_schedule.notes is distinct from coalesce(p_schedule_notes, '')
+       or (
+         p_schedule_source is not null
+         and v_schedule.schedule_source is distinct from p_schedule_source
+       ) then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    return private.debt2b2_fund_result(p_event_id, true);
+  end if;
+
+  if v_debt.is_archived then
+    raise exception 'DEBT_ARCHIVED';
+  end if;
+  if v_debt.status <> 'active' then
+    raise exception 'DEBT_NOT_ACTIVE';
+  end if;
+
+  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
+  if v_current_principal <= 0 then
+    raise exception 'DEBT_ALREADY_PAID_OFF';
+  end if;
+  if p_principal_amount <= 0 then
+    raise exception 'INVALID_DEBT_PREPAYMENT';
+  end if;
+  if p_principal_amount = v_current_principal then
+    raise exception 'DEBT_PREPAYMENT_WOULD_PAY_OFF';
+  end if;
+  if p_principal_amount > v_current_principal then
+    raise exception 'DEBT_PRINCIPAL_EXCEEDED';
+  end if;
+
+  perform private.debt2b2_validate_costs(
+    p_cash_amount,
+    p_principal_amount,
+    p_interest_paid,
+    p_fees_paid,
+    p_insurance_paid,
+    p_other_cost_paid,
+    p_breakdown_complete,
+    'INVALID_DEBT_PREPAYMENT'
+  );
+
+  select e.*
+    into v_linked_event
+    from public.debt_events as e
+   where e.movement_id = v_movement_id
+     and e.household_id = p_household_id
+     and e.debt_id = p_debt_id
+     and e.event_type in ('payment', 'principal_prepayment', 'payoff', 'installment_advance')
+     and not exists (
+       select 1
+         from public.debt_events as r
+        where r.debt_id = e.debt_id
+          and r.household_id = e.household_id
+          and r.event_type = 'reversal'
+          and r.reversal_of_event_id = e.id
+     )
+   order by e.created_at, e.id
+   limit 1
+   for update;
+  if found then
+    raise exception 'DEBT_MOVEMENT_ALREADY_LINKED';
+  end if;
+
+  v_movement := private.debt2b2_prepare_movement(
+    p_household_id, v_movement_id, p_event_date, p_cash_amount,
+    p_account_id, v_description, v_category, v_user_id, v_person
+  );
+
+  insert into public.debt_events (
+    id, debt_id, household_id, event_date, event_type, cash_amount,
+    principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid,
+    prepayment_effect, breakdown_complete, movement_id, reversal_of_event_id,
+    description, registered_by_user_id
+  ) values (
+    p_event_id, p_debt_id, p_household_id, p_event_date, 'principal_prepayment',
+    p_cash_amount, -p_principal_amount, p_interest_paid, p_fees_paid,
+    p_insurance_paid, p_other_cost_paid, p_prepayment_effect, p_breakdown_complete,
+    v_movement_id, null, v_description, v_user_id
+  );
+
+  if pg_catalog.jsonb_array_length(p_schedule_installments) > 0 then
+    select s.schedule_source, s.is_authoritative
+      into v_source, v_authoritative
+      from public.debt_schedule_versions as s
+     where s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+     order by s.version_number desc
+     limit 1;
+
+    v_source := coalesce(p_schedule_source, v_source, 'manual');
+    v_authoritative := case
+      when v_source = 'contractual' then true
+      when v_source = 'estimated' then false
+      when p_schedule_source is not null then false
+      else coalesce(v_authoritative, true)
+    end;
+
+    perform private.debt2b2_create_schedule_v2(
+      p_household_id,
+      p_debt_id,
+      p_event_id,
+      p_event_date,
+      'prepayment',
+      p_schedule_notes,
+      p_schedule_installments,
+      v_user_id,
+      v_source,
+      v_authoritative
+    );
+  elsif p_schedule_source is not null then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
+
+  perform private.debt2b2_reconcile_status(
+    p_household_id,
+    p_debt_id,
+    v_current_principal - p_principal_amount
+  );
+
+  return private.debt2b2_fund_result(p_event_id, false);
+end;
+$$;
+
+
+ALTER FUNCTION "public"."record_debt_prepayment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") OWNER TO "postgres";
+
+--
+-- Name: register_push_subscription("uuid", "text", "text", "text", "text", timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."register_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_p256dh" "text", "p_auth" "text", "p_app_origin" "text", "p_expires_at" timestamp with time zone DEFAULT NULL::timestamp with time zone) RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5026,6 +5945,9 @@ $$;
 
 ALTER FUNCTION "public"."register_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_p256dh" "text", "p_auth" "text", "p_app_origin" "text", "p_expires_at" timestamp with time zone) OWNER TO "postgres";
 
+--
+-- Name: reverse_credit_card_entry_v1("uuid", "uuid", "uuid", "uuid", "date", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."reverse_credit_card_entry_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_entry_id" "uuid", "p_target_entry_id" "uuid", "p_reversal_date" "date", "p_description" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5216,6 +6138,9 @@ $$;
 
 ALTER FUNCTION "public"."reverse_credit_card_entry_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_entry_id" "uuid", "p_target_entry_id" "uuid", "p_reversal_date" "date", "p_description" "text") OWNER TO "postgres";
 
+--
+-- Name: reverse_debt_event_v1("uuid", "uuid", "uuid", "uuid", "date", "text", "jsonb", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."reverse_debt_event_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_event_id" "uuid", "p_target_event_id" "uuid", "p_event_date" "date", "p_description" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5227,66 +6152,209 @@ declare
   v_debt public.debts%rowtype;
   v_target public.debt_events%rowtype;
   v_existing_reversal public.debt_events%rowtype;
-  v_reversal_event public.debt_events%rowtype;
-  v_restored_schedule public.debt_schedule_versions%rowtype;
-  v_has_gen_schedule boolean;
-  v_installments_json pg_catalog.jsonb := '[]'::pg_catalog.jsonb;
+  v_existing_schedule public.debt_schedule_versions%rowtype;
+  v_target_schedule public.debt_schedule_versions%rowtype;
+  v_previous_schedule public.debt_schedule_versions%rowtype;
+  v_target_has_schedule boolean := false;
+  v_reversal public.debt_events%rowtype;
+  v_description text := pg_catalog.btrim(p_description);
+  v_current_principal numeric;
 begin
-  if v_user_id is null then raise exception 'AUTH_REQUIRED'; end if;
+  if v_user_id is null then
+    raise exception 'AUTH_REQUIRED';
+  end if;
 
-  select hm.display_name into v_person
+  select hm.display_name
+    into v_person
     from public.household_members as hm
-   where hm.household_id = p_household_id and hm.user_id = v_user_id;
+   where hm.household_id = p_household_id
+     and hm.user_id = v_user_id;
   if not found or v_person is null or pg_catalog.btrim(v_person) = '' then
     raise exception 'HOUSEHOLD_ACCESS_DENIED';
   end if;
 
-  if p_household_id is null or p_debt_id is null or p_reversal_event_id is null or p_target_event_id is null or p_event_date is null then
-    raise exception 'INVALID_REVERSAL_INPUT';
+  if p_household_id is null
+     or p_debt_id is null
+     or p_reversal_event_id is null
+     or p_target_event_id is null
+     or p_event_date is null
+     or v_description is null
+     or v_description = ''
+     or p_schedule_installments is null
+     or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' then
+    raise exception 'INVALID_DEBT_REVERSAL';
   end if;
 
-  select d.* into v_debt from public.debts as d where d.id = p_debt_id and d.household_id = p_household_id for update;
-  if not found then raise exception 'DEBT_NOT_FOUND'; end if;
-  if v_debt.is_archived then raise exception 'DEBT_ARCHIVED'; end if;
+  perform private.debt2b2_lock_operation(null, p_reversal_event_id);
 
-  select e.* into v_target from public.debt_events as e where e.id = p_target_event_id for update;
-  if not found or v_target.household_id <> p_household_id or v_target.debt_id <> p_debt_id then
-    raise exception 'REVERSAL_TARGET_NOT_FOUND';
+  select d.*
+    into v_debt
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+  if not found then
+    raise exception 'DEBT_NOT_FOUND';
   end if;
 
+  select e.*
+    into v_target
+    from public.debt_events as e
+   where e.id = p_target_event_id
+     and e.debt_id = p_debt_id
+     and e.household_id = p_household_id
+   for update;
+  if not found then
+    raise exception 'DEBT_EVENT_NOT_FOUND';
+  end if;
   if v_target.event_type not in ('payment', 'principal_prepayment', 'payoff', 'installment_advance') then
-    raise exception 'REVERSAL_TARGET_INVALID';
+    raise exception 'DEBT_EVENT_TYPE_UNSUPPORTED';
+  end if;
+  if p_event_date < v_target.event_date then
+    raise exception 'INVALID_DEBT_REVERSAL';
   end if;
 
-  perform private.debt2b2_lock_operation(v_target.movement_id, p_reversal_event_id);
+  select s.*
+    into v_target_schedule
+    from public.debt_schedule_versions as s
+   where s.debt_id = p_debt_id
+     and s.household_id = p_household_id
+     and s.trigger_event_id = p_target_event_id
+   order by s.version_number desc
+   limit 1
+   for update;
+  v_target_has_schedule := found;
 
-  select e.* into v_existing_reversal from public.debt_events as e where e.id = p_reversal_event_id for update;
+  select e.*
+    into v_existing_reversal
+    from public.debt_events as e
+   where e.id = p_reversal_event_id
+   for update;
+
   if found then
-    if v_existing_reversal.reversal_of_event_id is distinct from p_target_event_id then
+    if v_existing_reversal.household_id is distinct from p_household_id
+       or v_existing_reversal.debt_id is distinct from p_debt_id
+       or v_existing_reversal.event_type is distinct from 'reversal'
+       or v_existing_reversal.reversal_of_event_id is distinct from p_target_event_id
+       or v_existing_reversal.event_date is distinct from p_event_date
+       or v_existing_reversal.cash_amount is distinct from 0::numeric
+       or v_existing_reversal.principal_delta is distinct from 0::numeric
+       or v_existing_reversal.interest_paid is distinct from 0::numeric
+       or v_existing_reversal.fees_paid is distinct from 0::numeric
+       or v_existing_reversal.insurance_paid is distinct from 0::numeric
+       or v_existing_reversal.other_cost_paid is distinct from 0::numeric
+       or v_existing_reversal.breakdown_complete is distinct from false
+       or v_existing_reversal.movement_id is not null
+       or v_existing_reversal.description is distinct from v_description then
       raise exception 'DEBT_EVENT_ID_CONFLICT';
     end if;
+
+    select s.*
+      into v_existing_schedule
+      from public.debt_schedule_versions as s
+     where s.trigger_event_id = p_reversal_event_id
+       and s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+     order by s.version_number desc
+     limit 1;
+
+    if v_target_has_schedule then
+      if not found
+         or pg_catalog.jsonb_array_length(p_schedule_installments) = 0
+         or private.debt2b2_canonical_schedule(p_schedule_installments)
+              is distinct from private.debt2b2_persisted_schedule(v_existing_schedule.id)
+         or v_existing_schedule.notes is distinct from coalesce(p_schedule_notes, '') then
+        raise exception 'DEBT_EVENT_ID_CONFLICT';
+      end if;
+    elsif pg_catalog.jsonb_array_length(p_schedule_installments) <> 0
+       or coalesce(p_schedule_notes, '') <> '' then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
     return private.debt2b2_reversal_result(p_reversal_event_id, true);
   end if;
 
+  if v_debt.is_archived then
+    raise exception 'DEBT_ARCHIVED';
+  end if;
+  if v_debt.status = 'refinanced' then
+    raise exception 'DEBT_NOT_ACTIVE';
+  end if;
   if exists (
-    select 1 from public.debt_events as r
-     where r.household_id = p_household_id and r.debt_id = p_debt_id
-       and r.event_type = 'reversal' and r.reversal_of_event_id = p_target_event_id
+    select 1
+      from public.debt_events as r
+     where r.debt_id = p_debt_id
+       and r.household_id = p_household_id
+       and r.event_type = 'reversal'
+       and r.reversal_of_event_id = p_target_event_id
   ) then
-    raise exception 'TARGET_ALREADY_REVERSED';
+    raise exception 'DEBT_EVENT_ALREADY_REVERSED';
+  end if;
+
+  if v_target_has_schedule and pg_catalog.jsonb_array_length(p_schedule_installments) = 0 then
+    raise exception 'DEBT_REVERSAL_SCHEDULE_REQUIRED';
+  end if;
+  if not v_target_has_schedule and pg_catalog.jsonb_array_length(p_schedule_installments) > 0 then
+    raise exception 'DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED';
+  end if;
+  if not v_target_has_schedule and coalesce(p_schedule_notes, '') <> '' then
+    raise exception 'DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED';
+  end if;
+
+  if v_target.movement_id is not null then
+    perform 1
+      from public.movements as m
+     where m.id = v_target.movement_id
+       and m.household_id = p_household_id
+     for update;
+    if not found then
+      raise exception 'DEBT_MOVEMENT_CONFLICT';
+    end if;
   end if;
 
   insert into public.debt_events (
-    id, debt_id, household_id, event_date, event_type, cash_amount, principal_delta,
-    interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete,
-    movement_id, reversal_of_event_id, description, registered_by_user_id, created_at
+    id, debt_id, household_id, event_date, event_type, cash_amount,
+    principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid,
+    breakdown_complete, movement_id, reversal_of_event_id, description,
+    registered_by_user_id
   ) values (
     p_reversal_event_id, p_debt_id, p_household_id, p_event_date, 'reversal',
-    0, 0, 0, 0, 0, 0, false, null, p_target_event_id, coalesce(p_description, 'Reversión'), v_user_id, now()
-  ) returning * into v_reversal_event;
+    0, 0, 0, 0, 0, 0, false, null, p_target_event_id, v_description, v_user_id
+  ) returning * into v_reversal;
 
+  if v_target_has_schedule then
+    select s.*
+      into v_previous_schedule
+      from public.debt_schedule_versions as s
+     where s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+       and s.version_number < v_target_schedule.version_number
+     order by s.version_number desc
+     limit 1
+     for update;
+    if not found then
+      raise exception 'DEBT_REVERSAL_SCHEDULE_NOT_FOUND';
+    end if;
+
+    perform private.debt2b2_create_schedule_v2(
+      p_household_id,
+      p_debt_id,
+      p_reversal_event_id,
+      p_event_date,
+      'reversal',
+      p_schedule_notes,
+      p_schedule_installments,
+      v_user_id,
+      v_previous_schedule.schedule_source,
+      v_previous_schedule.is_authoritative
+    );
+  end if;
+
+  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
   perform private.debt2b2_reconcile_status(
-    p_household_id, p_debt_id, private.debt2b2_current_principal(p_household_id, p_debt_id)
+    p_household_id,
+    p_debt_id,
+    v_current_principal
   );
 
   return private.debt2b2_reversal_result(p_reversal_event_id, false);
@@ -5296,10 +6364,16 @@ $$;
 
 ALTER FUNCTION "public"."reverse_debt_event_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_event_id" "uuid", "p_target_event_id" "uuid", "p_event_date" "date", "p_description" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text") OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "reverse_debt_event_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_event_id" "uuid", "p_target_event_id" "uuid", "p_event_date" "date", "p_description" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text"); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."reverse_debt_event_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_event_id" "uuid", "p_target_event_id" "uuid", "p_event_date" "date", "p_description" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text") IS 'DEBT-2B.2: atomic Debt classification reversal. It writes only a zero-financial-effect reversal event, never changes or compensates the original Movement, and appends a recalculated reversal schedule when required.';
 
 
+--
+-- Name: save_credit_card_profile_v1("uuid", "uuid", numeric, integer, integer, "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."save_credit_card_profile_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5393,6 +6467,9 @@ $_$;
 
 ALTER FUNCTION "public"."save_credit_card_profile_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text") OWNER TO "postgres";
 
+--
+-- Name: set_debt_archived_v1("uuid", "uuid", boolean); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."set_debt_archived_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_is_archived" boolean) RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5442,10 +6519,16 @@ $$;
 
 ALTER FUNCTION "public"."set_debt_archived_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_is_archived" boolean) OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "set_debt_archived_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_is_archived" boolean); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."set_debt_archived_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_is_archived" boolean) IS 'DEBT-2A: archivo lógico de la deuda cambiando únicamente is_archived (updated_at lo actualiza el trigger existente). Nunca DELETE: el histórico financiero permanece.';
 
 
+--
+-- Name: sync_cash_account_opening_balance(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."sync_cash_account_opening_balance"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -5464,6 +6547,9 @@ $$;
 
 ALTER FUNCTION "public"."sync_cash_account_opening_balance"() OWNER TO "postgres";
 
+--
+-- Name: sync_linked_recurring_payment("uuid"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."sync_linked_recurring_payment"("p_debt_id" "uuid") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5603,6 +6689,9 @@ $$;
 
 ALTER FUNCTION "public"."sync_linked_recurring_payment"("p_debt_id" "uuid") OWNER TO "postgres";
 
+--
+-- Name: touch_financial_accounts_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."touch_financial_accounts_updated_at"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -5617,6 +6706,9 @@ $$;
 
 ALTER FUNCTION "public"."touch_financial_accounts_updated_at"() OWNER TO "postgres";
 
+--
+-- Name: touch_movements_updated_at(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."touch_movements_updated_at"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -5631,6 +6723,9 @@ $$;
 
 ALTER FUNCTION "public"."touch_movements_updated_at"() OWNER TO "postgres";
 
+--
+-- Name: trg_protect_debt_linked_recurring(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."trg_protect_debt_linked_recurring"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -5661,6 +6756,9 @@ $$;
 
 ALTER FUNCTION "public"."trg_protect_debt_linked_recurring"() OWNER TO "postgres";
 
+--
+-- Name: trg_sync_debt_events_recurring(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."trg_sync_debt_events_recurring"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5679,6 +6777,9 @@ $$;
 
 ALTER FUNCTION "public"."trg_sync_debt_events_recurring"() OWNER TO "postgres";
 
+--
+-- Name: trg_sync_debt_recurring(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."trg_sync_debt_recurring"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5697,6 +6798,9 @@ $$;
 
 ALTER FUNCTION "public"."trg_sync_debt_recurring"() OWNER TO "postgres";
 
+--
+-- Name: unregister_push_subscription("uuid", "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."unregister_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") RETURNS boolean
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5738,6 +6842,9 @@ $$;
 
 ALTER FUNCTION "public"."unregister_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") OWNER TO "postgres";
 
+--
+-- Name: update_debt_metadata_v1("uuid", "uuid", "text", "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."update_debt_metadata_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_notes" "text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5790,10 +6897,16 @@ $$;
 
 ALTER FUNCTION "public"."update_debt_metadata_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_notes" "text") OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "update_debt_metadata_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_notes" "text"); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."update_debt_metadata_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_notes" "text") IS 'DEBT-2A: edita ÚNICAMENTE metadata descriptiva (name, creditor_name, notes). No cambia términos financieros: opening_principal_balance, tracking_start_date, debt_kind, currency_code, cronograma, tasas y frecuencia permanecen inmutables vía API; su modificación requerirá operaciones/versionado posteriores (DEBT-2B+), nunca un UPDATE silencioso.';
 
 
+--
+-- Name: update_debt_terms_v1("uuid", "uuid", "text", "text", numeric, "text", numeric, numeric, "text", integer, boolean, boolean, boolean, boolean); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."update_debt_terms_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text" DEFAULT NULL::"text", "p_interest_calculation_mode" "text" DEFAULT NULL::"text", "p_periodic_rate_percent" numeric DEFAULT NULL::numeric, "p_periodic_rate_basis" "text" DEFAULT NULL::"text", "p_tea_percent" numeric DEFAULT NULL::numeric, "p_tcea_percent" numeric DEFAULT NULL::numeric, "p_payment_frequency" "text" DEFAULT NULL::"text", "p_custom_frequency_days" integer DEFAULT NULL::integer, "p_clear_periodic_rate" boolean DEFAULT false, "p_clear_tea" boolean DEFAULT false, "p_clear_tcea" boolean DEFAULT false, "p_clear_frequency" boolean DEFAULT false) RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5912,10 +7025,16 @@ $$;
 
 ALTER FUNCTION "public"."update_debt_terms_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean) OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "update_debt_terms_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."update_debt_terms_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean) IS 'DEBT-6B: Permite actualizar o limpiar los términos financieros y estructura de pago de una deuda activa (repayment_structure, interest_calculation_mode, periodic_rate_percent, periodic_rate_basis, tea_percent, tcea_percent, payment_frequency, custom_frequency_days).';
 
 
+--
+-- Name: update_debt_terms_v2("uuid", "uuid", "text", "text", numeric, "text", numeric, numeric, "text", integer, boolean, boolean, boolean, boolean, "date", boolean, numeric, boolean); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."update_debt_terms_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text" DEFAULT NULL::"text", "p_interest_calculation_mode" "text" DEFAULT NULL::"text", "p_periodic_rate_percent" numeric DEFAULT NULL::numeric, "p_periodic_rate_basis" "text" DEFAULT NULL::"text", "p_tea_percent" numeric DEFAULT NULL::numeric, "p_tcea_percent" numeric DEFAULT NULL::numeric, "p_payment_frequency" "text" DEFAULT NULL::"text", "p_custom_frequency_days" integer DEFAULT NULL::integer, "p_clear_periodic_rate" boolean DEFAULT false, "p_clear_tea" boolean DEFAULT false, "p_clear_tcea" boolean DEFAULT false, "p_clear_frequency" boolean DEFAULT false, "p_first_due_date" "date" DEFAULT NULL::"date", "p_clear_first_due_date" boolean DEFAULT false, "p_minimum_principal_payment" numeric DEFAULT NULL::numeric, "p_clear_minimum_principal_payment" boolean DEFAULT false) RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5978,10 +7097,16 @@ $$;
 
 ALTER FUNCTION "public"."update_debt_terms_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean, "p_first_due_date" "date", "p_clear_first_due_date" boolean, "p_minimum_principal_payment" numeric, "p_clear_minimum_principal_payment" boolean) OWNER TO "postgres";
 
+--
+-- Name: FUNCTION "update_debt_terms_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean, "p_first_due_date" "date", "p_clear_first_due_date" boolean, "p_minimum_principal_payment" numeric, "p_clear_minimum_principal_payment" boolean); Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON FUNCTION "public"."update_debt_terms_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean, "p_first_due_date" "date", "p_clear_first_due_date" boolean, "p_minimum_principal_payment" numeric, "p_clear_minimum_principal_payment" boolean) IS 'DEBT-6B.2: Actualiza términos de deuda incluyendo día/fecha de vencimiento y abono mínimo obligatorio a capital.';
 
 
+--
+-- Name: validate_credit_card_profile_kind(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."validate_credit_card_profile_kind"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -6009,6 +7134,9 @@ $$;
 
 ALTER FUNCTION "public"."validate_credit_card_profile_kind"() OWNER TO "postgres";
 
+--
+-- Name: validate_debt_event_movement(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."validate_debt_event_movement"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -6072,6 +7200,9 @@ $$;
 
 ALTER FUNCTION "public"."validate_debt_event_movement"() OWNER TO "postgres";
 
+--
+-- Name: validate_debt_event_reversal(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."validate_debt_event_reversal"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -6101,6 +7232,9 @@ $$;
 
 ALTER FUNCTION "public"."validate_debt_event_reversal"() OWNER TO "postgres";
 
+--
+-- Name: validate_debt_installment_allocation(); Type: FUNCTION; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE FUNCTION "public"."validate_debt_installment_allocation"() RETURNS "trigger"
     LANGUAGE "plpgsql"
@@ -6115,12 +7249,15 @@ begin
    where de.id = new.event_id
      and de.debt_id = new.debt_id
      and de.household_id = new.household_id;
+
   if not found then
     raise exception 'DEBT_EVENT_NOT_FOUND';
   end if;
-  if v_event_type <> 'payment' then
+
+  if v_event_type not in ('payment', 'installment_advance') then
     raise exception 'DEBT_EVENT_NOT_ALLOCATABLE';
   end if;
+
   return new;
 end;
 $$;
@@ -6128,6 +7265,9 @@ $$;
 
 ALTER FUNCTION "public"."validate_debt_installment_allocation"() OWNER TO "postgres";
 
+--
+-- Name: account_reconciliation_movements; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."account_reconciliation_movements" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6143,6 +7283,9 @@ CREATE TABLE IF NOT EXISTS "public"."account_reconciliation_movements" (
 
 ALTER TABLE "public"."account_reconciliation_movements" OWNER TO "postgres";
 
+--
+-- Name: account_reconciliations; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."account_reconciliations" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6165,6 +7308,9 @@ CREATE TABLE IF NOT EXISTS "public"."account_reconciliations" (
 
 ALTER TABLE "public"."account_reconciliations" OWNER TO "postgres";
 
+--
+-- Name: bank_loan_profiles; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."bank_loan_profiles" (
     "debt_id" "uuid" NOT NULL,
@@ -6199,6 +7345,9 @@ CREATE TABLE IF NOT EXISTS "public"."bank_loan_profiles" (
 
 ALTER TABLE "public"."bank_loan_profiles" OWNER TO "postgres";
 
+--
+-- Name: cash_counts; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."cash_counts" (
     "id" "text" NOT NULL,
@@ -6214,6 +7363,9 @@ CREATE TABLE IF NOT EXISTS "public"."cash_counts" (
 
 ALTER TABLE "public"."cash_counts" OWNER TO "postgres";
 
+--
+-- Name: categories; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."categories" (
     "id" "text" NOT NULL,
@@ -6230,6 +7382,9 @@ CREATE TABLE IF NOT EXISTS "public"."categories" (
 
 ALTER TABLE "public"."categories" OWNER TO "postgres";
 
+--
+-- Name: credit_card_entries; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."credit_card_entries" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6255,6 +7410,9 @@ CREATE TABLE IF NOT EXISTS "public"."credit_card_entries" (
 
 ALTER TABLE "public"."credit_card_entries" OWNER TO "postgres";
 
+--
+-- Name: credit_card_profiles; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."credit_card_profiles" (
     "debt_id" "uuid" NOT NULL,
@@ -6275,6 +7433,9 @@ CREATE TABLE IF NOT EXISTS "public"."credit_card_profiles" (
 
 ALTER TABLE "public"."credit_card_profiles" OWNER TO "postgres";
 
+--
+-- Name: credit_card_statements; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."credit_card_statements" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6294,6 +7455,9 @@ CREATE TABLE IF NOT EXISTS "public"."credit_card_statements" (
 
 ALTER TABLE "public"."credit_card_statements" OWNER TO "postgres";
 
+--
+-- Name: debt_collaterals; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."debt_collaterals" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6317,6 +7481,9 @@ CREATE TABLE IF NOT EXISTS "public"."debt_collaterals" (
 
 ALTER TABLE "public"."debt_collaterals" OWNER TO "postgres";
 
+--
+-- Name: debt_event_installment_allocations; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."debt_event_installment_allocations" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6333,10 +7500,16 @@ CREATE TABLE IF NOT EXISTS "public"."debt_event_installment_allocations" (
 
 ALTER TABLE "public"."debt_event_installment_allocations" OWNER TO "postgres";
 
+--
+-- Name: TABLE "debt_event_installment_allocations"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON TABLE "public"."debt_event_installment_allocations" IS 'Allocation: solo eventos payment son asignables a cuotas. Principal prepayment y payoff NO marcan cuotas como pagadas automáticamente. El control de SUM(allocated_amount) <= event.cash_amount será responsabilidad de la operación atómica DEBT-2. Las allocations de un payment posteriormente revertido permanecen históricamente almacenadas; al calcular el estado de una cuota se consideran únicamente allocations de payments efectivos (no revertidos). No se borran allocations ni se crean reversals de allocation.';
 
 
+--
+-- Name: debt_events; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."debt_events" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6385,22 +7558,37 @@ CREATE TABLE IF NOT EXISTS "public"."debt_events" (
 
 ALTER TABLE "public"."debt_events" OWNER TO "postgres";
 
+--
+-- Name: TABLE "debt_events"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON TABLE "public"."debt_events" IS 'DEBT-2B.2 reversals correct Debt classification only. The original Movement and its cash fact remain immutable; cash corrections are outside this gate.';
 
 
+--
+-- Name: COLUMN "debt_events"."principal_delta"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON COLUMN "public"."debt_events"."principal_delta" IS 'Contrato: principal_delta < 0 reduce el principal pendiente; > 0 lo incrementa; = 0 no lo altera. Saldo = opening_principal_balance + SUM(principal_delta) de eventos efectivos no revertidos (los reversals no se suman). DEBT-2 deberá impedir que una operación normal deje current_principal < 0; la constraint cross-row se implementará en DEBT-2 por requerir operación transaccional/concurrencia.';
 
 
+--
+-- Name: COLUMN "debt_events"."movement_id"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON COLUMN "public"."debt_events"."movement_id" IS 'Movimiento financiero opcional en DEBT-1A. La creación atómica movimiento + pago llegará en DEBT-2. Un mismo movement_id solo puede pertenecer a un evento efectivo a la vez; revertido el evento anterior, el movimiento puede reutilizarse en un evento correctivo. La garantía concurrente de un solo evento efectivo por movimiento (considerando solo eventos no revertidos) se implementa atómicamente en DEBT-2. El reversal no lleva movement_id: el vínculo histórico queda en el evento original.';
 
 
+--
+-- Name: COLUMN "debt_events"."reversal_of_event_id"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON COLUMN "public"."debt_events"."reversal_of_event_id" IS 'Un reversal invalida lógicamente el evento objetivo. Los cálculos financieros deben considerar únicamente eventos no-reversal que no hayan sido objetivo de un reversal. El reversal en sí no se suma financieramente.';
 
 
+--
+-- Name: debt_installments; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."debt_installments" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6428,10 +7616,16 @@ CREATE TABLE IF NOT EXISTS "public"."debt_installments" (
 
 ALTER TABLE "public"."debt_installments" OWNER TO "postgres";
 
+--
+-- Name: COLUMN "debt_installments"."expected_amount"; Type: COMMENT; Schema: public; Owner: postgres
+--
 
 COMMENT ON COLUMN "public"."debt_installments"."expected_amount" IS 'El estado de cada cuota (pagada/pendiente) NO se almacena: se deriva de debt_event_installment_allocations y eventos.';
 
 
+--
+-- Name: debt_insurance_terms; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."debt_insurance_terms" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6460,6 +7654,9 @@ CREATE TABLE IF NOT EXISTS "public"."debt_insurance_terms" (
 
 ALTER TABLE "public"."debt_insurance_terms" OWNER TO "postgres";
 
+--
+-- Name: financial_accounts; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."financial_accounts" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6480,6 +7677,9 @@ CREATE TABLE IF NOT EXISTS "public"."financial_accounts" (
 
 ALTER TABLE "public"."financial_accounts" OWNER TO "postgres";
 
+--
+-- Name: household_members; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."household_members" (
     "household_id" "uuid" NOT NULL,
@@ -6493,6 +7693,9 @@ CREATE TABLE IF NOT EXISTS "public"."household_members" (
 
 ALTER TABLE "public"."household_members" OWNER TO "postgres";
 
+--
+-- Name: households; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."households" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6503,6 +7706,9 @@ CREATE TABLE IF NOT EXISTS "public"."households" (
 
 ALTER TABLE "public"."households" OWNER TO "postgres";
 
+--
+-- Name: movement_corrections; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."movement_corrections" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6520,6 +7726,9 @@ CREATE TABLE IF NOT EXISTS "public"."movement_corrections" (
 
 ALTER TABLE "public"."movement_corrections" OWNER TO "postgres";
 
+--
+-- Name: push_notification_deliveries; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."push_notification_deliveries" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6539,6 +7748,9 @@ CREATE TABLE IF NOT EXISTS "public"."push_notification_deliveries" (
 
 ALTER TABLE "public"."push_notification_deliveries" OWNER TO "postgres";
 
+--
+-- Name: push_subscriptions; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."push_subscriptions" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
@@ -6563,6 +7775,9 @@ CREATE TABLE IF NOT EXISTS "public"."push_subscriptions" (
 
 ALTER TABLE "public"."push_subscriptions" OWNER TO "postgres";
 
+--
+-- Name: recurring_payments; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."recurring_payments" (
     "id" "text" NOT NULL,
@@ -6602,6 +7817,9 @@ CREATE TABLE IF NOT EXISTS "public"."recurring_payments" (
 
 ALTER TABLE "public"."recurring_payments" OWNER TO "postgres";
 
+--
+-- Name: settings; Type: TABLE; Schema: public; Owner: postgres
+--
 
 CREATE TABLE IF NOT EXISTS "public"."settings" (
     "household_id" "uuid" NOT NULL,
@@ -6612,730 +7830,1212 @@ CREATE TABLE IF NOT EXISTS "public"."settings" (
 
 ALTER TABLE "public"."settings" OWNER TO "postgres";
 
+--
+-- Name: account_reconciliation_movements account_reconciliation_movements_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."account_reconciliation_movements"
     ADD CONSTRAINT "account_reconciliation_movements_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: account_reconciliation_movements account_reconciliation_movements_unique_rec_mov; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."account_reconciliation_movements"
     ADD CONSTRAINT "account_reconciliation_movements_unique_rec_mov" UNIQUE ("reconciliation_id", "movement_id");
 
 
+--
+-- Name: account_reconciliations account_reconciliations_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."account_reconciliations"
     ADD CONSTRAINT "account_reconciliations_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: bank_loan_profiles bank_loan_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."bank_loan_profiles"
     ADD CONSTRAINT "bank_loan_profiles_pkey" PRIMARY KEY ("debt_id");
 
 
+--
+-- Name: cash_counts cash_counts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."cash_counts"
     ADD CONSTRAINT "cash_counts_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: categories categories_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."categories"
     ADD CONSTRAINT "categories_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: credit_card_entries credit_card_entries_id_debt_household_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_entries"
     ADD CONSTRAINT "credit_card_entries_id_debt_household_key" UNIQUE ("id", "debt_id", "household_id");
 
 
+--
+-- Name: credit_card_entries credit_card_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_entries"
     ADD CONSTRAINT "credit_card_entries_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: credit_card_profiles credit_card_profiles_debt_household_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_profiles"
     ADD CONSTRAINT "credit_card_profiles_debt_household_key" UNIQUE ("debt_id", "household_id");
 
 
+--
+-- Name: credit_card_profiles credit_card_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_profiles"
     ADD CONSTRAINT "credit_card_profiles_pkey" PRIMARY KEY ("debt_id");
 
 
+--
+-- Name: credit_card_statements credit_card_statements_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_statements"
     ADD CONSTRAINT "credit_card_statements_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: credit_card_statements credit_card_statements_unique_cycle; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_statements"
     ADD CONSTRAINT "credit_card_statements_unique_cycle" UNIQUE ("debt_id", "statement_date");
 
 
+--
+-- Name: debt_collaterals debt_collaterals_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_collaterals"
     ADD CONSTRAINT "debt_collaterals_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: debt_event_installment_allocations debt_event_installment_allocations_event_installment_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_event_installment_allocations"
     ADD CONSTRAINT "debt_event_installment_allocations_event_installment_key" UNIQUE ("event_id", "installment_id");
 
 
+--
+-- Name: debt_event_installment_allocations debt_event_installment_allocations_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_event_installment_allocations"
     ADD CONSTRAINT "debt_event_installment_allocations_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: debt_events debt_events_id_debt_household_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_events"
     ADD CONSTRAINT "debt_events_id_debt_household_key" UNIQUE ("id", "debt_id", "household_id");
 
 
+--
+-- Name: debt_events debt_events_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_events"
     ADD CONSTRAINT "debt_events_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: debt_installments debt_installments_id_debt_household_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_installments"
     ADD CONSTRAINT "debt_installments_id_debt_household_key" UNIQUE ("id", "debt_id", "household_id");
 
 
+--
+-- Name: debt_installments debt_installments_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_installments"
     ADD CONSTRAINT "debt_installments_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: debt_installments debt_installments_schedule_version_number_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_installments"
     ADD CONSTRAINT "debt_installments_schedule_version_number_key" UNIQUE ("schedule_version_id", "installment_number");
 
 
+--
+-- Name: debt_insurance_terms debt_insurance_terms_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_insurance_terms"
     ADD CONSTRAINT "debt_insurance_terms_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: debt_schedule_versions debt_schedule_versions_debt_version_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_schedule_versions"
     ADD CONSTRAINT "debt_schedule_versions_debt_version_key" UNIQUE ("debt_id", "version_number");
 
 
+--
+-- Name: debt_schedule_versions debt_schedule_versions_id_debt_household_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_schedule_versions"
     ADD CONSTRAINT "debt_schedule_versions_id_debt_household_key" UNIQUE ("id", "debt_id", "household_id");
 
 
+--
+-- Name: debt_schedule_versions debt_schedule_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_schedule_versions"
     ADD CONSTRAINT "debt_schedule_versions_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: debts debts_id_household_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debts"
     ADD CONSTRAINT "debts_id_household_key" UNIQUE ("id", "household_id");
 
 
+--
+-- Name: debts debts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debts"
     ADD CONSTRAINT "debts_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: financial_accounts financial_accounts_id_household_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."financial_accounts"
     ADD CONSTRAINT "financial_accounts_id_household_key" UNIQUE ("id", "household_id");
 
 
+--
+-- Name: financial_accounts financial_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."financial_accounts"
     ADD CONSTRAINT "financial_accounts_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: household_members household_members_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."household_members"
     ADD CONSTRAINT "household_members_pkey" PRIMARY KEY ("household_id", "user_id");
 
 
+--
+-- Name: households households_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."households"
     ADD CONSTRAINT "households_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: movement_corrections movement_corrections_correction_id_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movement_corrections"
     ADD CONSTRAINT "movement_corrections_correction_id_key" UNIQUE ("correction_id");
 
 
+--
+-- Name: movement_corrections movement_corrections_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movement_corrections"
     ADD CONSTRAINT "movement_corrections_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: movements movements_id_household_key; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movements"
     ADD CONSTRAINT "movements_id_household_key" UNIQUE ("id", "household_id");
 
 
+--
+-- Name: movements movements_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movements"
     ADD CONSTRAINT "movements_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: push_notification_deliveries push_notification_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_notification_deliveries"
     ADD CONSTRAINT "push_notification_deliveries_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: push_notification_deliveries push_notification_deliveries_subscription_day_type_unique; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_notification_deliveries"
     ADD CONSTRAINT "push_notification_deliveries_subscription_day_type_unique" UNIQUE ("subscription_id", "notification_date", "notification_type");
 
 
+--
+-- Name: push_subscriptions push_subscriptions_endpoint_unique; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_subscriptions"
     ADD CONSTRAINT "push_subscriptions_endpoint_unique" UNIQUE ("endpoint");
 
 
+--
+-- Name: push_subscriptions push_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_subscriptions"
     ADD CONSTRAINT "push_subscriptions_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: recurring_payments recurring_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."recurring_payments"
     ADD CONSTRAINT "recurring_payments_pkey" PRIMARY KEY ("id");
 
 
+--
+-- Name: settings settings_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."settings"
     ADD CONSTRAINT "settings_pkey" PRIMARY KEY ("household_id");
 
 
+--
+-- Name: debt_events_reversal_of_event_key; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE UNIQUE INDEX "debt_events_reversal_of_event_key" ON "public"."debt_events" USING "btree" ("reversal_of_event_id") WHERE ("reversal_of_event_id" IS NOT NULL);
 
 
+--
+-- Name: financial_accounts_one_active_cash_per_household; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE UNIQUE INDEX "financial_accounts_one_active_cash_per_household" ON "public"."financial_accounts" USING "btree" ("household_id") WHERE (("reconciliation_type" = 'cash'::"text") AND ("is_active" = true));
 
 
+--
+-- Name: idx_account_reconciliation_movements_movement; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_account_reconciliation_movements_movement" ON "public"."account_reconciliation_movements" USING "btree" ("movement_id");
 
 
+--
+-- Name: idx_account_reconciliation_movements_rec; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_account_reconciliation_movements_rec" ON "public"."account_reconciliation_movements" USING "btree" ("reconciliation_id");
 
 
+--
+-- Name: idx_account_reconciliations_household_account; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_account_reconciliations_household_account" ON "public"."account_reconciliations" USING "btree" ("household_id", "account_id", "created_at" DESC);
 
 
+--
+-- Name: idx_bank_loan_profiles_household; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_bank_loan_profiles_household" ON "public"."bank_loan_profiles" USING "btree" ("household_id");
 
 
+--
+-- Name: idx_cash_counts_account_household; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_cash_counts_account_household" ON "public"."cash_counts" USING "btree" ("account_id", "household_id");
 
 
+--
+-- Name: idx_credit_card_entries_credit_target; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_credit_card_entries_credit_target" ON "public"."credit_card_entries" USING "btree" ("credit_of_entry_id") WHERE ("credit_of_entry_id" IS NOT NULL);
 
 
+--
+-- Name: idx_credit_card_entries_debt_date; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_credit_card_entries_debt_date" ON "public"."credit_card_entries" USING "btree" ("household_id", "debt_id", "entry_date", "created_at");
 
 
+--
+-- Name: idx_credit_card_entries_movement_id; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE UNIQUE INDEX "idx_credit_card_entries_movement_id" ON "public"."credit_card_entries" USING "btree" ("movement_id") WHERE ("movement_id" IS NOT NULL);
 
 
+--
+-- Name: idx_credit_card_entries_reversal_target; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE UNIQUE INDEX "idx_credit_card_entries_reversal_target" ON "public"."credit_card_entries" USING "btree" ("reversal_of_entry_id") WHERE ("reversal_of_entry_id" IS NOT NULL);
 
 
+--
+-- Name: idx_debt_collaterals_debt; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_debt_collaterals_debt" ON "public"."debt_collaterals" USING "btree" ("debt_id");
 
 
+--
+-- Name: idx_debt_event_installment_allocations_installment; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_debt_event_installment_allocations_installment" ON "public"."debt_event_installment_allocations" USING "btree" ("installment_id");
 
 
+--
+-- Name: idx_debt_events_debt_household_date; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_debt_events_debt_household_date" ON "public"."debt_events" USING "btree" ("debt_id", "household_id", "event_date");
 
 
+--
+-- Name: idx_debt_events_movement_id; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_debt_events_movement_id" ON "public"."debt_events" USING "btree" ("movement_id") WHERE ("movement_id" IS NOT NULL);
 
 
+--
+-- Name: idx_debt_installments_debt_due_date; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_debt_installments_debt_due_date" ON "public"."debt_installments" USING "btree" ("debt_id", "due_date");
 
 
+--
+-- Name: idx_debt_installments_household_due_date; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_debt_installments_household_due_date" ON "public"."debt_installments" USING "btree" ("household_id", "due_date");
 
 
+--
+-- Name: idx_debt_insurance_terms_debt_household; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_debt_insurance_terms_debt_household" ON "public"."debt_insurance_terms" USING "btree" ("debt_id", "household_id");
 
 
+--
+-- Name: idx_debts_household_status_archived; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_debts_household_status_archived" ON "public"."debts" USING "btree" ("household_id", "status", "is_archived");
 
 
+--
+-- Name: idx_financial_accounts_household; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_financial_accounts_household" ON "public"."financial_accounts" USING "btree" ("household_id");
 
 
+--
+-- Name: idx_financial_accounts_household_active_sort; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_financial_accounts_household_active_sort" ON "public"."financial_accounts" USING "btree" ("household_id", "is_active", "sort_order");
 
 
+--
+-- Name: idx_household_members_user_id; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_household_members_user_id" ON "public"."household_members" USING "btree" ("user_id");
 
 
+--
+-- Name: idx_movement_corrections_household_movement; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_movement_corrections_household_movement" ON "public"."movement_corrections" USING "btree" ("household_id", "movement_id", "created_at" DESC);
 
 
+--
+-- Name: idx_movements_account_household; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_movements_account_household" ON "public"."movements" USING "btree" ("account_id", "household_id");
 
 
+--
+-- Name: idx_movements_registered_by_user; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_movements_registered_by_user" ON "public"."movements" USING "btree" ("household_id", "registered_by_user_id");
 
 
+--
+-- Name: idx_push_notification_deliveries_date_type; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_push_notification_deliveries_date_type" ON "public"."push_notification_deliveries" USING "btree" ("notification_date", "notification_type");
 
 
+--
+-- Name: idx_push_subscriptions_active_household; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_push_subscriptions_active_household" ON "public"."push_subscriptions" USING "btree" ("household_id", "app_origin") WHERE ("is_active" = true);
 
 
+--
+-- Name: idx_push_subscriptions_user; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_push_subscriptions_user" ON "public"."push_subscriptions" USING "btree" ("user_id");
 
 
+--
+-- Name: idx_recurring_payments_linked_debt; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE INDEX "idx_recurring_payments_linked_debt" ON "public"."recurring_payments" USING "btree" ("linked_debt_id");
 
 
+--
+-- Name: idx_recurring_payments_unique_linked_debt; Type: INDEX; Schema: public; Owner: postgres
+--
 
 CREATE UNIQUE INDEX "idx_recurring_payments_unique_linked_debt" ON "public"."recurring_payments" USING "btree" ("linked_debt_id") WHERE ("linked_debt_id" IS NOT NULL);
 
 
+--
+-- Name: debts trg_bank_loan_profile_required; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE CONSTRAINT TRIGGER "trg_bank_loan_profile_required" AFTER INSERT OR UPDATE ON "public"."debts" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION "private"."require_bank_loan_profile"();
+
+
+--
+-- Name: bank_loan_profiles trg_bank_loan_profile_schedule_required; Type: TRIGGER; Schema: public; Owner: postgres
+--
+
+CREATE CONSTRAINT TRIGGER "trg_bank_loan_profile_schedule_required" AFTER INSERT OR UPDATE ON "public"."bank_loan_profiles" DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION "private"."require_bank_loan_schedule"();
+
+
+--
+-- Name: cash_counts trg_cash_counts_legacy_account_sync; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_cash_counts_legacy_account_sync" BEFORE INSERT ON "public"."cash_counts" FOR EACH ROW EXECUTE FUNCTION "public"."cash_counts_legacy_account_sync"();
 
 
+--
+-- Name: credit_card_profiles trg_credit_card_profiles_validate_kind; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_credit_card_profiles_validate_kind" BEFORE INSERT OR UPDATE ON "public"."credit_card_profiles" FOR EACH ROW EXECUTE FUNCTION "public"."validate_credit_card_profile_kind"();
 
 
+--
+-- Name: debt_collaterals trg_debt_collaterals_protect_identity; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_debt_collaterals_protect_identity" BEFORE UPDATE ON "public"."debt_collaterals" FOR EACH ROW EXECUTE FUNCTION "public"."protect_debt_collateral_identity"();
 
 
+--
+-- Name: debt_collaterals trg_debt_collaterals_touch_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_debt_collaterals_touch_updated_at" BEFORE UPDATE ON "public"."debt_collaterals" FOR EACH ROW EXECUTE FUNCTION "public"."touch_financial_accounts_updated_at"();
 
 
+--
+-- Name: debt_event_installment_allocations trg_debt_event_installment_allocations_validate_event; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_debt_event_installment_allocations_validate_event" BEFORE INSERT ON "public"."debt_event_installment_allocations" FOR EACH ROW EXECUTE FUNCTION "public"."validate_debt_installment_allocation"();
 
 
+--
+-- Name: debt_events trg_debt_events_validate_movement; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_debt_events_validate_movement" BEFORE INSERT ON "public"."debt_events" FOR EACH ROW EXECUTE FUNCTION "public"."validate_debt_event_movement"();
 
 
+--
+-- Name: debt_events trg_debt_events_validate_reversal; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_debt_events_validate_reversal" BEFORE INSERT ON "public"."debt_events" FOR EACH ROW EXECUTE FUNCTION "public"."validate_debt_event_reversal"();
 
 
+--
+-- Name: debts trg_debts_protect_financial_baseline; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_debts_protect_financial_baseline" BEFORE UPDATE OF "opening_principal_balance", "tracking_start_date" ON "public"."debts" FOR EACH ROW EXECUTE FUNCTION "public"."protect_debt_financial_baseline"();
 
 
+--
+-- Name: debts trg_debts_protect_identity; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_debts_protect_identity" BEFORE UPDATE ON "public"."debts" FOR EACH ROW EXECUTE FUNCTION "public"."protect_debt_identity"();
 
 
+--
+-- Name: debts trg_debts_touch_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_debts_touch_updated_at" BEFORE UPDATE ON "public"."debts" FOR EACH ROW EXECUTE FUNCTION "public"."touch_financial_accounts_updated_at"();
 
 
+--
+-- Name: financial_accounts trg_financial_accounts_touch_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_financial_accounts_touch_updated_at" BEFORE UPDATE ON "public"."financial_accounts" FOR EACH ROW EXECUTE FUNCTION "public"."touch_financial_accounts_updated_at"();
 
 
+--
+-- Name: households trg_households_provision_default_cash_account; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_households_provision_default_cash_account" AFTER INSERT ON "public"."households" FOR EACH ROW EXECUTE FUNCTION "public"."provision_default_cash_account"();
 
 
+--
+-- Name: movements trg_movements_legacy_cash_account_sync; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_movements_legacy_cash_account_sync" BEFORE INSERT OR UPDATE ON "public"."movements" FOR EACH ROW EXECUTE FUNCTION "public"."movements_legacy_cash_account_sync"();
 
 
+--
+-- Name: movements trg_movements_protect_semantics; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_movements_protect_semantics" BEFORE INSERT OR DELETE OR UPDATE ON "public"."movements" FOR EACH ROW EXECUTE FUNCTION "public"."protect_movement_semantics"();
 
 
+--
+-- Name: movements trg_movements_touch_updated_at; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_movements_touch_updated_at" BEFORE UPDATE ON "public"."movements" FOR EACH ROW EXECUTE FUNCTION "public"."touch_movements_updated_at"();
 
 
+--
+-- Name: recurring_payments trg_protect_debt_linked_recurring_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_protect_debt_linked_recurring_trigger" BEFORE INSERT OR DELETE OR UPDATE ON "public"."recurring_payments" FOR EACH ROW EXECUTE FUNCTION "public"."trg_protect_debt_linked_recurring"();
 
 
+--
+-- Name: settings trg_settings_sync_cash_account_opening_balance; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_settings_sync_cash_account_opening_balance" AFTER INSERT OR UPDATE OF "initial_balance" ON "public"."settings" FOR EACH ROW EXECUTE FUNCTION "public"."sync_cash_account_opening_balance"();
 
 
+--
+-- Name: debt_events trg_sync_debt_events_recurring_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_sync_debt_events_recurring_trigger" AFTER INSERT OR DELETE OR UPDATE ON "public"."debt_events" FOR EACH ROW EXECUTE FUNCTION "public"."trg_sync_debt_events_recurring"();
 
 
+--
+-- Name: debts trg_sync_debt_recurring_trigger; Type: TRIGGER; Schema: public; Owner: postgres
+--
 
 CREATE OR REPLACE TRIGGER "trg_sync_debt_recurring_trigger" AFTER INSERT OR UPDATE ON "public"."debts" FOR EACH ROW EXECUTE FUNCTION "public"."trg_sync_debt_recurring"();
 
 
+--
+-- Name: account_reconciliation_movements account_reconciliation_movements_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."account_reconciliation_movements"
     ADD CONSTRAINT "account_reconciliation_movements_household_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: account_reconciliation_movements account_reconciliation_movements_reconciliation_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."account_reconciliation_movements"
     ADD CONSTRAINT "account_reconciliation_movements_reconciliation_fkey" FOREIGN KEY ("reconciliation_id") REFERENCES "public"."account_reconciliations"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: account_reconciliations account_reconciliations_account_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."account_reconciliations"
     ADD CONSTRAINT "account_reconciliations_account_fkey" FOREIGN KEY ("account_id", "household_id") REFERENCES "public"."financial_accounts"("id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: account_reconciliations account_reconciliations_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."account_reconciliations"
     ADD CONSTRAINT "account_reconciliations_household_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: account_reconciliations account_reconciliations_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."account_reconciliations"
     ADD CONSTRAINT "account_reconciliations_user_fkey" FOREIGN KEY ("registered_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: bank_loan_profiles bank_loan_profiles_created_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."bank_loan_profiles"
     ADD CONSTRAINT "bank_loan_profiles_created_by_user_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: bank_loan_profiles bank_loan_profiles_debt_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."bank_loan_profiles"
     ADD CONSTRAINT "bank_loan_profiles_debt_household_fkey" FOREIGN KEY ("debt_id", "household_id") REFERENCES "public"."debts"("id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: cash_counts cash_counts_account_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."cash_counts"
     ADD CONSTRAINT "cash_counts_account_household_fkey" FOREIGN KEY ("account_id", "household_id") REFERENCES "public"."financial_accounts"("id", "household_id") ON DELETE RESTRICT;
 
 
+--
+-- Name: cash_counts cash_counts_household_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."cash_counts"
     ADD CONSTRAINT "cash_counts_household_id_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: categories categories_household_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."categories"
     ADD CONSTRAINT "categories_household_id_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: credit_card_entries credit_card_entries_movement_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_entries"
     ADD CONSTRAINT "credit_card_entries_movement_fkey" FOREIGN KEY ("movement_id", "household_id") REFERENCES "public"."movements"("id", "household_id") ON DELETE RESTRICT;
 
 
+--
+-- Name: credit_card_entries credit_card_entries_profile_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_entries"
     ADD CONSTRAINT "credit_card_entries_profile_fkey" FOREIGN KEY ("debt_id", "household_id") REFERENCES "public"."credit_card_profiles"("debt_id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: credit_card_entries credit_card_entries_registered_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_entries"
     ADD CONSTRAINT "credit_card_entries_registered_by_user_fkey" FOREIGN KEY ("registered_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: credit_card_entries credit_card_entries_reversal_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_entries"
     ADD CONSTRAINT "credit_card_entries_reversal_fkey" FOREIGN KEY ("reversal_of_entry_id", "debt_id", "household_id") REFERENCES "public"."credit_card_entries"("id", "debt_id", "household_id");
 
 
+--
+-- Name: credit_card_profiles credit_card_profiles_created_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_profiles"
     ADD CONSTRAINT "credit_card_profiles_created_by_user_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: credit_card_profiles credit_card_profiles_debt_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_profiles"
     ADD CONSTRAINT "credit_card_profiles_debt_household_fkey" FOREIGN KEY ("debt_id", "household_id") REFERENCES "public"."debts"("id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: credit_card_statements credit_card_statements_closing_entry_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_statements"
     ADD CONSTRAINT "credit_card_statements_closing_entry_id_fkey" FOREIGN KEY ("closing_entry_id") REFERENCES "public"."credit_card_entries"("id") ON DELETE SET NULL;
 
 
+--
+-- Name: credit_card_statements credit_card_statements_created_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_statements"
     ADD CONSTRAINT "credit_card_statements_created_by_user_id_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id");
 
 
+--
+-- Name: credit_card_statements credit_card_statements_debt_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_statements"
     ADD CONSTRAINT "credit_card_statements_debt_household_fkey" FOREIGN KEY ("debt_id", "household_id") REFERENCES "public"."debts"("id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: credit_card_statements credit_card_statements_debt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_statements"
     ADD CONSTRAINT "credit_card_statements_debt_id_fkey" FOREIGN KEY ("debt_id") REFERENCES "public"."debts"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: credit_card_statements credit_card_statements_household_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_statements"
     ADD CONSTRAINT "credit_card_statements_household_id_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: credit_card_statements credit_card_statements_profile_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_statements"
     ADD CONSTRAINT "credit_card_statements_profile_fkey" FOREIGN KEY ("debt_id", "household_id") REFERENCES "public"."credit_card_profiles"("debt_id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: debt_collaterals debt_collaterals_created_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_collaterals"
     ADD CONSTRAINT "debt_collaterals_created_by_user_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: debt_collaterals debt_collaterals_debt_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_collaterals"
     ADD CONSTRAINT "debt_collaterals_debt_household_fkey" FOREIGN KEY ("debt_id", "household_id") REFERENCES "public"."debts"("id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: debt_event_installment_allocations debt_event_installment_allocations_created_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_event_installment_allocations"
     ADD CONSTRAINT "debt_event_installment_allocations_created_by_user_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: debt_event_installment_allocations debt_event_installment_allocations_event_debt_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_event_installment_allocations"
     ADD CONSTRAINT "debt_event_installment_allocations_event_debt_household_fkey" FOREIGN KEY ("event_id", "debt_id", "household_id") REFERENCES "public"."debt_events"("id", "debt_id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: debt_event_installment_allocations debt_event_installment_allocations_installment_debt_household_f; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_event_installment_allocations"
     ADD CONSTRAINT "debt_event_installment_allocations_installment_debt_household_f" FOREIGN KEY ("installment_id", "debt_id", "household_id") REFERENCES "public"."debt_installments"("id", "debt_id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: debt_events debt_events_debt_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_events"
     ADD CONSTRAINT "debt_events_debt_household_fkey" FOREIGN KEY ("debt_id", "household_id") REFERENCES "public"."debts"("id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: debt_events debt_events_movement_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_events"
     ADD CONSTRAINT "debt_events_movement_household_fkey" FOREIGN KEY ("movement_id", "household_id") REFERENCES "public"."movements"("id", "household_id") ON DELETE RESTRICT;
 
 
+--
+-- Name: debt_events debt_events_registered_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_events"
     ADD CONSTRAINT "debt_events_registered_by_user_fkey" FOREIGN KEY ("registered_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: debt_events debt_events_reversal_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_events"
     ADD CONSTRAINT "debt_events_reversal_household_fkey" FOREIGN KEY ("reversal_of_event_id", "debt_id", "household_id") REFERENCES "public"."debt_events"("id", "debt_id", "household_id");
 
 
+--
+-- Name: debt_installments debt_installments_created_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_installments"
     ADD CONSTRAINT "debt_installments_created_by_user_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: debt_installments debt_installments_schedule_debt_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_installments"
     ADD CONSTRAINT "debt_installments_schedule_debt_household_fkey" FOREIGN KEY ("schedule_version_id", "debt_id", "household_id") REFERENCES "public"."debt_schedule_versions"("id", "debt_id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: debt_insurance_terms debt_insurance_terms_created_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_insurance_terms"
     ADD CONSTRAINT "debt_insurance_terms_created_by_user_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: debt_insurance_terms debt_insurance_terms_debt_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_insurance_terms"
     ADD CONSTRAINT "debt_insurance_terms_debt_household_fkey" FOREIGN KEY ("debt_id", "household_id") REFERENCES "public"."debts"("id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: debt_schedule_versions debt_schedule_versions_created_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_schedule_versions"
     ADD CONSTRAINT "debt_schedule_versions_created_by_user_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: debt_schedule_versions debt_schedule_versions_debt_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_schedule_versions"
     ADD CONSTRAINT "debt_schedule_versions_debt_household_fkey" FOREIGN KEY ("debt_id", "household_id") REFERENCES "public"."debts"("id", "household_id") ON DELETE CASCADE;
 
 
+--
+-- Name: debt_schedule_versions debt_schedule_versions_trigger_event_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debt_schedule_versions"
     ADD CONSTRAINT "debt_schedule_versions_trigger_event_household_fkey" FOREIGN KEY ("trigger_event_id", "debt_id", "household_id") REFERENCES "public"."debt_events"("id", "debt_id", "household_id");
 
 
+--
+-- Name: debts debts_created_by_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debts"
     ADD CONSTRAINT "debts_created_by_user_fkey" FOREIGN KEY ("created_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: debts debts_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."debts"
     ADD CONSTRAINT "debts_household_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: financial_accounts financial_accounts_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."financial_accounts"
     ADD CONSTRAINT "financial_accounts_household_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: credit_card_entries fk_credit_card_entries_credit_of_entry; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."credit_card_entries"
     ADD CONSTRAINT "fk_credit_card_entries_credit_of_entry" FOREIGN KEY ("credit_of_entry_id", "debt_id", "household_id") REFERENCES "public"."credit_card_entries"("id", "debt_id", "household_id");
 
 
+--
+-- Name: household_members household_members_household_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."household_members"
     ADD CONSTRAINT "household_members_household_id_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: household_members household_members_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."household_members"
     ADD CONSTRAINT "household_members_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: movement_corrections movement_corrections_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movement_corrections"
     ADD CONSTRAINT "movement_corrections_household_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: movement_corrections movement_corrections_user_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movement_corrections"
     ADD CONSTRAINT "movement_corrections_user_fkey" FOREIGN KEY ("registered_by_user_id") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
 
 
+--
+-- Name: movements movements_account_household_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movements"
     ADD CONSTRAINT "movements_account_household_fkey" FOREIGN KEY ("account_id", "household_id") REFERENCES "public"."financial_accounts"("id", "household_id") ON DELETE RESTRICT;
 
 
+--
+-- Name: movements movements_household_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movements"
     ADD CONSTRAINT "movements_household_id_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: movements movements_registered_by_user_fk; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movements"
     ADD CONSTRAINT "movements_registered_by_user_fk" FOREIGN KEY ("registered_by_user_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
 
 
+--
+-- Name: movements movements_registered_by_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."movements"
     ADD CONSTRAINT "movements_registered_by_user_id_fkey" FOREIGN KEY ("registered_by_user_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
 
 
+--
+-- Name: push_notification_deliveries push_notification_deliveries_household_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_notification_deliveries"
     ADD CONSTRAINT "push_notification_deliveries_household_id_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: push_notification_deliveries push_notification_deliveries_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_notification_deliveries"
     ADD CONSTRAINT "push_notification_deliveries_subscription_id_fkey" FOREIGN KEY ("subscription_id") REFERENCES "public"."push_subscriptions"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: push_notification_deliveries push_notification_deliveries_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_notification_deliveries"
     ADD CONSTRAINT "push_notification_deliveries_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: push_subscriptions push_subscriptions_household_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_subscriptions"
     ADD CONSTRAINT "push_subscriptions_household_id_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: push_subscriptions push_subscriptions_member_fk; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_subscriptions"
     ADD CONSTRAINT "push_subscriptions_member_fk" FOREIGN KEY ("household_id", "user_id") REFERENCES "public"."household_members"("household_id", "user_id") ON DELETE CASCADE;
 
 
+--
+-- Name: push_subscriptions push_subscriptions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."push_subscriptions"
     ADD CONSTRAINT "push_subscriptions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: recurring_payments recurring_payments_household_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."recurring_payments"
     ADD CONSTRAINT "recurring_payments_household_id_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: recurring_payments recurring_payments_linked_debt_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."recurring_payments"
     ADD CONSTRAINT "recurring_payments_linked_debt_id_fkey" FOREIGN KEY ("linked_debt_id") REFERENCES "public"."debts"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: settings settings_household_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
 
 ALTER TABLE ONLY "public"."settings"
     ADD CONSTRAINT "settings_household_id_fkey" FOREIGN KEY ("household_id") REFERENCES "public"."households"("id") ON DELETE CASCADE;
 
 
+--
+-- Name: account_reconciliation_movements; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."account_reconciliation_movements" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: account_reconciliation_movements account_reconciliation_movements_select; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "account_reconciliation_movements_select" ON "public"."account_reconciliation_movements" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "account_reconciliation_movements"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: account_reconciliations; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."account_reconciliations" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: account_reconciliations account_reconciliations_select; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "account_reconciliations_select" ON "public"."account_reconciliations" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "account_reconciliations"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: bank_loan_profiles; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."bank_loan_profiles" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: bank_loan_profiles bank_loan_profiles_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "bank_loan_profiles_insert_member" ON "public"."bank_loan_profiles" FOR INSERT TO "authenticated" WITH CHECK (((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "bank_loan_profiles"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))) AND ("created_by_user_id" = ( SELECT "auth"."uid"() AS "uid"))));
 
 
+--
+-- Name: bank_loan_profiles bank_loan_profiles_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "bank_loan_profiles_select_member" ON "public"."bank_loan_profiles" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "bank_loan_profiles"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: bank_loan_profiles bank_loan_profiles_update_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "bank_loan_profiles_update_member" ON "public"."bank_loan_profiles" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
@@ -7344,42 +9044,66 @@ CREATE POLICY "bank_loan_profiles_update_member" ON "public"."bank_loan_profiles
   WHERE (("hm"."household_id" = "bank_loan_profiles"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: cash_counts; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."cash_counts" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: cash_counts cash_counts_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "cash_counts_insert_member" ON "public"."cash_counts" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "cash_counts"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: cash_counts cash_counts_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "cash_counts_select_member" ON "public"."cash_counts" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "cash_counts"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: categories; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."categories" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: categories categories_delete_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "categories_delete_member" ON "public"."categories" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "categories"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: categories categories_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "categories_insert_member" ON "public"."categories" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "categories"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: categories categories_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "categories_select_member" ON "public"."categories" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "categories"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: categories categories_update_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "categories_update_member" ON "public"."categories" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
@@ -7388,48 +9112,78 @@ CREATE POLICY "categories_update_member" ON "public"."categories" FOR UPDATE TO 
   WHERE (("hm"."household_id" = "categories"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: credit_card_entries; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."credit_card_entries" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: credit_card_entries credit_card_entries_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "credit_card_entries_select_member" ON "public"."credit_card_entries" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "credit_card_entries"."household_id") AND ("hm"."user_id" = "auth"."uid"())))));
 
 
+--
+-- Name: credit_card_profiles; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."credit_card_profiles" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: credit_card_profiles credit_card_profiles_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "credit_card_profiles_select_member" ON "public"."credit_card_profiles" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "credit_card_profiles"."household_id") AND ("hm"."user_id" = "auth"."uid"())))));
 
 
+--
+-- Name: credit_card_statements; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."credit_card_statements" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: credit_card_statements credit_card_statements_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "credit_card_statements_select_member" ON "public"."credit_card_statements" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "credit_card_statements"."household_id") AND ("hm"."user_id" = "auth"."uid"())))));
 
 
+--
+-- Name: debt_collaterals; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."debt_collaterals" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: debt_collaterals debt_collaterals_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_collaterals_insert_member" ON "public"."debt_collaterals" FOR INSERT TO "authenticated" WITH CHECK (((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_collaterals"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))) AND ("created_by_user_id" = ( SELECT "auth"."uid"() AS "uid"))));
 
 
+--
+-- Name: debt_collaterals debt_collaterals_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_collaterals_select_member" ON "public"."debt_collaterals" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_collaterals"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: debt_collaterals debt_collaterals_update_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_collaterals_update_member" ON "public"."debt_collaterals" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
@@ -7438,66 +9192,105 @@ CREATE POLICY "debt_collaterals_update_member" ON "public"."debt_collaterals" FO
   WHERE (("hm"."household_id" = "debt_collaterals"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: debt_event_installment_allocations; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."debt_event_installment_allocations" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: debt_event_installment_allocations debt_event_installment_allocations_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_event_installment_allocations_insert_member" ON "public"."debt_event_installment_allocations" FOR INSERT TO "authenticated" WITH CHECK (((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_event_installment_allocations"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))) AND ("created_by_user_id" = ( SELECT "auth"."uid"() AS "uid"))));
 
 
+--
+-- Name: debt_event_installment_allocations debt_event_installment_allocations_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_event_installment_allocations_select_member" ON "public"."debt_event_installment_allocations" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_event_installment_allocations"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: debt_events; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."debt_events" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: debt_events debt_events_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_events_insert_member" ON "public"."debt_events" FOR INSERT TO "authenticated" WITH CHECK (((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_events"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))) AND ("registered_by_user_id" = ( SELECT "auth"."uid"() AS "uid"))));
 
 
+--
+-- Name: debt_events debt_events_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_events_select_member" ON "public"."debt_events" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_events"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: debt_installments; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."debt_installments" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: debt_installments debt_installments_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_installments_insert_member" ON "public"."debt_installments" FOR INSERT TO "authenticated" WITH CHECK (((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_installments"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))) AND ("created_by_user_id" = ( SELECT "auth"."uid"() AS "uid"))));
 
 
+--
+-- Name: debt_installments debt_installments_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_installments_select_member" ON "public"."debt_installments" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_installments"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: debt_insurance_terms; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."debt_insurance_terms" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: debt_insurance_terms debt_insurance_terms_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_insurance_terms_insert_member" ON "public"."debt_insurance_terms" FOR INSERT TO "authenticated" WITH CHECK (((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_insurance_terms"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))) AND ("created_by_user_id" = ( SELECT "auth"."uid"() AS "uid"))));
 
 
+--
+-- Name: debt_insurance_terms debt_insurance_terms_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_insurance_terms_select_member" ON "public"."debt_insurance_terms" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_insurance_terms"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: debt_insurance_terms debt_insurance_terms_update_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_insurance_terms_update_member" ON "public"."debt_insurance_terms" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
@@ -7506,36 +9299,57 @@ CREATE POLICY "debt_insurance_terms_update_member" ON "public"."debt_insurance_t
   WHERE (("hm"."household_id" = "debt_insurance_terms"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: debt_schedule_versions; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."debt_schedule_versions" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: debt_schedule_versions debt_schedule_versions_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_schedule_versions_insert_member" ON "public"."debt_schedule_versions" FOR INSERT TO "authenticated" WITH CHECK (((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_schedule_versions"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))) AND ("created_by_user_id" = ( SELECT "auth"."uid"() AS "uid"))));
 
 
+--
+-- Name: debt_schedule_versions debt_schedule_versions_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debt_schedule_versions_select_member" ON "public"."debt_schedule_versions" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debt_schedule_versions"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: debts; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."debts" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: debts debts_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debts_insert_member" ON "public"."debts" FOR INSERT TO "authenticated" WITH CHECK (((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debts"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))) AND ("created_by_user_id" = ( SELECT "auth"."uid"() AS "uid"))));
 
 
+--
+-- Name: debts debts_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debts_select_member" ON "public"."debts" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "debts"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: debts debts_update_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "debts_update_member" ON "public"."debts" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
@@ -7544,21 +9358,33 @@ CREATE POLICY "debts_update_member" ON "public"."debts" FOR UPDATE TO "authentic
   WHERE (("hm"."household_id" = "debts"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: financial_accounts; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."financial_accounts" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: financial_accounts financial_accounts_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "financial_accounts_insert_member" ON "public"."financial_accounts" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "financial_accounts"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: financial_accounts financial_accounts_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "financial_accounts_select_member" ON "public"."financial_accounts" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "financial_accounts"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: financial_accounts financial_accounts_update_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "financial_accounts_update_member" ON "public"."financial_accounts" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
@@ -7567,52 +9393,85 @@ CREATE POLICY "financial_accounts_update_member" ON "public"."financial_accounts
   WHERE (("hm"."household_id" = "financial_accounts"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: household_members; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."household_members" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: household_members household_members_select_self; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "household_members_select_self" ON "public"."household_members" FOR SELECT TO "authenticated" USING (("user_id" = ( SELECT "auth"."uid"() AS "uid")));
 
 
+--
+-- Name: households; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."households" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: households households_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "households_select_member" ON "public"."households" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "households"."id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: movement_corrections; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."movement_corrections" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: movement_corrections movement_corrections_select; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "movement_corrections_select" ON "public"."movement_corrections" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "movement_corrections"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: movements; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."movements" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: movements movements_delete_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "movements_delete_member" ON "public"."movements" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "movements"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: movements movements_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "movements_insert_member" ON "public"."movements" FOR INSERT TO "authenticated" WITH CHECK ((("registered_by_user_id" = ( SELECT "auth"."uid"() AS "uid")) AND (EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "movements"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid")) AND ("hm"."display_name" IS NOT NULL) AND ("btrim"("hm"."display_name") <> ''::"text") AND ("hm"."display_name" = "movements"."person"))))));
 
 
+--
+-- Name: movements movements_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "movements_select_member" ON "public"."movements" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "movements"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: movements movements_update_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "movements_update_member" ON "public"."movements" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
@@ -7621,33 +9480,54 @@ CREATE POLICY "movements_update_member" ON "public"."movements" FOR UPDATE TO "a
   WHERE (("hm"."household_id" = "movements"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: push_notification_deliveries; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."push_notification_deliveries" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: push_subscriptions; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."push_subscriptions" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: push_subscriptions push_subscriptions_select_own_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "push_subscriptions_select_own_member" ON "public"."push_subscriptions" FOR SELECT TO "authenticated" USING ((("user_id" = ( SELECT "auth"."uid"() AS "uid")) AND (EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "push_subscriptions"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid")))))));
 
 
+--
+-- Name: recurring_payments; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."recurring_payments" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: recurring_payments recurring_payments_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "recurring_payments_insert_member" ON "public"."recurring_payments" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "recurring_payments"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: recurring_payments recurring_payments_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "recurring_payments_select_member" ON "public"."recurring_payments" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "recurring_payments"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: recurring_payments recurring_payments_update_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "recurring_payments_update_member" ON "public"."recurring_payments" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
@@ -7656,21 +9536,33 @@ CREATE POLICY "recurring_payments_update_member" ON "public"."recurring_payments
   WHERE (("hm"."household_id" = "recurring_payments"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: settings; Type: ROW SECURITY; Schema: public; Owner: postgres
+--
 
 ALTER TABLE "public"."settings" ENABLE ROW LEVEL SECURITY;
 
+--
+-- Name: settings settings_insert_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "settings_insert_member" ON "public"."settings" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "settings"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: settings settings_select_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "settings_select_member" ON "public"."settings" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
   WHERE (("hm"."household_id" = "settings"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
+--
+-- Name: settings settings_update_member; Type: POLICY; Schema: public; Owner: postgres
+--
 
 CREATE POLICY "settings_update_member" ON "public"."settings" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
    FROM "public"."household_members" "hm"
@@ -7679,14 +9571,9 @@ CREATE POLICY "settings_update_member" ON "public"."settings" FOR UPDATE TO "aut
   WHERE (("hm"."household_id" = "settings"."household_id") AND ("hm"."user_id" = ( SELECT "auth"."uid"() AS "uid"))))));
 
 
-
-
-
-ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
-
-
-
-
+--
+-- Name: SCHEMA "public"; Type: ACL; Schema: -; Owner: pg_database_owner
+--
 
 GRANT USAGE ON SCHEMA "public" TO "postgres";
 GRANT USAGE ON SCHEMA "public" TO "anon";
@@ -7694,583 +9581,695 @@ GRANT USAGE ON SCHEMA "public" TO "authenticated";
 GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+--
+-- Name: TABLE "debt_schedule_versions"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."debt_schedule_versions" TO "service_role";
 GRANT SELECT ON TABLE "public"."debt_schedule_versions" TO "authenticated";
 
 
+--
+-- Name: FUNCTION "debt2b2_create_schedule"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid"); Type: ACL; Schema: private; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_create_schedule"("p_household_id" "uuid", "p_debt_id" "uuid", "p_trigger_event_id" "uuid", "p_event_date" "date", "p_reason" "text", "p_notes" "text", "p_schedule_installments" "jsonb", "p_user_id" "uuid") FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "debt2b2_current_principal"("p_household_id" "uuid", "p_debt_id" "uuid"); Type: ACL; Schema: private; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_current_principal"("p_household_id" "uuid", "p_debt_id" "uuid") FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "debt2b2_fund_result"("p_event_id" "uuid", "p_idempotent_replay" boolean); Type: ACL; Schema: private; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_fund_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "debt2b2_insert_allocations"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_schedule_version_id" "uuid", "p_cash_amount" numeric, "p_allocations" "jsonb", "p_user_id" "uuid"); Type: ACL; Schema: private; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_insert_allocations"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_schedule_version_id" "uuid", "p_cash_amount" numeric, "p_allocations" "jsonb", "p_user_id" "uuid") FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "debt2b2_lock_operation"("p_movement_id" "text", "p_event_id" "uuid"); Type: ACL; Schema: private; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_lock_operation"("p_movement_id" "text", "p_event_id" "uuid") FROM PUBLIC;
 
 
+--
+-- Name: TABLE "movements"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."movements" TO "service_role";
 GRANT SELECT,INSERT,DELETE ON TABLE "public"."movements" TO "authenticated";
 
 
+--
+-- Name: COLUMN "movements"."type"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT UPDATE("type") ON TABLE "public"."movements" TO "authenticated";
 
 
+--
+-- Name: COLUMN "movements"."date"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT UPDATE("date") ON TABLE "public"."movements" TO "authenticated";
 
 
+--
+-- Name: COLUMN "movements"."amount"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT UPDATE("amount") ON TABLE "public"."movements" TO "authenticated";
 
 
+--
+-- Name: COLUMN "movements"."description"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT UPDATE("description") ON TABLE "public"."movements" TO "authenticated";
 
 
+--
+-- Name: COLUMN "movements"."method"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT UPDATE("method") ON TABLE "public"."movements" TO "authenticated";
 
 
+--
+-- Name: COLUMN "movements"."category"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT UPDATE("category") ON TABLE "public"."movements" TO "authenticated";
 
 
+--
+-- Name: COLUMN "movements"."account_id"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT UPDATE("account_id") ON TABLE "public"."movements" TO "authenticated";
 
 
+--
+-- Name: COLUMN "movements"."movement_context"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT UPDATE("movement_context") ON TABLE "public"."movements" TO "authenticated";
 
 
+--
+-- Name: FUNCTION "debt2b2_prepare_movement"("p_household_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_user_id" "uuid", "p_person" "text"); Type: ACL; Schema: private; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_prepare_movement"("p_household_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_user_id" "uuid", "p_person" "text") FROM PUBLIC;
 
 
+--
+-- Name: TABLE "debts"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."debts" TO "service_role";
 GRANT SELECT ON TABLE "public"."debts" TO "authenticated";
 
 
+--
+-- Name: FUNCTION "debt2b2_reconcile_status"("p_household_id" "uuid", "p_debt_id" "uuid", "p_current_principal" numeric); Type: ACL; Schema: private; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_reconcile_status"("p_household_id" "uuid", "p_debt_id" "uuid", "p_current_principal" numeric) FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "debt2b2_reversal_result"("p_event_id" "uuid", "p_idempotent_replay" boolean); Type: ACL; Schema: private; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_reversal_result"("p_event_id" "uuid", "p_idempotent_replay" boolean) FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "debt2b2_validate_costs"("p_cash_amount" numeric, "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_error_code" "text"); Type: ACL; Schema: private; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "private"."debt2b2_validate_costs"("p_cash_amount" numeric, "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_error_code" "text") FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "require_bank_loan_profile"(); Type: ACL; Schema: private; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION "private"."require_bank_loan_profile"() FROM PUBLIC;
+
+
+--
+-- Name: FUNCTION "require_bank_loan_schedule"(); Type: ACL; Schema: private; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION "private"."require_bank_loan_schedule"() FROM PUBLIC;
+
+
+--
+-- Name: FUNCTION "cash_counts_legacy_account_sync"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."cash_counts_legacy_account_sync"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "close_credit_card_statement_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_statement_id" "uuid", "p_statement_date" "date", "p_due_date" "date", "p_minimum_payment_amount" numeric); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."close_credit_card_statement_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_statement_id" "uuid", "p_statement_date" "date", "p_due_date" "date", "p_minimum_payment_amount" numeric) FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."close_credit_card_statement_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_statement_id" "uuid", "p_statement_date" "date", "p_due_date" "date", "p_minimum_payment_amount" numeric) TO "authenticated";
 
 
+--
+-- Name: FUNCTION "complete_recurring_payment"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."complete_recurring_payment"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."complete_recurring_payment"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "complete_recurring_payment_v2"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text", "p_account_id" "uuid"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."complete_recurring_payment_v2"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text", "p_account_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."complete_recurring_payment_v2"("p_payment_id" "text", "p_create_expense" boolean, "p_movement_id" "text", "p_movement_date" "date", "p_movement_amount" numeric, "p_movement_description" "text", "p_movement_method" "text", "p_movement_category" "text", "p_account_id" "uuid") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "correct_reconciled_movement_v1"("p_household_id" "uuid", "p_movement_id" "text", "p_correction_id" "uuid", "p_expected_updated_at" timestamp with time zone, "p_date" "text", "p_amount" numeric, "p_description" "text", "p_method" "text", "p_category" "text", "p_person" "text", "p_account_id" "uuid", "p_reason" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."correct_reconciled_movement_v1"("p_household_id" "uuid", "p_movement_id" "text", "p_correction_id" "uuid", "p_expected_updated_at" timestamp with time zone, "p_date" "text", "p_amount" numeric, "p_description" "text", "p_method" "text", "p_category" "text", "p_person" "text", "p_account_id" "uuid", "p_reason" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."correct_reconciled_movement_v1"("p_household_id" "uuid", "p_movement_id" "text", "p_correction_id" "uuid", "p_expected_updated_at" timestamp with time zone, "p_date" "text", "p_amount" numeric, "p_description" "text", "p_method" "text", "p_category" "text", "p_person" "text", "p_account_id" "uuid", "p_reason" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "create_bank_loan_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric, "p_profile" "jsonb", "p_insurances" "jsonb", "p_schedule_source" "text", "p_installments" "jsonb", "p_collaterals" "jsonb"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."create_bank_loan_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric, "p_profile" "jsonb", "p_insurances" "jsonb", "p_schedule_source" "text", "p_installments" "jsonb", "p_collaterals" "jsonb") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."create_bank_loan_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric, "p_profile" "jsonb", "p_insurances" "jsonb", "p_schedule_source" "text", "p_installments" "jsonb", "p_collaterals" "jsonb") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "create_credit_card_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_opening_balance" numeric, "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."create_credit_card_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_opening_balance" numeric, "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."create_credit_card_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_opening_balance" numeric, "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."create_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "create_debt_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."create_debt_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric) FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."create_debt_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_debt_kind" "text", "p_currency_code" "text", "p_origin_date" "date", "p_tracking_start_date" "date", "p_original_principal" numeric, "p_opening_principal_balance" numeric, "p_planned_installment_count" integer, "p_planned_installment_amount" numeric, "p_installment_amount_mode" "text", "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_first_due_date" "date", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_notes" "text", "p_installments" "jsonb", "p_collaterals" "jsonb", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_minimum_principal_payment" numeric) TO "authenticated";
 
 
+--
+-- Name: FUNCTION "delete_pristine_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."delete_pristine_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."delete_pristine_debt_v1"("p_household_id" "uuid", "p_debt_id" "uuid") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "get_push_subscription_status"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."get_push_subscription_status"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."get_push_subscription_status"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "movements_legacy_cash_account_sync"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."movements_legacy_cash_account_sync"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "protect_debt_collateral_identity"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."protect_debt_collateral_identity"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "protect_debt_financial_baseline"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."protect_debt_financial_baseline"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "protect_debt_identity"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."protect_debt_identity"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "protect_movement_semantics"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."protect_movement_semantics"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "provision_default_cash_account"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."provision_default_cash_account"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "record_account_reconciliation_v1"("p_household_id" "uuid", "p_reconciliation_id" "uuid", "p_account_id" "uuid", "p_actual_balance" numeric, "p_denominations" "jsonb"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_account_reconciliation_v1"("p_household_id" "uuid", "p_reconciliation_id" "uuid", "p_account_id" "uuid", "p_actual_balance" numeric, "p_denominations" "jsonb") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_account_reconciliation_v1"("p_household_id" "uuid", "p_reconciliation_id" "uuid", "p_account_id" "uuid", "p_actual_balance" numeric, "p_denominations" "jsonb") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_credit_card_credit_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_target_entry_id" "uuid", "p_credit_date" "date", "p_amount" numeric, "p_description" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_credit_card_credit_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_target_entry_id" "uuid", "p_credit_date" "date", "p_amount" numeric, "p_description" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_credit_card_credit_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_target_entry_id" "uuid", "p_credit_date" "date", "p_amount" numeric, "p_description" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_credit_card_fee_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_fee_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_credit_card_fee_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_fee_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_credit_card_fee_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_fee_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_credit_card_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_payment_date" "date", "p_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_credit_card_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_payment_date" "date", "p_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_credit_card_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_payment_date" "date", "p_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_credit_card_purchase_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_purchase_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_credit_card_purchase_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_purchase_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_credit_card_purchase_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_entry_id" "uuid", "p_movement_id" "text", "p_purchase_date" "date", "p_amount" numeric, "p_description" "text", "p_category" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_debt_installment_advance_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_debt_installment_advance_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_debt_installment_advance_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_debt_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_debt_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_debt_payment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_allocations" "jsonb") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_debt_payment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_debt_payment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_debt_payment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_extra_principal_amount" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_allocations" "jsonb") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_debt_payoff_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_debt_payoff_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_debt_payoff_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean) TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_debt_prepayment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."record_debt_prepayment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_debt_prepayment_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "record_debt_prepayment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text"); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION "public"."record_debt_prepayment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."record_debt_prepayment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") TO "authenticated";
+
+
+--
+-- Name: FUNCTION "register_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_p256dh" "text", "p_auth" "text", "p_app_origin" "text", "p_expires_at" timestamp with time zone); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."register_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_p256dh" "text", "p_auth" "text", "p_app_origin" "text", "p_expires_at" timestamp with time zone) FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."register_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_p256dh" "text", "p_auth" "text", "p_app_origin" "text", "p_expires_at" timestamp with time zone) TO "authenticated";
 
 
+--
+-- Name: FUNCTION "reverse_credit_card_entry_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_entry_id" "uuid", "p_target_entry_id" "uuid", "p_reversal_date" "date", "p_description" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."reverse_credit_card_entry_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_entry_id" "uuid", "p_target_entry_id" "uuid", "p_reversal_date" "date", "p_description" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."reverse_credit_card_entry_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_entry_id" "uuid", "p_target_entry_id" "uuid", "p_reversal_date" "date", "p_description" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "reverse_debt_event_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_event_id" "uuid", "p_target_event_id" "uuid", "p_event_date" "date", "p_description" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."reverse_debt_event_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_event_id" "uuid", "p_target_event_id" "uuid", "p_event_date" "date", "p_description" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."reverse_debt_event_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_reversal_event_id" "uuid", "p_target_event_id" "uuid", "p_event_date" "date", "p_description" "text", "p_schedule_installments" "jsonb", "p_schedule_notes" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "save_credit_card_profile_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."save_credit_card_profile_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."save_credit_card_profile_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_credit_limit" numeric, "p_closing_day" integer, "p_due_day" integer, "p_last4" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "set_debt_archived_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_is_archived" boolean); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."set_debt_archived_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_is_archived" boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."set_debt_archived_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_is_archived" boolean) TO "authenticated";
 
 
+--
+-- Name: FUNCTION "sync_cash_account_opening_balance"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."sync_cash_account_opening_balance"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "sync_linked_recurring_payment"("p_debt_id" "uuid"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."sync_linked_recurring_payment"("p_debt_id" "uuid") FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "touch_financial_accounts_updated_at"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."touch_financial_accounts_updated_at"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "trg_protect_debt_linked_recurring"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."trg_protect_debt_linked_recurring"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "trg_sync_debt_events_recurring"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."trg_sync_debt_events_recurring"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "trg_sync_debt_recurring"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."trg_sync_debt_recurring"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "unregister_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."unregister_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."unregister_push_subscription"("p_household_id" "uuid", "p_endpoint" "text", "p_app_origin" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "update_debt_metadata_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_notes" "text"); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."update_debt_metadata_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_notes" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."update_debt_metadata_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_name" "text", "p_creditor_name" "text", "p_notes" "text") TO "authenticated";
 
 
+--
+-- Name: FUNCTION "update_debt_terms_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."update_debt_terms_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."update_debt_terms_v1"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean) TO "authenticated";
 
 
+--
+-- Name: FUNCTION "update_debt_terms_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean, "p_first_due_date" "date", "p_clear_first_due_date" boolean, "p_minimum_principal_payment" numeric, "p_clear_minimum_principal_payment" boolean); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."update_debt_terms_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean, "p_first_due_date" "date", "p_clear_first_due_date" boolean, "p_minimum_principal_payment" numeric, "p_clear_minimum_principal_payment" boolean) FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."update_debt_terms_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_repayment_structure" "text", "p_interest_calculation_mode" "text", "p_periodic_rate_percent" numeric, "p_periodic_rate_basis" "text", "p_tea_percent" numeric, "p_tcea_percent" numeric, "p_payment_frequency" "text", "p_custom_frequency_days" integer, "p_clear_periodic_rate" boolean, "p_clear_tea" boolean, "p_clear_tcea" boolean, "p_clear_frequency" boolean, "p_first_due_date" "date", "p_clear_first_due_date" boolean, "p_minimum_principal_payment" numeric, "p_clear_minimum_principal_payment" boolean) TO "authenticated";
 
 
+--
+-- Name: FUNCTION "validate_debt_event_movement"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."validate_debt_event_movement"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "validate_debt_event_reversal"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."validate_debt_event_reversal"() FROM PUBLIC;
 
 
+--
+-- Name: FUNCTION "validate_debt_installment_allocation"(); Type: ACL; Schema: public; Owner: postgres
+--
 
 REVOKE ALL ON FUNCTION "public"."validate_debt_installment_allocation"() FROM PUBLIC;
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+--
+-- Name: TABLE "account_reconciliation_movements"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."account_reconciliation_movements" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."account_reconciliation_movements" TO "authenticated";
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."account_reconciliation_movements" TO "service_role";
 
 
+--
+-- Name: TABLE "account_reconciliations"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."account_reconciliations" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."account_reconciliations" TO "authenticated";
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."account_reconciliations" TO "service_role";
 
 
+--
+-- Name: TABLE "bank_loan_profiles"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."bank_loan_profiles" TO "service_role";
 GRANT SELECT ON TABLE "public"."bank_loan_profiles" TO "authenticated";
 
 
+--
+-- Name: TABLE "cash_counts"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."cash_counts" TO "service_role";
 GRANT SELECT,INSERT ON TABLE "public"."cash_counts" TO "authenticated";
 
 
+--
+-- Name: TABLE "categories"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."categories" TO "service_role";
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."categories" TO "authenticated";
 
 
+--
+-- Name: TABLE "credit_card_entries"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."credit_card_entries" TO "service_role";
 GRANT SELECT ON TABLE "public"."credit_card_entries" TO "authenticated";
 
 
+--
+-- Name: TABLE "credit_card_profiles"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."credit_card_profiles" TO "service_role";
 GRANT SELECT ON TABLE "public"."credit_card_profiles" TO "authenticated";
 
 
+--
+-- Name: TABLE "credit_card_statements"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."credit_card_statements" TO "service_role";
 GRANT SELECT ON TABLE "public"."credit_card_statements" TO "authenticated";
 
 
+--
+-- Name: TABLE "debt_collaterals"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."debt_collaterals" TO "service_role";
 GRANT SELECT ON TABLE "public"."debt_collaterals" TO "authenticated";
 
 
+--
+-- Name: TABLE "debt_event_installment_allocations"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."debt_event_installment_allocations" TO "service_role";
 GRANT SELECT ON TABLE "public"."debt_event_installment_allocations" TO "authenticated";
 
 
+--
+-- Name: TABLE "debt_events"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."debt_events" TO "service_role";
 GRANT SELECT ON TABLE "public"."debt_events" TO "authenticated";
 
 
+--
+-- Name: TABLE "debt_installments"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."debt_installments" TO "service_role";
 GRANT SELECT ON TABLE "public"."debt_installments" TO "authenticated";
 
 
+--
+-- Name: TABLE "debt_insurance_terms"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."debt_insurance_terms" TO "service_role";
 GRANT SELECT ON TABLE "public"."debt_insurance_terms" TO "authenticated";
 
 
+--
+-- Name: TABLE "financial_accounts"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."financial_accounts" TO "service_role";
 GRANT SELECT,INSERT,UPDATE ON TABLE "public"."financial_accounts" TO "authenticated";
 
 
+--
+-- Name: TABLE "household_members"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."household_members" TO "service_role";
 GRANT SELECT ON TABLE "public"."household_members" TO "authenticated";
 
 
+--
+-- Name: TABLE "households"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."households" TO "service_role";
 GRANT SELECT ON TABLE "public"."households" TO "authenticated";
 
 
+--
+-- Name: TABLE "movement_corrections"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."movement_corrections" TO "anon";
 GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."movement_corrections" TO "authenticated";
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."movement_corrections" TO "service_role";
 
 
+--
+-- Name: TABLE "push_notification_deliveries"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."push_notification_deliveries" TO "service_role";
 
 
+--
+-- Name: TABLE "push_subscriptions"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."push_subscriptions" TO "service_role";
 
 
+--
+-- Name: TABLE "recurring_payments"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."recurring_payments" TO "service_role";
 GRANT SELECT,INSERT,UPDATE ON TABLE "public"."recurring_payments" TO "authenticated";
 
 
+--
+-- Name: TABLE "settings"; Type: ACL; Schema: public; Owner: postgres
+--
 
 GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."settings" TO "service_role";
 GRANT SELECT,INSERT,UPDATE ON TABLE "public"."settings" TO "authenticated";
 
 
-
-
-
-
-
-
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: postgres
+--
 
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT UPDATE ON SEQUENCES TO "anon";
@@ -8278,16 +10277,36 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT UPDATE ON 
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT UPDATE ON SEQUENCES TO "service_role";
 
 
+--
+-- Name: DEFAULT PRIVILEGES FOR SEQUENCES; Type: DEFAULT ACL; Schema: public; Owner: supabase_admin
+--
+
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "postgres";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "anon";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "authenticated";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON SEQUENCES TO "service_role";
 
 
-
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: public; Owner: postgres
+--
 
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "postgres";
 
 
+--
+-- Name: DEFAULT PRIVILEGES FOR FUNCTIONS; Type: DEFAULT ACL; Schema: public; Owner: supabase_admin
+--
+
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "postgres";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "anon";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "authenticated";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON FUNCTIONS TO "service_role";
 
 
-
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: public; Owner: postgres
+--
 
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLES TO "anon";
@@ -8295,32 +10314,19 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT REFERENCES
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLES TO "service_role";
 
 
+--
+-- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: public; Owner: supabase_admin
+--
+
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON TABLES TO "postgres";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON TABLES TO "anon";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON TABLES TO "authenticated";
+-- ALTER DEFAULT PRIVILEGES FOR ROLE "supabase_admin" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
 
 
+--
+-- PostgreSQL database dump complete
+--
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+-- \unrestrict RIqzal62TNgVViQS1XGc1ZAXIxfEA0CSQtKrQdO6TnSUTdz83iePfzc6s8n4VlC
 

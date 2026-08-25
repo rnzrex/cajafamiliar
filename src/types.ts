@@ -547,9 +547,29 @@ export interface DebtPrepaymentInput {
   feesPaid: number;
   insurancePaid: number;
   otherCostPaid: number;
+  prepaymentEffect?: PrepaymentEffect | null;
   breakdownComplete: boolean;
   scheduleInstallments: DebtScheduleInstallmentInput[];
   scheduleNotes?: string | null;
+  scheduleSource?: ScheduleSource | null;
+}
+
+export interface DebtInstallmentAdvanceInput {
+  debtId: string;
+  eventId: string;
+  movementId: string;
+  eventDate: string;
+  cashAmount: number;
+  accountId: string;
+  description: string;
+  category: string;
+  principalAmount: number;
+  interestPaid: number;
+  feesPaid: number;
+  insurancePaid: number;
+  otherCostPaid: number;
+  breakdownComplete: boolean;
+  allocations: DebtAllocationInput[];
 }
 
 export interface DebtPayoffInput {

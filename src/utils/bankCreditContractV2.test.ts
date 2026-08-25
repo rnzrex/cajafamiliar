@@ -33,6 +33,14 @@ Cuota\tFecha\tCuota Total\tCapital\tInterés\tSeguro\tGastos
       expect(result.totalFees).toBe(60);
     });
 
+    it("rejects contractual rows with omitted or non-numeric cost components", () => {
+      const result = parseContractualScheduleText("1\t2026-09-15\t850\n2\t2026-10-15\t850\t500\tinvalid\t80\t20");
+
+      expect(result.valid).toBe(false);
+      expect(result.rows).toHaveLength(0);
+      expect(result.errors.join(" ")).toContain("importes");
+    });
+
     it("validates vehicular credit numbers (assetPrice - downPayment ~ financedAmount)", () => {
       const assetPrice = 50000;
       const downPayment = 10000;

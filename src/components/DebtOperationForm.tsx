@@ -10,10 +10,15 @@ import { calculateAssistedInterestSuggestion, getLastEffectiveDebtPaymentDate } 
 import { calculateNextPayment } from "../utils/debtNextPayment";
 import { getCurrencySymbol } from "../utils/debtFormMode";
 
+function assertNever(value: never): never {
+  throw new Error(`Operación de deuda no soportada: ${String(value)}`);
+}
+
 interface DebtOperationFormProps {
   debt: Debt;
   operationType: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance";
   targetEventId?: string;
+  paymentWithExtraPrincipal?: boolean;
   installments: DebtInstallment[];
   scheduleVersions: DebtScheduleVersion[];
   debtEvents: DebtEvent[];
@@ -31,6 +36,7 @@ export function DebtOperationForm({
   debt,
   operationType,
   targetEventId,
+  paymentWithExtraPrincipal = false,
   installments,
   scheduleVersions,
   debtEvents,
@@ -94,7 +100,9 @@ export function DebtOperationForm({
 
   const [description, setDescription] = useState(
     operationType === "payment"
-      ? isFlexOpenEnded
+      ? paymentWithExtraPrincipal
+        ? `Pago de cuota + abono al capital — ${debt.name}`
+        : isFlexOpenEnded
         ? initialNextPayment.nextDueDate
           ? `Pago de deuda — ${debt.name} — vencimiento ${formatDueDateDisplay(initialNextPayment.nextDueDate)}`
           : `Pago de deuda — ${debt.name}`
@@ -103,6 +111,8 @@ export function DebtOperationForm({
         ? `Prepago de principal — ${debt.name}`
         : operationType === "payoff"
           ? `Liquidación total — ${debt.name}`
+          : operationType === "installment_advance"
+            ? `Adelanto de cuotas — ${debt.name}`
           : `Reversión de registro — ${debt.name}`
   );
 
@@ -112,6 +122,8 @@ export function DebtOperationForm({
   const category = "Pago de deuda";
 
   const [principalAmount, setPrincipalAmount] = useState(initialPrefillPrincipal);
+  const [extraPrincipalAmount, setExtraPrincipalAmount] = useState("0");
+  const [prepaymentEffect, setPrepaymentEffect] = useState<PrepaymentEffect>("unknown");
   const [interestPaid, setInterestPaid] = useState(initialPrefillInterest);
   const [feesPaid, setFeesPaid] = useState("0");
   const [insurancePaid, setInsurancePaid] = useState("0");
@@ -122,7 +134,31 @@ export function DebtOperationForm({
   const currentScheduleInstallments = installments.filter((i) => currentSchedule && i.scheduleVersionId === currentSchedule.id);
   const [allocations, setAllocations] = useState<Array<{ installmentId: string; allocatedAmount: string }>>([]);
 
+  const eligibleAdvanceInstallments = currentScheduleInstallments.filter((installment) => {
+    const allocatedBefore = allocatedAmountForInstallment(installment.id, persistedAllocations, debtEvents);
+    return installment.dueDate > eventDate && allocatedBefore <= 0.01;
+  });
+
+  const setAdvanceAllocations = (nextAllocations: Array<{ installmentId: string; allocatedAmount: string }>) => {
+    setAllocations(nextAllocations);
+    if (operationType !== "installment_advance") return;
+
+    const selected = nextAllocations
+      .map((allocation) => currentScheduleInstallments.find((installment) => installment.id === allocation.installmentId))
+      .filter((installment): installment is DebtInstallment => installment != null);
+    const sum = (field: "expectedAmount" | "expectedPrincipal" | "expectedInterest" | "expectedFees" | "expectedInsurance") =>
+      selected.reduce((total, installment) => total + (installment[field] ?? 0), 0);
+    setCashAmount(sum("expectedAmount").toFixed(2));
+    setPrincipalAmount(sum("expectedPrincipal").toFixed(2));
+    setInterestPaid(sum("expectedInterest").toFixed(2));
+    setFeesPaid(sum("expectedFees").toFixed(2));
+    setInsurancePaid(sum("expectedInsurance").toFixed(2));
+    setOtherCostPaid("0");
+    setBreakdownComplete(true);
+  };
+
   const [hasNewPrepaymentSchedule, setHasNewPrepaymentSchedule] = useState(false);
+  const [newScheduleSource, setNewScheduleSource] = useState<"contractual" | "estimated">("contractual");
 
   const targetGeneratedSchedule = Boolean(targetEventId && scheduleVersions.some((v) => v.debtId === debt.id && v.triggerEventId === targetEventId));
 
@@ -132,6 +168,8 @@ export function DebtOperationForm({
     expectedAmount: string;
     expectedPrincipal: string;
     expectedInterest: string;
+    expectedFees: string;
+    expectedInsurance: string;
   }>>([]);
   const [scheduleNotes, setScheduleNotes] = useState("");
 
@@ -164,13 +202,15 @@ export function DebtOperationForm({
   };
 
   const numPrincipal = Number(principalAmount || 0);
+  const numExtraPrincipal = Number(extraPrincipalAmount || 0);
+  const totalPrincipalAmount = numPrincipal + numExtraPrincipal;
   const numInterest = Number(interestPaid || 0);
   const numFees = Number(feesPaid || 0);
   const numInsurance = Number(insurancePaid || 0);
   const numOtherCost = Number(otherCostPaid || 0);
   const summary = debtEconomicSummary(
     numCash,
-    operationType === "payoff" ? currentPrincipal : numPrincipal,
+    operationType === "payoff" ? currentPrincipal : totalPrincipalAmount,
     numInterest,
     numFees,
     numInsurance,
@@ -210,6 +250,7 @@ export function DebtOperationForm({
       const val = validateDebtPayment({
         cashAmount: numCash,
         principalAmount: numPrincipal,
+        extraPrincipalAmount: numExtraPrincipal,
         currentPrincipal,
         breakdownComplete,
         interestPaid: numInterest,
@@ -241,6 +282,52 @@ export function DebtOperationForm({
       const allocVal = validateDebtAllocations(dedupedAlloc, currentScheduleInstallments, numCash, persistedAllocations, debtEvents);
       if (!allocVal.valid) {
         setToast({ message: allocVal.error || "Asignaciones de cuotas inválidas", type: "error" });
+        return;
+      }
+    } else if (operationType === "installment_advance") {
+      const selectedAllocations = allocations
+        .filter((allocation) => Number(allocation.allocatedAmount) > 0 && allocation.installmentId)
+        .map((allocation) => ({ installmentId: allocation.installmentId, allocatedAmount: Number(allocation.allocatedAmount) }));
+      if (selectedAllocations.length === 0) {
+        setToast({ message: "Selecciona al menos una cuota futura para adelantar.", type: "error" });
+        return;
+      }
+      const selectedInstallments = selectedAllocations
+        .map((allocation) => currentScheduleInstallments.find((installment) => installment.id === allocation.installmentId))
+        .filter((installment): installment is DebtInstallment => installment != null)
+        .sort((a, b) => a.installmentNumber - b.installmentNumber);
+      const selectedNumbers = selectedInstallments.map((installment) => installment.installmentNumber);
+      const isConsecutive = selectedNumbers.every((number, index) => index === 0 || number === selectedNumbers[index - 1] + 1);
+      if (!isConsecutive || selectedInstallments.length !== selectedAllocations.length) {
+        setToast({ message: "El adelanto debe cubrir cuotas futuras consecutivas del cronograma vigente.", type: "error" });
+        return;
+      }
+      if (selectedInstallments.some((installment) => installment.dueDate <= eventDate || installment.expectedAmount == null || installment.expectedPrincipal == null || installment.expectedInterest == null)) {
+        setToast({ message: "Solo puedes adelantar cuotas futuras con capital, interés y total definidos.", type: "error" });
+        return;
+      }
+      const allocationValidation = validateDebtAllocations(selectedAllocations, eligibleAdvanceInstallments, numCash, persistedAllocations, debtEvents);
+      if (!allocationValidation.valid) {
+        setToast({ message: allocationValidation.error || "Asignaciones de adelanto inválidas.", type: "error" });
+        return;
+      }
+      const allocationsTotal = selectedAllocations.reduce((sum, allocation) => sum + allocation.allocatedAmount, 0);
+      if (Math.abs(allocationsTotal - numCash) > 0.01 || Math.abs(numExtraPrincipal) > 0.01) {
+        setToast({ message: "El adelanto debe tener un único total de efectivo igual a la suma de sus allocations.", type: "error" });
+        return;
+      }
+      const val = validateDebtPayment({
+        cashAmount: numCash,
+        principalAmount: numPrincipal,
+        currentPrincipal,
+        breakdownComplete,
+        interestPaid: numInterest,
+        feesPaid: numFees,
+        insurancePaid: numInsurance,
+        otherCostPaid: numOtherCost,
+      });
+      if (!val.valid) {
+        setToast({ message: val.error || "Datos de adelanto inválidos", type: "error" });
         return;
       }
     } else if (operationType === "prepayment") {
@@ -284,108 +371,138 @@ export function DebtOperationForm({
     }
 
     setSubmitting(true);
-    let rpcExecuted = false;
     try {
-      if (operationType === "payment") {
-        await recordDebtPayment({
-          debtId: debt.id,
-          eventId,
-          movementId,
-          eventDate,
-          cashAmount: numCash,
-          accountId,
-          description: description.trim(),
-          category,
-          principalAmount: numPrincipal,
-          interestPaid: numInterest,
-          feesPaid: numFees,
-          insurancePaid: numInsurance,
-          otherCostPaid: numOtherCost,
-          breakdownComplete,
-          allocations: allocations
-            .filter((a) => Number(a.allocatedAmount || 0) > 0)
-            .map((a) => ({
-              installmentId: a.installmentId,
-              allocatedAmount: Number(a.allocatedAmount),
-            })),
-        });
-      } else if (operationType === "prepayment") {
-        await recordDebtPrepayment({
-          debtId: debt.id,
-          eventId,
-          movementId,
-          eventDate,
-          cashAmount: numCash,
-          accountId,
-          description: description.trim(),
-          category,
-          principalAmount: numPrincipal,
-          interestPaid: numInterest,
-          feesPaid: numFees,
-          insurancePaid: numInsurance,
-          otherCostPaid: numOtherCost,
-          breakdownComplete,
-          scheduleInstallments: hasNewPrepaymentSchedule
-            ? scheduleInstallments.map((s, idx) => ({
-                installmentNumber: idx + 1,
-                dueDate: s.dueDate,
-                expectedAmount: s.expectedAmount ? Number(s.expectedAmount) : null,
-                expectedPrincipal: s.expectedPrincipal ? Number(s.expectedPrincipal) : null,
-                expectedInterest: s.expectedInterest ? Number(s.expectedInterest) : null,
-              }))
-            : [],
-          scheduleNotes: scheduleNotes || null,
-        });
-      } else if (operationType === "payoff") {
-        await recordDebtPayoff({
-          debtId: debt.id,
-          eventId,
-          movementId,
-          eventDate,
-          cashAmount: numCash,
-          accountId,
-          description: description.trim(),
-          category,
-          interestPaid: numInterest,
-          feesPaid: numFees,
-          insurancePaid: numInsurance,
-          otherCostPaid: numOtherCost,
-          breakdownComplete,
-        });
-      } else if (operationType === "reversal") {
-        if (!targetEventId) {
-          setToast({ message: "ID de registro objetivo no especificado para reversión.", type: "error" });
-          setSubmitting(false);
-          return;
-        }
-        await reverseDebtEvent({
-          debtId: debt.id,
-          reversalEventId,
-          targetEventId,
-          eventDate,
-          description: description.trim(),
-          scheduleInstallments: targetGeneratedSchedule
-            ? scheduleInstallments.map((s, idx) => ({
-                installmentNumber: idx + 1,
-                dueDate: s.dueDate,
-                expectedAmount: s.expectedAmount ? Number(s.expectedAmount) : null,
-                expectedPrincipal: s.expectedPrincipal ? Number(s.expectedPrincipal) : null,
-                expectedInterest: s.expectedInterest ? Number(s.expectedInterest) : null,
-              }))
-            : [],
-          scheduleNotes: scheduleNotes || null,
-        });
+      switch (operationType) {
+        case "payment":
+          await recordDebtPayment({
+            debtId: debt.id,
+            eventId,
+            movementId,
+            eventDate,
+            cashAmount: numCash,
+            accountId,
+            description: description.trim(),
+            category,
+            principalAmount: numPrincipal,
+            interestPaid: numInterest,
+            feesPaid: numFees,
+            insurancePaid: numInsurance,
+            otherCostPaid: numOtherCost,
+            extraPrincipalAmount: numExtraPrincipal,
+            prepaymentEffect: numExtraPrincipal > 0 ? prepaymentEffect : null,
+            breakdownComplete,
+            allocations: allocations
+              .filter((a) => Number(a.allocatedAmount || 0) > 0)
+              .map((a) => ({ installmentId: a.installmentId, allocatedAmount: Number(a.allocatedAmount) })),
+          });
+          break;
+        case "installment_advance":
+          await recordDebtInstallmentAdvance({
+            debtId: debt.id,
+            eventId,
+            movementId,
+            eventDate,
+            cashAmount: numCash,
+            accountId,
+            description: description.trim(),
+            category,
+            principalAmount: numPrincipal,
+            interestPaid: numInterest,
+            feesPaid: numFees,
+            insurancePaid: numInsurance,
+            otherCostPaid: numOtherCost,
+            breakdownComplete,
+            allocations: allocations
+              .filter((a) => Number(a.allocatedAmount || 0) > 0)
+              .map((a) => ({ installmentId: a.installmentId, allocatedAmount: Number(a.allocatedAmount) })),
+          });
+          break;
+        case "prepayment":
+          await recordDebtPrepayment({
+            debtId: debt.id,
+            eventId,
+            movementId,
+            eventDate,
+            cashAmount: numCash,
+            accountId,
+            description: description.trim(),
+            category,
+            principalAmount: numPrincipal,
+            interestPaid: numInterest,
+            feesPaid: numFees,
+            insurancePaid: numInsurance,
+            otherCostPaid: numOtherCost,
+            prepaymentEffect,
+            breakdownComplete,
+            scheduleInstallments: hasNewPrepaymentSchedule
+              ? scheduleInstallments.map((s, idx) => ({
+                  installmentNumber: idx + 1,
+                  dueDate: s.dueDate,
+                  expectedAmount: s.expectedAmount ? Number(s.expectedAmount) : null,
+                  expectedPrincipal: s.expectedPrincipal ? Number(s.expectedPrincipal) : null,
+                  expectedInterest: s.expectedInterest ? Number(s.expectedInterest) : null,
+                  expectedFees: s.expectedFees ? Number(s.expectedFees) : null,
+                  expectedInsurance: s.expectedInsurance ? Number(s.expectedInsurance) : null,
+                }))
+              : [],
+            scheduleNotes: scheduleNotes || null,
+            scheduleSource: hasNewPrepaymentSchedule ? newScheduleSource : null,
+          });
+          break;
+        case "payoff":
+          await recordDebtPayoff({
+            debtId: debt.id,
+            eventId,
+            movementId,
+            eventDate,
+            cashAmount: numCash,
+            accountId,
+            description: description.trim(),
+            category,
+            interestPaid: numInterest,
+            feesPaid: numFees,
+            insurancePaid: numInsurance,
+            otherCostPaid: numOtherCost,
+            breakdownComplete,
+          });
+          break;
+        case "reversal":
+          if (!targetEventId) {
+            setToast({ message: "ID de registro objetivo no especificado para reversión.", type: "error" });
+            return;
+          }
+          await reverseDebtEvent({
+            debtId: debt.id,
+            reversalEventId,
+            targetEventId,
+            eventDate,
+            description: description.trim(),
+            scheduleInstallments: targetGeneratedSchedule
+              ? scheduleInstallments.map((s, idx) => ({
+                  installmentNumber: idx + 1,
+                  dueDate: s.dueDate,
+                  expectedAmount: s.expectedAmount ? Number(s.expectedAmount) : null,
+                  expectedPrincipal: s.expectedPrincipal ? Number(s.expectedPrincipal) : null,
+                  expectedInterest: s.expectedInterest ? Number(s.expectedInterest) : null,
+                  expectedFees: s.expectedFees ? Number(s.expectedFees) : null,
+                  expectedInsurance: s.expectedInsurance ? Number(s.expectedInsurance) : null,
+                }))
+              : [],
+            scheduleNotes: scheduleNotes || null,
+          });
+          break;
+        default:
+          assertNever(operationType);
       }
 
-      rpcExecuted = true;
       setToast({ message: "Operación de deuda registrada exitosamente.", type: "success" });
-      await onSaved();
-    } catch (err) {
-      if (!rpcExecuted) {
-        setToast({ message: translateDebtError(err), type: "error" });
-      } else {
+      try {
+        await onSaved();
+      } catch {
         setToast({ message: "Operación registrada exitosamente, pero falló la actualización de datos locales.", type: "error" });
       }
+    } catch (err) {
+      setToast({ message: translateDebtError(err), type: "error" });
     } finally {
       setSubmitting(false);
     }
@@ -427,6 +544,13 @@ export function DebtOperationForm({
         </div>
       )}
 
+      {operationType === "installment_advance" && (
+        <div className="mb-6 rounded-2xl border border-purple-200 bg-purple-50 p-4 text-purple-950">
+          <p className="text-sm font-black tracking-wide">ADELANTO DE CUOTAS</p>
+          <p className="mt-1 text-sm font-semibold">Cubre cuotas futuras. No equivale a un abono extraordinario al capital.</p>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
@@ -463,15 +587,16 @@ export function DebtOperationForm({
             <>
               <div>
                 <label className="block text-sm font-semibold text-slate-700">
-                  {operationType === "payment" ? "¿Cuánto pagaste en total? *" : "Salida de dinero (Caja/Banco) *"}
+                    {operationType === "payment" ? paymentWithExtraPrincipal ? "Cuota + abono al capital (un solo total) *" : "¿Cuánto pagaste en total? *" : operationType === "installment_advance" ? "Total de cuotas adelantadas *" : "Salida de dinero (Caja/Banco) *"}
                 </label>
                 <input
                   type="number"
                   step="0.01"
                   required
                   value={cashAmount}
-                  onChange={(e) => {
-                    const val = e.target.value;
+                   onChange={(e) => {
+                     if (operationType === "installment_advance") return;
+                     const val = e.target.value;
                     setCashAmount(val);
                     const newCash = Number(val || 0);
                     if (operationType === "payment" && isFlexOpenEnded && !isUserModified && nextPayment.interestKnown && nextPayment.interestAmount != null) {
@@ -482,7 +607,8 @@ export function DebtOperationForm({
                       setPrincipalAmount(newPrin.toString());
                     }
                   }}
-                  placeholder="0.00"
+                   placeholder="0.00"
+                   readOnly={operationType === "installment_advance"}
                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
                 />
                 {operationType === "payment" && nextPayment.minimumPaymentKnown && nextPayment.minimumPaymentAmount != null && numCash > 0 && numCash < nextPayment.minimumPaymentAmount && (
@@ -513,7 +639,7 @@ export function DebtOperationForm({
             />
           </div>
 
-          {operationType !== "reversal" && numCash > 0 && (
+          {operationType !== "reversal" && operationType !== "installment_advance" && numCash > 0 && (
             <div className="sm:col-span-2 rounded-2xl border border-blue-200 bg-blue-50/70 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-bold uppercase tracking-wider text-blue-900">DISTRIBUCIÓN SUGERIDA</p>
@@ -584,9 +710,38 @@ export function DebtOperationForm({
                   setPrincipalAmount(e.target.value);
                   setIsUserModified(true);
                 }}
-                placeholder="0.00"
-                className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                 placeholder="0.00"
+                 readOnly={operationType === "installment_advance"}
+                 className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
               />
+            </div>
+          )}
+
+          {operationType === "payment" && (
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 sm:col-span-2">
+              <label className="block text-sm font-bold text-indigo-950">Abono extraordinario al capital (opcional)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={extraPrincipalAmount}
+                onChange={(e) => setExtraPrincipalAmount(e.target.value)}
+                placeholder="0.00"
+                className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-slate-900"
+              />
+              <p className="mt-1 text-xs text-indigo-900">Se registra en la misma operación y movimiento que el pago de cuota.</p>
+              {numExtraPrincipal > 0 && (
+                <div className="mt-3">
+                  <label className="block text-xs font-bold text-indigo-950">Efecto solicitado al banco</label>
+                  <select value={prepaymentEffect} onChange={(e) => setPrepaymentEffect(e.target.value as PrepaymentEffect)} className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-4 py-2 text-sm text-slate-900">
+                    <option value="reduce_term">Reducir plazo</option>
+                    <option value="reduce_installment">Reducir cuota</option>
+                    <option value="pending_bank_schedule">Banco todavía no entrega cronograma</option>
+                    <option value="other">Otro</option>
+                    <option value="unknown">Todavía no lo sé</option>
+                  </select>
+                </div>
+              )}
             </div>
           )}
 
@@ -598,11 +753,13 @@ export function DebtOperationForm({
                   type="number"
                   step="0.01"
                   value={interestPaid}
-                  onChange={(e) => {
-                    setInterestPaid(e.target.value);
+                   onChange={(e) => {
+                     if (operationType === "installment_advance") return;
+                     setInterestPaid(e.target.value);
                     setIsUserModified(true);
                   }}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                   readOnly={operationType === "installment_advance"}
                 />
               </div>
               <div>
@@ -611,8 +768,9 @@ export function DebtOperationForm({
                   type="number"
                   step="0.01"
                   value={feesPaid}
-                  onChange={(e) => setFeesPaid(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                   onChange={(e) => { if (operationType !== "installment_advance") setFeesPaid(e.target.value); }}
+                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                   readOnly={operationType === "installment_advance"}
                 />
               </div>
               <div>
@@ -621,8 +779,9 @@ export function DebtOperationForm({
                   type="number"
                   step="0.01"
                   value={insurancePaid}
-                  onChange={(e) => setInsurancePaid(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                   onChange={(e) => { if (operationType !== "installment_advance") setInsurancePaid(e.target.value); }}
+                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                   readOnly={operationType === "installment_advance"}
                 />
               </div>
               <div>
@@ -631,8 +790,9 @@ export function DebtOperationForm({
                   type="number"
                   step="0.01"
                   value={otherCostPaid}
-                  onChange={(e) => setOtherCostPaid(e.target.value)}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                   onChange={(e) => { if (operationType !== "installment_advance") setOtherCostPaid(e.target.value); }}
+                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                   readOnly={operationType === "installment_advance"}
                 />
               </div>
               <div className="flex items-center gap-2 sm:col-span-2 pt-2">
@@ -678,12 +838,15 @@ export function DebtOperationForm({
           </div>
         )}
 
-        {operationType === "payment" && currentScheduleInstallments.length > 0 && (
+        {(operationType === "payment" || operationType === "installment_advance") && currentScheduleInstallments.length > 0 && (
           <div className="rounded-2xl border border-slate-200 p-4">
-            <h3 className="text-lg font-bold text-slate-800 mb-2">Asignación a cuotas del cronograma vigente</h3>
+            <h3 className="text-lg font-bold text-slate-800 mb-2">{operationType === "installment_advance" ? "Selecciona cuotas futuras a adelantar" : "Asignación a cuotas del cronograma vigente"}</h3>
             <p className="text-xs text-slate-500 mb-3">Versión #{currentSchedule?.versionNumber}</p>
-            <div className="space-y-3">
-              {currentScheduleInstallments.map((inst) => {
+            {operationType === "installment_advance" && eligibleAdvanceInstallments.length === 0 ? (
+              <p className="rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-900">No hay cuotas futuras, consecutivas y pendientes disponibles para adelantar en el cronograma vigente.</p>
+            ) : (
+              <div className="space-y-3">
+                {(operationType === "installment_advance" ? eligibleAdvanceInstallments : currentScheduleInstallments).map((inst) => {
                 const allocatedBefore = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
                 const remaining = inst.expectedAmount == null || !Number.isFinite(inst.expectedAmount) ? null : Math.max(0, inst.expectedAmount - allocatedBefore);
                 const isPaid = remaining !== null && remaining <= 0;
@@ -693,10 +856,28 @@ export function DebtOperationForm({
                     <div>
                       <p className="text-sm font-bold text-slate-800">Cuota #{inst.installmentNumber} (Vence: {inst.dueDate})</p>
                       <p className="text-xs text-slate-500">
-                        Aplicado: S/ {allocatedBefore.toFixed(2)} {remaining !== null ? `| Esperado: S/ ${inst.expectedAmount!.toFixed(2)} | Restante: S/ ${remaining.toFixed(2)}` : "| Monto esperado no especificado"}
+                        {operationType === "installment_advance"
+                          ? `Capital: S/ ${(inst.expectedPrincipal ?? 0).toFixed(2)} | Interés: S/ ${(inst.expectedInterest ?? 0).toFixed(2)} | Seguro: S/ ${(inst.expectedInsurance ?? 0).toFixed(2)} | Fees: S/ ${(inst.expectedFees ?? 0).toFixed(2)} | Total: S/ ${(inst.expectedAmount ?? 0).toFixed(2)}`
+                          : `Aplicado: S/ ${allocatedBefore.toFixed(2)} ${remaining !== null ? `| Esperado: S/ ${inst.expectedAmount!.toFixed(2)} | Restante: S/ ${remaining.toFixed(2)}` : "| Monto esperado no especificado"}`}
                       </p>
                     </div>
-                    {isPaid ? (
+                    {operationType === "installment_advance" ? (
+                      <label className="flex items-center gap-2 text-sm font-bold text-purple-900">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(currentDraftAllocation)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setAdvanceAllocations([...allocations, { installmentId: inst.id, allocatedAmount: String(inst.expectedAmount ?? 0) }]);
+                            } else {
+                              setAdvanceAllocations(allocations.filter((allocation) => allocation.installmentId !== inst.id));
+                            }
+                          }}
+                          className="h-5 w-5 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                        />
+                        Adelantar
+                      </label>
+                    ) : isPaid ? (
                       <span className="rounded-lg bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-800">Pagada</span>
                     ) : (
                       <input
@@ -705,10 +886,10 @@ export function DebtOperationForm({
                         placeholder="Monto asignado"
                         value={currentDraftAllocation}
                         onChange={(e) => {
-                          const val = e.target.value;
-                          const existing = allocations.find((a) => a.installmentId === inst.id);
-                          if (existing) {
-                            setAllocations(allocations.map((a) => (a.installmentId === inst.id ? { ...a, allocatedAmount: val } : a)));
+                           const val = e.target.value;
+                           const existing = allocations.find((a) => a.installmentId === inst.id);
+                           if (existing) {
+                             setAllocations(allocations.map((a) => (a.installmentId === inst.id ? { ...a, allocatedAmount: val } : a)));
                           } else if (val) {
                             setAllocations([...allocations, { installmentId: inst.id, allocatedAmount: val }]);
                           }
@@ -718,13 +899,24 @@ export function DebtOperationForm({
                     )}
                   </div>
                 );
-              })}
-            </div>
+                })}
+              </div>
+            )}
           </div>
         )}
 
         {operationType === "prepayment" && (
           <div className="rounded-2xl border border-slate-200 p-4 space-y-4">
+            <div>
+              <label className="block text-sm font-bold text-slate-800">¿Qué efecto esperas del abono al capital?</label>
+              <select value={prepaymentEffect} onChange={(e) => setPrepaymentEffect(e.target.value as PrepaymentEffect)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900">
+                <option value="reduce_term">Reducir plazo</option>
+                <option value="reduce_installment">Reducir cuota</option>
+                <option value="pending_bank_schedule">Banco todavía no entrega cronograma</option>
+                <option value="other">Otro</option>
+                <option value="unknown">Todavía no lo sé</option>
+              </select>
+            </div>
             <div className="flex items-center gap-3">
               <input
                 type="checkbox"
@@ -739,12 +931,19 @@ export function DebtOperationForm({
             </div>
             {hasNewPrepaymentSchedule && (
               <div className="space-y-3 pt-2">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700">Fuente del nuevo cronograma</label>
+                  <select value={newScheduleSource} onChange={(e) => setNewScheduleSource(e.target.value as "contractual" | "estimated")} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
+                    <option value="contractual">Contractual / oficial del banco</option>
+                    <option value="estimated">Estimado por Caja Familiar</option>
+                  </select>
+                </div>
                 <button
                   type="button"
                   onClick={() =>
                     setScheduleInstallments([
                       ...scheduleInstallments,
-                      { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "" },
+                       { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "" },
                     ])
                   }
                   className="rounded-xl bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 hover:bg-blue-100"
@@ -828,7 +1027,7 @@ export function DebtOperationForm({
               onClick={() =>
                 setScheduleInstallments([
                   ...scheduleInstallments,
-                  { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "" },
+                   { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "" },
                 ])
               }
               className="rounded-xl bg-amber-100 px-3 py-1.5 text-sm font-bold text-amber-900 hover:bg-amber-200"

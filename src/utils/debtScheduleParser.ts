@@ -61,6 +61,12 @@ export function parsePeruvianNumeric(val: string | undefined | null): number {
   }
 }
 
+function parseRequiredPeruvianNumeric(val: string | undefined | null): number | null {
+  if (!val || !/[0-9]/.test(val)) return null;
+  const parsed = parsePeruvianNumeric(val);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function parseDateStr(val: string | undefined | null): string | null {
   if (!val) return null;
   const trimmed = val.trim();
@@ -69,7 +75,7 @@ export function parseDateStr(val: string | undefined | null): string | null {
     const y = parseInt(parts[0], 10);
     const m = parseInt(parts[1], 10);
     const d = parseInt(parts[2], 10);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) return trimmed;
+    if (isRealCalendarDate(y, m, d)) return trimmed;
     return null;
   }
   const match = trimmed.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
@@ -77,7 +83,7 @@ export function parseDateStr(val: string | undefined | null): string | null {
     const day = parseInt(match[1], 10);
     const month = parseInt(match[2], 10);
     const year = parseInt(match[3], 10);
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+    if (isRealCalendarDate(year, month, day)) {
       const dStr = day.toString().padStart(2, "0");
       const mStr = month.toString().padStart(2, "0");
       return `${year}-${mStr}-${dStr}`;
@@ -86,27 +92,35 @@ export function parseDateStr(val: string | undefined | null): string | null {
   return null;
 }
 
+function isRealCalendarDate(year: number, month: number, day: number): boolean {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day) || month < 1 || month > 12 || day < 1) {
+    return false;
+  }
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function dateOrdinal(date: string): number {
+  const [year, month, day] = date.split("-").map(Number);
+  return Date.UTC(year, month - 1, day) / (1000 * 60 * 60 * 24);
+}
+
 export function detectFrequencyFromDates(dates: string[]): DebtPaymentFrequency {
   if (dates.length < 2) return "monthly";
 
-  let totalGapDays = 0;
-  let count = 0;
+  const gaps: number[] = [];
   for (let i = 1; i < dates.length; i++) {
-    const d1 = new Date(dates[i - 1]).getTime();
-    const d2 = new Date(dates[i]).getTime();
-    if (!isNaN(d1) && !isNaN(d2) && d2 > d1) {
-      const gap = (d2 - d1) / (1000 * 60 * 60 * 24);
-      totalGapDays += gap;
-      count++;
-    }
+    const gap = dateOrdinal(dates[i]) - dateOrdinal(dates[i - 1]);
+    if (!Number.isFinite(gap) || gap <= 0) return "custom";
+    gaps.push(gap);
   }
 
-  if (count === 0) return "monthly";
-  const avgGap = totalGapDays / count;
-
-  if (avgGap <= 10) return "weekly";
-  if (avgGap <= 18) return "biweekly";
-  if (avgGap <= 45) return "monthly";
+  const allWithin = (min: number, max: number) => gaps.every((gap) => gap >= min && gap <= max);
+  if (allWithin(6, 8)) return "weekly";
+  if (allWithin(13, 15)) return "biweekly";
+  // Calendar-month schedules legitimately vary between 28 and 31 days, but
+  // an irregular sequence must not be classified from its average gap.
+  if (allWithin(27, 32)) return "monthly";
   return "custom";
 }
 
@@ -118,6 +132,7 @@ export function parseContractualScheduleText(rawText: string): ScheduleParseResu
 
   const errors: string[] = [];
   const rows: ContractualScheduleRowInput[] = [];
+  const seenInstallmentNumbers = new Set<number>();
 
   for (let idx = 0; idx < lines.length; idx++) {
     const line = lines[idx];
@@ -151,14 +166,44 @@ export function parseContractualScheduleText(rawText: string): ScheduleParseResu
       continue;
     }
 
-    const expectedAmount = parsePeruvianNumeric(tokens[dateIdx + 1]);
-    const expectedPrincipal = parsePeruvianNumeric(tokens[dateIdx + 2]);
-    const expectedInterest = parsePeruvianNumeric(tokens[dateIdx + 3]);
-    const expectedInsurance = parsePeruvianNumeric(tokens[dateIdx + 4]);
-    const expectedFees = parsePeruvianNumeric(tokens[dateIdx + 5]);
+    if (tokens.length < dateIdx + 6) {
+      errors.push(`Línea ${idx + 1}: Se requieren total, capital, interés, seguro y gastos.`);
+      continue;
+    }
+
+    if (!Number.isInteger(instNo) || instNo <= 0) {
+      errors.push(`Línea ${idx + 1}: El número de cuota debe ser mayor a cero.`);
+      continue;
+    }
+    if (seenInstallmentNumbers.has(instNo)) {
+      errors.push(`Línea ${idx + 1}: El número de cuota ${instNo} está duplicado.`);
+    }
+    seenInstallmentNumbers.add(instNo);
+
+    const parsedAmounts = [
+      parseRequiredPeruvianNumeric(tokens[dateIdx + 1]),
+      parseRequiredPeruvianNumeric(tokens[dateIdx + 2]),
+      parseRequiredPeruvianNumeric(tokens[dateIdx + 3]),
+      parseRequiredPeruvianNumeric(tokens[dateIdx + 4]),
+      parseRequiredPeruvianNumeric(tokens[dateIdx + 5]),
+    ];
+
+    if (parsedAmounts.some((amount) => amount == null)) {
+      errors.push(`Línea ${idx + 1} (Cuota ${instNo}): Todos los importes deben ser números explícitos.`);
+      continue;
+    }
+
+    const [expectedAmount, expectedPrincipal, expectedInterest, expectedInsurance, expectedFees] = parsedAmounts as [number, number, number, number, number];
+
+    if (expectedAmount <= 0) {
+      errors.push(`Línea ${idx + 1} (Cuota ${instNo}): La cuota total debe ser mayor a cero.`);
+    }
+    if ([expectedPrincipal, expectedInterest, expectedInsurance, expectedFees].some((amount) => amount < 0)) {
+      errors.push(`Línea ${idx + 1} (Cuota ${instNo}): Los importes no pueden ser negativos.`);
+    }
 
     const sumComponents = expectedPrincipal + expectedInterest + expectedInsurance + expectedFees;
-    if (sumComponents > 0 && Math.abs(expectedAmount - sumComponents) > 0.15) {
+    if (Math.abs(expectedAmount - sumComponents) > 0.15) {
       errors.push(
         `Línea ${idx + 1} (Cuota ${instNo}): El total (${expectedAmount}) no coincide con la suma de componentes (${round2(sumComponents)}).`
       );
@@ -198,6 +243,11 @@ export function parseContractualScheduleText(rawText: string): ScheduleParseResu
       totalInsurance: 0,
       totalFees: 0,
     };
+  }
+
+  const expectedSequence = rows.map((row) => row.installmentNumber);
+  if (expectedSequence.some((number, index) => number !== index + 1)) {
+    errors.push("La secuencia de cuotas debe ser continua y comenzar en 1.");
   }
 
   const firstAmt = rows[0].expectedAmount;

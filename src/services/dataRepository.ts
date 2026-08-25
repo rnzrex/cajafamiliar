@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination.js";
 import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors.js";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource, BankLoanProfile, DebtInsuranceTerms } from "../types.js";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentAdvanceInput, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource, BankLoanProfile, DebtInsuranceTerms } from "../types.js";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage.js";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient.js";
 
@@ -878,9 +878,32 @@ export function toDebtPrepaymentRpcArgs(input: DebtPrepaymentInput) {
     p_fees_paid: input.feesPaid,
     p_insurance_paid: input.insurancePaid,
     p_other_cost_paid: input.otherCostPaid,
+    p_prepayment_effect: input.prepaymentEffect ?? null,
     p_breakdown_complete: input.breakdownComplete,
     p_schedule_installments: input.scheduleInstallments.map(toDebtScheduleInstallmentRow),
     p_schedule_notes: input.scheduleNotes ?? null,
+    p_schedule_source: input.scheduleSource ?? null,
+  };
+}
+
+export function toDebtInstallmentAdvanceRpcArgs(input: DebtInstallmentAdvanceInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_event_id: input.eventId,
+    p_movement_id: input.movementId,
+    p_event_date: input.eventDate,
+    p_cash_amount: input.cashAmount,
+    p_account_id: input.accountId,
+    p_description: input.description,
+    p_category: input.category,
+    p_principal_amount: input.principalAmount,
+    p_interest_paid: input.interestPaid,
+    p_fees_paid: input.feesPaid,
+    p_insurance_paid: input.insurancePaid,
+    p_other_cost_paid: input.otherCostPaid,
+    p_breakdown_complete: input.breakdownComplete,
+    p_allocations: input.allocations.map(toDebtAllocationRow),
   };
 }
 
@@ -921,15 +944,15 @@ export async function recordDebtPayment(input: DebtPaymentInput): Promise<DebtFu
 }
 
 export async function recordDebtPrepayment(input: DebtPrepaymentInput): Promise<DebtFundOperationResult> {
-  return callDebtOperation("record_debt_prepayment_v1", toDebtPrepaymentRpcArgs(input), fromDebtFundOperationResult);
+  return callDebtOperation("record_debt_prepayment_v2", toDebtPrepaymentRpcArgs(input), fromDebtFundOperationResult);
 }
 
 export async function recordDebtPayoff(input: DebtPayoffInput): Promise<DebtFundOperationResult> {
   return callDebtOperation("record_debt_payoff_v1", toDebtPayoffRpcArgs(input), fromDebtFundOperationResult);
 }
 
-export async function recordDebtInstallmentAdvance(input: DebtPaymentInput): Promise<DebtFundOperationResult> {
-  return callDebtOperation("record_debt_installment_advance_v1", toDebtPaymentRpcArgs(input), fromDebtFundOperationResult);
+export async function recordDebtInstallmentAdvance(input: DebtInstallmentAdvanceInput): Promise<DebtFundOperationResult> {
+  return callDebtOperation("record_debt_installment_advance_v1", toDebtInstallmentAdvanceRpcArgs(input), fromDebtFundOperationResult);
 }
 
 export async function reverseDebtEvent(input: DebtReversalInput): Promise<DebtReversalResult> {

@@ -85,6 +85,15 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [tsvScheduleText, setTsvScheduleText] = useState("");
   const [scheduleParseError, setScheduleParseError] = useState<string | null>(null);
   const [scheduleEstimationError, setScheduleEstimationError] = useState<string | null>(null);
+  const [scheduleEstimationWarning, setScheduleEstimationWarning] = useState<string | null>(null);
+  const [estimatedTotals, setEstimatedTotals] = useState<{
+    totalPrincipal: number;
+    totalInterest: number;
+    totalInsurance: number;
+    totalFees: number;
+    totalContractSum: number;
+  } | null>(null);
+  const [estimatedScheduleSignature, setEstimatedScheduleSignature] = useState<string | null>(null);
 
   const [insurances, setInsurances] = useState<Array<{
     insuranceType: DebtInsuranceType;
@@ -94,7 +103,11 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     fixedAmount: string;
     provider: string;
     policyReference: string;
+    isRequired: boolean;
+    notes: string;
   }>>([]);
+  const [newInsuranceType, setNewInsuranceType] = useState<DebtInsuranceType>("credit_life");
+  const [mortgageInsuranceCoverage, setMortgageInsuranceCoverage] = useState<"bank" | "own_policy" | "endorsed_policy" | "">("");
 
   // Credit card specific fields
   const [creditLimit, setCreditLimit] = useState("");
@@ -132,6 +145,76 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const isCard = isCreditCardDebtKind(debtKind);
   const isPledge = debtKind === "pledge";
 
+  const insuranceLabel = (type: DebtInsuranceType): string => {
+    if (type === "credit_life") return "Seguro de desgravamen";
+    if (type === "vehicle") return "Seguro vehicular";
+    if (type === "property") return "Seguro inmueble";
+    return "Otro seguro";
+  };
+
+  const estimatedInsuranceInputs = () => {
+    let creditLifeRatePercent = 0;
+    let percentOriginalPrincipalRatePercent = 0;
+    let fixedInsuranceAmount = 0;
+    let hasUnknownInsuranceCost = false;
+
+    for (const insurance of insurances) {
+      const rate = insurance.ratePercent ? Number(insurance.ratePercent) : 0;
+      const fixedAmount = insurance.fixedAmount ? Number(insurance.fixedAmount) : 0;
+      if (insurance.pricingMode === "percent_outstanding_balance" && insurance.insuranceType === "credit_life") {
+        creditLifeRatePercent += Number.isFinite(rate) ? rate : 0;
+      } else if (insurance.pricingMode === "percent_original_principal") {
+        percentOriginalPrincipalRatePercent += Number.isFinite(rate) ? rate : 0;
+      } else if (insurance.pricingMode === "fixed_amount") {
+        fixedInsuranceAmount += Number.isFinite(fixedAmount) ? fixedAmount : 0;
+      } else if (insurance.pricingMode === "contract_schedule" || insurance.pricingMode === "unknown") {
+        hasUnknownInsuranceCost = true;
+      }
+    }
+
+    return {
+      creditLifeRatePercent,
+      percentOriginalPrincipalRatePercent,
+      fixedInsuranceAmount,
+      hasUnknownInsuranceCost,
+    };
+  };
+
+  const addInsurance = () => {
+    setInsurances([
+      ...insurances,
+      {
+        insuranceType: newInsuranceType,
+        label: insuranceLabel(newInsuranceType),
+        pricingMode: "unknown",
+        ratePercent: "",
+        fixedAmount: "",
+        provider: "",
+        policyReference: "",
+        isRequired: true,
+        notes: "",
+      },
+    ]);
+  };
+
+  const currentEstimationSignature = () => JSON.stringify({
+    financedAmount: openingPrincipalBalance || financedAmount,
+    teaPercent,
+    plannedInstallmentCount,
+    paymentFrequency,
+    customFrequencyDays,
+    firstDueDate,
+    amortizationMethod,
+    gracePeriodType,
+    balloonPaymentAmount,
+    insurances: insurances.map((insurance) => ({
+      insuranceType: insurance.insuranceType,
+      pricingMode: insurance.pricingMode,
+      ratePercent: insurance.ratePercent,
+      fixedAmount: insurance.fixedAmount,
+    })),
+  });
+
   const addInstallment = () => {
     const nextNo = installments.length + 1;
     setInstallments([
@@ -150,6 +233,20 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
   const addCollateral = () => {
     setCollaterals([...collaterals, { description: "", pledgedValue: "", estimatedValue: "", redemptionDeadline: "" }]);
+  };
+
+  const resetBankScheduleDraft = () => {
+    setInstallments([]);
+    setPlannedInstallmentCount("");
+    setPlannedInstallmentAmount("");
+    setFirstDueDate("");
+    setPaymentFrequency(null);
+    setCustomFrequencyDays("");
+    setScheduleParseError(null);
+    setScheduleEstimationError(null);
+    setScheduleEstimationWarning(null);
+    setEstimatedTotals(null);
+    setEstimatedScheduleSignature(null);
   };
 
   const validateDetails = (): boolean => {
@@ -187,6 +284,47 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     } else {
       if (!name.trim() || !creditorName.trim() || !openingPrincipalBalance) {
         setToast({ message: "Complete los campos obligatorios (Nombre, Acreedor y Saldo adeudado).", type: "error" });
+        return false;
+      }
+    }
+
+    if (debtKind === "bank_loan") {
+      const bankFinancedAmount = Number(financedAmount || openingPrincipalBalance || 0);
+      if (!Number.isFinite(bankFinancedAmount) || bankFinancedAmount <= 0) {
+        setToast({ message: "El importe financiado debe ser mayor a cero.", type: "error" });
+        return false;
+      }
+      if (amortizationMethod === "unknown" && scheduleSource === "estimated") {
+        setToast({ message: "Para estimar el cronograma debes seleccionar una modalidad de amortización soportada.", type: "error" });
+        return false;
+      }
+      if (scheduleSource === "contractual" && installments.length === 0) {
+        setToast({ message: "Carga e interpreta el cronograma contractual del banco antes de guardar.", type: "error" });
+        return false;
+      }
+      if (scheduleSource === "estimated") {
+        const missing: string[] = [];
+        if (!teaPercent.trim() || !Number.isFinite(Number(teaPercent)) || Number(teaPercent) < 0) missing.push("TEA");
+        if (!plannedInstallmentCount.trim() || !Number.isInteger(Number(plannedInstallmentCount)) || Number(plannedInstallmentCount) <= 0) missing.push("plazo");
+        if (!paymentFrequency) missing.push("frecuencia de pago");
+        if (!firstDueDate) missing.push("primera fecha de vencimiento");
+        if (paymentFrequency === "custom" && (!customFrequencyDays || Number(customFrequencyDays) <= 0)) missing.push("días de frecuencia personalizada");
+        if (amortizationMethod !== "fixed_installment" && amortizationMethod !== "constant_principal") missing.push("modalidad soportada (cuota fija o capital constante)");
+        if (missing.length > 0) {
+          setToast({ message: `Para generar la estimación falta: ${missing.join(", ")}.`, type: "error" });
+          return false;
+        }
+        if (estimatedScheduleSignature !== currentEstimationSignature()) {
+          setToast({ message: "Los datos de la estimación cambiaron. Genera nuevamente el cronograma antes de guardar.", type: "error" });
+          return false;
+        }
+        if (installments.length === 0) {
+          setToast({ message: "Genera el cronograma estimado antes de guardar.", type: "error" });
+          return false;
+        }
+      }
+      if (loanSubtype === "mortgage" && !mortgageInsuranceCoverage) {
+        setToast({ message: "En un crédito hipotecario debes indicar si el desgravamen lo cubre el banco, una póliza propia o una póliza endosada.", type: "error" });
         return false;
       }
     }
@@ -257,8 +395,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           firstDueDate,
           plannedInstallmentCount,
           plannedInstallmentAmount,
-          installmentAmountMode: scheduleSource === "contractual" ? installmentAmountMode : "fixed",
-          teaPercent,
+           installmentAmountMode,
+           teaPercent,
           tceaPercent,
           notes,
           pledgeItemDescription,
@@ -267,8 +405,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           pledgePledgedValue,
           installments,
           extraCollaterals: collaterals,
-          repaymentStructure: scheduleSource === "contractual" ? "fixed_schedule" : (repaymentStructure || "fixed_schedule"),
-          interestCalculationMode: scheduleSource === "contractual" ? "contract_schedule" : (interestCalculationMode || "tea_estimate"),
+           repaymentStructure: "fixed_schedule",
+           interestCalculationMode: scheduleSource === "contractual" ? "contract_schedule" : "tea_estimate",
           periodicRatePercent,
           periodicRateBasis,
           minimumPrincipalPayment,
@@ -287,15 +425,36 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           gracePeriodType,
           gracePeriodInstallments: gracePeriodInstallments ? Number(gracePeriodInstallments) : null,
           balloonPaymentAmount: balloonPaymentAmount ? Number(balloonPaymentAmount) : null,
-          insurances: insurances.map((ins) => ({
-            insuranceType: ins.insuranceType,
-            label: ins.label,
-            pricingMode: ins.pricingMode,
-            ratePercent: ins.ratePercent ? Number(ins.ratePercent) : null,
-            fixedAmount: ins.fixedAmount ? Number(ins.fixedAmount) : null,
-            provider: ins.provider || null,
-            policyReference: ins.policyReference || null,
-          })),
+           insurances: [
+             ...insurances,
+             ...(loanSubtype === "mortgage" && mortgageInsuranceCoverage && !insurances.some((insurance) => insurance.insuranceType === "credit_life")
+               ? [{
+                   insuranceType: "credit_life" as DebtInsuranceType,
+                   label: mortgageInsuranceCoverage === "bank"
+                     ? "Desgravamen cubierto por el banco"
+                     : mortgageInsuranceCoverage === "own_policy"
+                     ? "Desgravamen con póliza propia"
+                     : "Desgravamen con póliza endosada",
+                   pricingMode: "unknown" as DebtInsurancePricingMode,
+                   ratePercent: null,
+                   fixedAmount: null,
+                   provider: null,
+                   policyReference: null,
+                   isRequired: true,
+                   notes: "Forma de cobertura definida por el usuario; costo pendiente de confirmar.",
+                 }]
+               : []),
+           ].map((ins) => ({
+             insuranceType: ins.insuranceType,
+             label: ins.label,
+             pricingMode: ins.pricingMode,
+             ratePercent: ins.ratePercent ? Number(ins.ratePercent) : null,
+             fixedAmount: ins.fixedAmount ? Number(ins.fixedAmount) : null,
+             provider: ins.provider || null,
+             policyReference: ins.policyReference || null,
+             isRequired: ins.isRequired,
+             notes: ins.notes,
+           })),
           scheduleSource,
         });
         setToast({ message: "Crédito bancario registrado exitosamente.", type: "success" });
@@ -345,6 +504,16 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   };
 
   const selectedKindObj = DEBT_KIND_OPTIONS.find((opt) => opt.value === debtKind);
+  const bankReviewTotals = installments.reduce(
+    (totals, installment) => ({
+      principal: totals.principal + (Number(installment.expectedPrincipal) || 0),
+      interest: totals.interest + (Number(installment.expectedInterest) || 0),
+      insurance: totals.insurance + (Number(installment.expectedInsurance) || 0),
+      fees: totals.fees + (Number(installment.expectedFees) || 0),
+      total: totals.total + (Number(installment.expectedAmount) || 0),
+    }),
+    { principal: 0, interest: 0, insurance: 0, fees: 0, total: 0 }
+  );
 
   return (
     <section className="mx-auto max-w-4xl rounded-3xl bg-white p-6 shadow-xl lg:p-8">
@@ -715,6 +884,35 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-800 mb-1">Número / código de contrato (opcional)</label>
+                      <input
+                        type="text"
+                        value={contractNumber}
+                        onChange={(e) => setContractNumber(e.target.value)}
+                        placeholder="Ej. 001-2026-ABC"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                      />
+                    </div>
+                    {loanSubtype === "mortgage" && (
+                      <div>
+                        <label className="block text-sm font-bold text-slate-800 mb-1">¿Cómo se cubre el desgravamen? *</label>
+                        <select
+                          value={mortgageInsuranceCoverage}
+                          onChange={(e) => setMortgageInsuranceCoverage(e.target.value as "bank" | "own_policy" | "endorsed_policy" | "")}
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
+                        >
+                          <option value="">Seleccionar cobertura</option>
+                          <option value="bank">Lo cubre el banco</option>
+                          <option value="own_policy">Póliza propia</option>
+                          <option value="endorsed_policy">Póliza endosada</option>
+                        </select>
+                        <p className="mt-1 text-xs text-slate-500">No asumimos proveedor ni costo sin datos del contrato.</p>
+                      </div>
+                    )}
+                  </div>
+
                   {/* Subtype-specific fields */}
                   {loanSubtype === "vehicular" && (
                     <div className="rounded-xl bg-white p-4 border border-blue-100 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -827,13 +1025,37 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                     </div>
                   )}
 
+                  {loanSubtype !== "vehicular" && loanSubtype !== "mortgage" && (
+                    <div className="rounded-xl bg-white p-4 border border-blue-100">
+                      <label className="block text-xs font-bold text-slate-700">Importe financiado del crédito</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={financedAmount}
+                        onChange={(e) => {
+                          setFinancedAmount(e.target.value);
+                          setOpeningPrincipalBalance(e.target.value);
+                        }}
+                        placeholder="Ej. 10000"
+                        className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </div>
+                  )}
+
                   {/* Schedule Source Selection */}
                   <div className="space-y-3 pt-2">
                     <label className="block text-sm font-bold text-slate-800">Fuente del Cronograma *</label>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <button
                         type="button"
-                        onClick={() => setScheduleSource("contractual")}
+                        onClick={() => {
+                          if (scheduleSource !== "contractual") resetBankScheduleDraft();
+                          setScheduleSource("contractual");
+                          setInterestCalculationMode("contract_schedule");
+                          setScheduleEstimationError(null);
+                          setScheduleEstimationWarning(null);
+                          setEstimatedTotals(null);
+                        }}
                         className={`p-3.5 rounded-xl border text-left transition ${
                           scheduleSource === "contractual"
                             ? "border-blue-600 bg-white ring-2 ring-blue-600/20 shadow-sm"
@@ -846,7 +1068,12 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
                       <button
                         type="button"
-                        onClick={() => setScheduleSource("estimated")}
+                        onClick={() => {
+                          if (scheduleSource !== "estimated") resetBankScheduleDraft();
+                          setScheduleSource("estimated");
+                          setInterestCalculationMode("tea_estimate");
+                          setRepaymentStructure("fixed_schedule");
+                        }}
                         className={`p-3.5 rounded-xl border text-left transition ${
                           scheduleSource === "estimated"
                             ? "border-blue-600 bg-white ring-2 ring-blue-600/20 shadow-sm"
@@ -928,20 +1155,35 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                           onClick={() => {
                             try {
                               setScheduleEstimationError(null);
+                              setScheduleEstimationWarning(null);
                               const finAmt = Number(openingPrincipalBalance || financedAmount || 0);
-                              const teaNum = teaPercent ? Number(teaPercent) : 0;
-                              const termsNum = plannedInstallmentCount ? Number(plannedInstallmentCount) : 12;
+                              const teaNum = teaPercent.trim() ? Number(teaPercent) : Number.NaN;
+                              const termsNum = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : Number.NaN;
+                              const insuranceInputs = estimatedInsuranceInputs();
 
+                              if (!Number.isFinite(finAmt) || finAmt <= 0) throw new Error("El monto financiado debe ser mayor a cero.");
+                              if (!Number.isFinite(teaNum) || teaNum < 0) throw new Error("La TEA debe ser un porcentaje válido y explícito.");
+                              if (!Number.isInteger(termsNum) || termsNum <= 0) throw new Error("El plazo debe ser un número de cuotas mayor a cero.");
+                              if (!paymentFrequency) throw new Error("La frecuencia de pago es obligatoria para estimar el cronograma.");
+                              if (!firstDueDate) throw new Error("La primera fecha de vencimiento es obligatoria para estimar el cronograma.");
+                              if (paymentFrequency === "custom" && (!customFrequencyDays || Number(customFrequencyDays) <= 0)) {
+                                throw new Error("La frecuencia personalizada requiere indicar los días entre pagos.");
+                              }
+
+                              const estimationSignature = currentEstimationSignature();
                               const est = generateEstimatedDebtSchedule({
                                 financedAmount: finAmt,
                                 teaPercent: teaNum,
                                 termInstallments: termsNum,
-                                paymentFrequency: paymentFrequency || "monthly",
+                                paymentFrequency,
                                 customFrequencyDays: customFrequencyDays ? Number(customFrequencyDays) : null,
-                                firstDueDate: firstDueDate || localDateString(new Date()),
+                                firstDueDate,
                                 amortizationMethod,
                                 gracePeriodType,
                                 balloonPaymentAmount: balloonPaymentAmount ? Number(balloonPaymentAmount) : 0,
+                                creditLifeRatePercent: insuranceInputs.creditLifeRatePercent,
+                                percentOriginalPrincipalRatePercent: insuranceInputs.percentOriginalPrincipalRatePercent,
+                                fixedInsuranceAmount: insuranceInputs.fixedInsuranceAmount,
                               });
 
                               setInstallments(
@@ -955,9 +1197,23 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                                   expectedFees: r.expectedFees.toString(),
                                 }))
                               );
-                              setInstallmentAmountMode("fixed");
+                              setInstallmentAmountMode(est.installmentAmountMode);
                               setPlannedInstallmentAmount(est.financialInstallmentAmount.toString());
+                              setPlannedInstallmentCount(est.rows.length.toString());
+                              setEstimatedTotals({
+                                totalPrincipal: est.totalPrincipal,
+                                totalInterest: est.totalInterest,
+                                totalInsurance: est.totalInsurance,
+                                totalFees: est.totalFees,
+                                totalContractSum: est.totalContractSum,
+                              });
+                              setEstimatedScheduleSignature(estimationSignature);
+                              if (insuranceInputs.hasUnknownInsuranceCost) {
+                                setScheduleEstimationWarning("La cuota estimada no incluye el costo de seguro que el contrato no permite estimar.");
+                              }
                             } catch (err: any) {
+                              setEstimatedTotals(null);
+                              setEstimatedScheduleSignature(null);
                               setScheduleEstimationError(err.message || "Error al estimar cronograma");
                             }
                           }}
@@ -977,8 +1233,116 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                           <span>{scheduleEstimationError}</span>
                         </div>
                       )}
+                      {scheduleEstimationWarning && (
+                        <div className="rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-900 border border-amber-200 flex items-center gap-2">
+                          <AlertCircle className="h-4 w-4 text-amber-700 shrink-0" />
+                          <span>{scheduleEstimationWarning}</span>
+                        </div>
+                      )}
+                      {estimatedTotals && (
+                        <div className="grid grid-cols-2 gap-3 rounded-xl bg-indigo-50 p-3 text-xs text-indigo-950 sm:grid-cols-5">
+                          <span>Capital: <strong>{currencySymbol} {estimatedTotals.totalPrincipal.toFixed(2)}</strong></span>
+                          <span>Intereses: <strong>{currencySymbol} {estimatedTotals.totalInterest.toFixed(2)}</strong></span>
+                          <span>Seguros: <strong>{currencySymbol} {estimatedTotals.totalInsurance.toFixed(2)}</strong></span>
+                          <span>Fees: <strong>{currencySymbol} {estimatedTotals.totalFees.toFixed(2)}</strong></span>
+                          <span>Total: <strong>{currencySymbol} {estimatedTotals.totalContractSum.toFixed(2)}</strong></span>
+                        </div>
+                      )}
                     </div>
                   )}
+
+                  <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h4 className="text-sm font-bold text-slate-900">Seguros del crédito</h4>
+                        <p className="text-xs text-slate-500">Registra solo lo que indique el contrato. Un crédito personal puede quedar sin desgravamen.</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={newInsuranceType}
+                          onChange={(e) => setNewInsuranceType(e.target.value as DebtInsuranceType)}
+                          className="rounded-lg border border-slate-300 px-2 py-1.5 text-xs text-slate-800"
+                        >
+                          <option value="credit_life">Seguro de desgravamen</option>
+                          <option value="vehicle">Seguro vehicular</option>
+                          <option value="property">Seguro inmueble</option>
+                          <option value="other">Otro</option>
+                        </select>
+                        <button type="button" onClick={addInsurance} className="rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100">
+                          Agregar seguro
+                        </button>
+                      </div>
+                    </div>
+                    {insurances.length === 0 ? (
+                      <p className="text-xs italic text-slate-500">No se han definido seguros del crédito.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {insurances.map((insurance, index) => (
+                          <div key={index} className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-2 lg:grid-cols-4">
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600">Tipo</label>
+                              <select
+                                value={insurance.insuranceType}
+                                onChange={(e) => {
+                                  const copy = [...insurances];
+                                  copy[index] = { ...copy[index], insuranceType: e.target.value as DebtInsuranceType, label: insuranceLabel(e.target.value as DebtInsuranceType) };
+                                  setInsurances(copy);
+                                }}
+                                className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                              >
+                                <option value="credit_life">Seguro de desgravamen</option>
+                                <option value="vehicle">Seguro vehicular</option>
+                                <option value="property">Seguro inmueble</option>
+                                <option value="other">Otro</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600">Modo de precio</label>
+                              <select
+                                value={insurance.pricingMode}
+                                onChange={(e) => {
+                                  const copy = [...insurances];
+                                  copy[index] = { ...copy[index], pricingMode: e.target.value as DebtInsurancePricingMode };
+                                  setInsurances(copy);
+                                }}
+                                className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs"
+                              >
+                                <option value="fixed_amount">Monto fijo por cuota</option>
+                                <option value="percent_outstanding_balance">% saldo pendiente</option>
+                                <option value="percent_original_principal">% principal original</option>
+                                <option value="contract_schedule">Según cronograma contractual</option>
+                                <option value="unknown">Desconocido</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600">Tasa %</label>
+                              <input type="number" step="0.0001" value={insurance.ratePercent} onChange={(e) => { const copy = [...insurances]; copy[index] = { ...copy[index], ratePercent: e.target.value }; setInsurances(copy); }} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs" />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600">Monto fijo</label>
+                              <input type="number" step="0.01" value={insurance.fixedAmount} onChange={(e) => { const copy = [...insurances]; copy[index] = { ...copy[index], fixedAmount: e.target.value }; setInsurances(copy); }} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs" />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600">Proveedor</label>
+                              <input type="text" value={insurance.provider} onChange={(e) => { const copy = [...insurances]; copy[index] = { ...copy[index], provider: e.target.value }; setInsurances(copy); }} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs" />
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-bold text-slate-600">Referencia de póliza</label>
+                              <input type="text" value={insurance.policyReference} onChange={(e) => { const copy = [...insurances]; copy[index] = { ...copy[index], policyReference: e.target.value }; setInsurances(copy); }} className="mt-1 w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs" />
+                            </div>
+                            <label className="flex items-center gap-2 pt-5 text-xs font-semibold text-slate-700">
+                              <input type="checkbox" checked={insurance.isRequired} onChange={(e) => { const copy = [...insurances]; copy[index] = { ...copy[index], isRequired: e.target.checked }; setInsurances(copy); }} />
+                              Seguro requerido
+                            </label>
+                            <div className="flex items-end justify-end gap-2">
+                              <input type="text" placeholder="Notas" value={insurance.notes} onChange={(e) => { const copy = [...insurances]; copy[index] = { ...copy[index], notes: e.target.value }; setInsurances(copy); }} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs" />
+                              <button type="button" onClick={() => setInsurances(insurances.filter((_, itemIndex) => itemIndex !== index))} className="rounded-lg p-2 text-red-600 hover:bg-red-50" aria-label="Eliminar seguro"><Trash2 className="h-4 w-4" /></button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -1700,6 +2064,40 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                 </div>
               )}
             </div>
+
+            {debtKind === "bank_loan" && (
+              <div className="rounded-xl border border-blue-200 bg-white p-4 space-y-4 text-sm">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div><p className="text-xs text-slate-500">Tipo</p><p className="font-bold">{selectedKindObj?.label}</p></div>
+                  <div><p className="text-xs text-slate-500">Banco</p><p className="font-bold">{creditorName || "—"}</p></div>
+                  <div><p className="text-xs text-slate-500">Contrato</p><p className="font-bold">{contractNumber || "—"}</p></div>
+                  <div><p className="text-xs text-slate-500">Modalidad</p><p className="font-bold">{AMORTIZATION_METHOD_OPTIONS.find((option) => option.value === amortizationMethod)?.label || amortizationMethod}</p></div>
+                  <div><p className="text-xs text-slate-500">Financiado</p><p className="font-bold">{currencySymbol} {Number(financedAmount || openingPrincipalBalance || 0).toFixed(2)}</p></div>
+                  <div><p className="text-xs text-slate-500">Cuota inicial</p><p className="font-bold">{downPaymentAmount ? `${currencySymbol} ${Number(downPaymentAmount).toFixed(2)}` : "—"}</p></div>
+                  <div><p className="text-xs text-slate-500">Plazo</p><p className="font-bold">{plannedInstallmentCount || "—"} cuotas</p></div>
+                  <div><p className="text-xs text-slate-500">Frecuencia</p><p className="font-bold">{paymentFrequency || "—"}</p></div>
+                  <div><p className="text-xs text-slate-500">Primera cuota</p><p className="font-bold">{formatReviewDate(firstDueDate)}</p></div>
+                  <div><p className="text-xs text-slate-500">TEA</p><p className="font-bold">{teaPercent ? `${teaPercent}%` : "—"}</p></div>
+                  <div><p className="text-xs text-slate-500">TCEA</p><p className="font-bold">{tceaPercent ? `${tceaPercent}%` : "—"}</p></div>
+                  <div><p className="text-xs text-slate-500">Fuente del cronograma</p><p className="font-bold">{scheduleSource === "contractual" ? "Contractual" : "Estimada"}</p></div>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Seguros</p>
+                  {insurances.length === 0 ? <p className="mt-1 text-slate-600">Sin desgravamen ni seguros definidos.</p> : <ul className="mt-1 space-y-1 text-slate-700">{insurances.map((insurance, index) => <li key={index}>{insurance.label} · {insurance.pricingMode} {insurance.provider ? `· ${insurance.provider}` : ""}</li>)}</ul>}
+                </div>
+                {scheduleSource === "contractual" ? (
+                  <div className="grid grid-cols-2 gap-3 rounded-xl bg-emerald-50 p-3 text-emerald-950 sm:grid-cols-5">
+                    <span>Capital: <strong>{currencySymbol} {bankReviewTotals.principal.toFixed(2)}</strong></span>
+                    <span>Intereses: <strong>{currencySymbol} {bankReviewTotals.interest.toFixed(2)}</strong></span>
+                    <span>Seguros: <strong>{currencySymbol} {bankReviewTotals.insurance.toFixed(2)}</strong></span>
+                    <span>Fees: <strong>{currencySymbol} {bankReviewTotals.fees.toFixed(2)}</strong></span>
+                    <span>Total contractual: <strong>{currencySymbol} {bankReviewTotals.total.toFixed(2)}</strong></span>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 font-bold text-indigo-950">Estimación de Caja Familiar — no sustituye el cronograma del banco</div>
+                )}
+              </div>
+            )}
 
             <div className="rounded-xl bg-white/80 p-3 text-xs text-slate-600 border border-slate-200/80">
               {onboardingMode === "EXISTING_DEBT" ? (

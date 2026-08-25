@@ -110,6 +110,7 @@ export function formatEventType(eventType: string): string {
     refinance: "Refinanciación",
     payoff: "Liquidación total",
     reversal: "Reversión",
+    installment_advance: "Adelanto de cuotas",
   };
   return map[eventType] ?? eventType;
 }
@@ -155,6 +156,7 @@ export function debtEconomicSummary(
 export function validateDebtPayment(input: {
   cashAmount: number;
   principalAmount: number;
+  extraPrincipalAmount?: number;
   currentPrincipal: number;
   breakdownComplete: boolean;
   interestPaid?: number;
@@ -166,10 +168,13 @@ export function validateDebtPayment(input: {
   const fees = input.feesPaid ?? 0;
   const insurance = input.insurancePaid ?? 0;
   const otherCost = input.otherCostPaid ?? 0;
+  const extraPrincipal = input.extraPrincipalAmount ?? 0;
+  const totalPrincipal = input.principalAmount + extraPrincipal;
 
   if (
     !Number.isFinite(input.cashAmount) ||
     !Number.isFinite(input.principalAmount) ||
+    !Number.isFinite(extraPrincipal) ||
     !Number.isFinite(input.currentPrincipal) ||
     !Number.isFinite(interest) ||
     !Number.isFinite(fees) ||
@@ -184,17 +189,17 @@ export function validateDebtPayment(input: {
   if (input.cashAmount <= 0) {
     return { valid: false, error: "El monto de efectivo debe ser mayor a cero." };
   }
-  if (input.principalAmount < 0) {
+  if (input.principalAmount < 0 || extraPrincipal < 0) {
     return { valid: false, error: "El capital aplicado no puede ser negativo." };
   }
-  if (input.principalAmount > input.currentPrincipal + 0.01) {
+  if (totalPrincipal > input.currentPrincipal + 0.01) {
     return { valid: false, error: translateDebtError(new Error("DEBT_PRINCIPAL_EXCEEDED")) };
   }
-  if (input.principalAmount > input.cashAmount + 0.01) {
+  if (totalPrincipal > input.cashAmount + 0.01) {
     return { valid: false, error: "El capital aplicado no puede superar la salida de dinero." };
   }
   const knownCosts = interest + fees + insurance + otherCost;
-  const economicExpense = input.cashAmount - input.principalAmount;
+  const economicExpense = input.cashAmount - totalPrincipal;
   if (knownCosts > economicExpense + 0.01) {
     return { valid: false, error: "Los costos conocidos no pueden superar el costo financiero total." };
   }

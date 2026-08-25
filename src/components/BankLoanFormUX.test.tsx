@@ -1,6 +1,8 @@
+// @vitest-environment jsdom
 import React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DebtForm } from "./DebtForm.js";
 import { BANK_LOAN_SUBTYPE_OPTIONS, AMORTIZATION_METHOD_OPTIONS } from "../utils/bankCreditFormHelper.js";
 import * as dataRepository from "../services/dataRepository.js";
@@ -20,8 +22,11 @@ vi.mock("../services/dataRepository", async () => {
 });
 
 describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
-  it("renders DebtForm step 1 with bank loan options", () => {
-    const html = renderToStaticMarkup(
+  afterEach(cleanup);
+
+  it("advances from type selection to bank details and toggles estimation", async () => {
+    const user = userEvent.setup();
+    render(
       <DebtForm
         accounts={[]}
         categories={[]}
@@ -32,27 +37,22 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
       />
     );
 
-    expect(html).toContain("Préstamo bancario");
-    expect(html).toContain("¿Qué deuda quieres registrar?");
-  });
+    expect(screen.getByRole("heading", { name: "¿Qué deuda quieres registrar?" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
 
-  it("renders DebtForm step 2 with Bank Loan Subtypes and Amortization Methods", () => {
-    const html = renderToStaticMarkup(
-      <DebtForm
-        accounts={[]}
-        categories={[]}
-        setToast={() => {}}
-        onSaved={() => {}}
-        onCancel={() => {}}
-        initialStep="details"
-      />
-    );
+    expect(screen.getByText("Datos del Crédito Bancario / Financiero")).toBeTruthy();
+    expect(screen.getByText("Fuente del Cronograma *")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Agregar seguro" }));
+    expect(screen.getByText("Seguro requerido")).toBeTruthy();
 
-    expect(html).toContain("Tipo de Crédito Bancario");
-    expect(html).toContain("Modalidad de Amortización");
-    expect(html).toContain("Fuente del Cronograma");
-    expect(html).toContain("A) Tengo el cronograma del banco");
-    expect(html).toContain("B) No tengo cronograma; estimar cuota");
+    const loanSubtype = screen.getAllByRole("combobox")[1];
+    await user.selectOptions(loanSubtype, "mortgage");
+    expect(screen.getByText("¿Cómo se cubre el desgravamen? *")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /B\) No tengo cronograma/ }));
+    expect(screen.getByRole("button", { name: "Generar Cronograma Estimado (Caja Familiar)" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Generar Cronograma Estimado (Caja Familiar)" }));
+    expect(screen.getByText("El monto financiado debe ser mayor a cero.")).toBeTruthy();
   });
 
   it("exposes all required bank loan subtype options", () => {

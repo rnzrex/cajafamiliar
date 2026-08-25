@@ -25,6 +25,7 @@ export interface DebtScheduleEstimateInput {
   balloonPaymentAmount?: number | null;
   creditLifeRatePercent?: number | null; // Desgravamen % over balance per period
   fixedInsuranceAmount?: number | null;  // Fixed insurance amount per period
+  percentOriginalPrincipalRatePercent?: number | null;
   fixedFeesAmount?: number | null;       // Fixed fees amount per period
 }
 
@@ -36,6 +37,7 @@ export interface DebtScheduleEstimateResult {
   totalInsurance: number;
   totalFees: number;
   financialInstallmentAmount: number; // Principal + Interest base cuota
+  installmentAmountMode: "fixed" | "variable";
   isEstimated: true;
 }
 
@@ -81,8 +83,10 @@ export function getNextDueDate(
   } else if (freq === "weekly") {
     return addDays(firstDueDateStr, stepIndex * 7);
   } else if (freq === "custom") {
-    const days = customFrequencyDays && customFrequencyDays > 0 ? customFrequencyDays : 30;
-    return addDays(firstDueDateStr, stepIndex * days);
+    if (customFrequencyDays == null || customFrequencyDays <= 0) {
+      throw new Error("La frecuencia personalizada requiere indicar los días entre pagos.");
+    }
+    return addDays(firstDueDateStr, stepIndex * customFrequencyDays);
   }
   return addMonthsClamped(firstDueDateStr, stepIndex);
 }
@@ -116,8 +120,28 @@ export function generateEstimatedDebtSchedule(
     balloonPaymentAmount = 0,
     creditLifeRatePercent = 0,
     fixedInsuranceAmount = 0,
+    percentOriginalPrincipalRatePercent = 0,
     fixedFeesAmount = 0,
   } = input;
+
+  if (!Number.isFinite(financedAmount) || financedAmount <= 0) {
+    throw new Error("El monto financiado debe ser mayor a cero.");
+  }
+  if (!Number.isFinite(teaPercent) || teaPercent == null || teaPercent < 0) {
+    throw new Error("La TEA debe ser un porcentaje válido.");
+  }
+  if (!Number.isInteger(termInstallments) || termInstallments <= 0) {
+    throw new Error("El plazo debe ser un número de cuotas mayor a cero.");
+  }
+  if (!paymentFrequency) {
+    throw new Error("La frecuencia de pago es obligatoria para estimar el cronograma.");
+  }
+  if (!firstDueDate) {
+    throw new Error("La primera fecha de vencimiento es obligatoria para estimar el cronograma.");
+  }
+  if (paymentFrequency === "custom" && (!customFrequencyDays || customFrequencyDays <= 0)) {
+    throw new Error("La frecuencia personalizada requiere indicar los días entre pagos.");
+  }
 
   if (amortizationMethod !== "fixed_installment" && amortizationMethod !== "constant_principal") {
     throw new Error("No es posible estimar esta modalidad con seguridad. Ingresa el cronograma de la entidad.");
@@ -127,13 +151,15 @@ export function generateEstimatedDebtSchedule(
     throw new Error("No es posible estimar deudas con periodo de gracia o cuota balloon de forma automática. Ingresa el cronograma de la entidad.");
   }
 
-  const freq = paymentFrequency || "monthly";
+  const freq = paymentFrequency;
   const { rateDecimal } = effectivePeriodicRateFromTea({
-    teaPercent: teaPercent || 0,
-    frequency: freq === "custom" ? "monthly" : freq,
+    teaPercent,
+    frequency: freq,
+    customFrequencyDays,
+    yearBasis: 365,
   });
 
-  const n = Math.max(1, termInstallments);
+  const n = termInstallments;
   let baseFinancialInstallment = 0;
 
   if (amortizationMethod === "constant_principal") {
@@ -166,7 +192,10 @@ export function generateEstimatedDebtSchedule(
       ? round2(currentBalance * (creditLifeRatePercent / 100))
       : 0;
 
-    const insurance = round2(desgravamenAmount + (fixedInsuranceAmount || 0));
+    const originalPrincipalInsurance = percentOriginalPrincipalRatePercent && percentOriginalPrincipalRatePercent > 0
+      ? round2(financedAmount * (percentOriginalPrincipalRatePercent / 100))
+      : 0;
+    const insurance = round2(desgravamenAmount + originalPrincipalInsurance + (fixedInsuranceAmount || 0));
     const fees = round2(fixedFeesAmount || 0);
     const expectedAmount = round2(principal + interest + insurance + fees);
 
@@ -189,6 +218,9 @@ export function generateEstimatedDebtSchedule(
   const totalInterest = round2(rows.reduce((s, r) => s + r.expectedInterest, 0));
   const totalInsurance = round2(rows.reduce((s, r) => s + r.expectedInsurance, 0));
   const totalFees = round2(rows.reduce((s, r) => s + r.expectedFees, 0));
+  const installmentAmountMode = rows.every((row) => Math.abs(row.expectedAmount - rows[0].expectedAmount) <= 0.01)
+    ? "fixed"
+    : "variable";
 
   return {
     rows,
@@ -198,6 +230,7 @@ export function generateEstimatedDebtSchedule(
     totalInsurance,
     totalFees,
     financialInstallmentAmount: round2(baseFinancialInstallment),
+    installmentAmountMode,
     isEstimated: true,
   };
 }

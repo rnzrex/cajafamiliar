@@ -169,6 +169,7 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
   const [debtOperationState, setDebtOperationState] = useState<{
     type: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance";
     targetEventId?: string;
+    paymentWithExtraPrincipal?: boolean;
   } | null>(null);
   const [dataReady, setDataReady] = useState(!isSupabaseConfigured);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
@@ -1463,8 +1464,8 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 allDebts={data.debts}
                 canWriteDebt={canWriteDebt}
                 onClose={() => setSelectedDebtId(null)}
-                onOpenOperation={(opType, targetEvId) => {
-                  setDebtOperationState({ type: opType, targetEventId: targetEvId });
+                onOpenOperation={(opType, targetEvId, paymentWithExtraPrincipal) => {
+                  setDebtOperationState({ type: opType, targetEventId: targetEvId, paymentWithExtraPrincipal });
                   setView("operacion-deuda");
                 }}
                 onRefresh={async () => {
@@ -1516,6 +1517,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               debt={selectedDebt}
               operationType={debtOperationState.type}
               targetEventId={debtOperationState.targetEventId}
+              paymentWithExtraPrincipal={debtOperationState.paymentWithExtraPrincipal}
               installments={data.debtInstallments}
               scheduleVersions={data.debtScheduleVersions}
               debtEvents={data.debtEvents}

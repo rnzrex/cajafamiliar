@@ -18,7 +18,9 @@ export interface AssistedInterestSuggestion {
 
 export interface EffectivePeriodicRateParams {
   teaPercent: number;
-  frequency: "monthly" | "biweekly" | "weekly";
+  frequency: "monthly" | "biweekly" | "weekly" | "custom";
+  customFrequencyDays?: number | null;
+  yearBasis?: number;
 }
 
 export interface EffectivePeriodicRateResult {
@@ -47,7 +49,7 @@ function parseDaysBetween(startDateStr: string, endDateStr: string): number {
  * Never uses nominal division TEA / 12.
  */
 export function effectivePeriodicRateFromTea(params: EffectivePeriodicRateParams): EffectivePeriodicRateResult {
-  const { teaPercent, frequency } = params;
+  const { teaPercent, frequency, customFrequencyDays, yearBasis = 365 } = params;
   if (teaPercent == null || teaPercent <= 0) {
     return { rateDecimal: 0, ratePercent: 0 };
   }
@@ -59,6 +61,9 @@ export function effectivePeriodicRateFromTea(params: EffectivePeriodicRateParams
     rateDecimal = Math.pow(1 + teaPercent / 100, 14 / 365) - 1;
   } else if (frequency === "weekly") {
     rateDecimal = Math.pow(1 + teaPercent / 100, 7 / 365) - 1;
+  } else if (frequency === "custom" && customFrequencyDays != null && customFrequencyDays > 0 && yearBasis > 0) {
+    // Custom schedules use the same 365-day effective-year convention as daily TEA estimates.
+    rateDecimal = Math.pow(1 + teaPercent / 100, customFrequencyDays / yearBasis) - 1;
   } else {
     return { rateDecimal: 0, ratePercent: 0 };
   }
