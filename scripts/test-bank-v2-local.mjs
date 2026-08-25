@@ -23,6 +23,9 @@ const ids = {
   scheduleUpdateEvent: "00000000-0000-4000-8000-00000000070f",
   v3InvalidEvent: "00000000-0000-4000-8000-000000000712",
   nonBankEvent: "00000000-0000-4000-8000-000000000714",
+  v3InvalidNoScheduleEvent: "00000000-0000-4000-8000-000000000715",
+  v3PrepaymentInvalidEvent: "00000000-0000-4000-8000-000000000716",
+  v3PrepaymentPendingEvent: "00000000-0000-4000-8000-000000000717",
 };
 
 function execSql(sql) {
@@ -80,11 +83,11 @@ try {
   const rpcCheck = await execSql(`
     select count(*) from information_schema.routines 
     where routine_schema = 'public' and routine_name in (
-      'create_bank_loan_v1', 'record_debt_payment_v2', 'record_debt_payment_v3',
+      'create_bank_loan_v1', 'record_debt_payment_v2', 'record_debt_payment_v3', 'record_debt_prepayment_v3',
       'record_debt_installment_advance_v1', 'reverse_debt_event_v1', 'update_debt_contractual_schedule_v1'
     );
   `);
-  if (parseInt(rpcCheck, 10) !== 6) {
+  if (parseInt(rpcCheck, 10) !== 7) {
     throw new Error("RPC functions missing!");
   }
 
@@ -263,7 +266,7 @@ try {
 
   console.log("9. J: Testing standalone prepayment and schedule restoration...");
   await execSql(withUser(`
-    select public.record_debt_prepayment_v2(
+    select public.record_debt_prepayment_v3(
       '${ids.householdA}', '${ids.debtEst}', '${ids.prepaymentEvent}', 'mov-prepay-1',
       '2026-01-15', 500, '${ids.accountA}', 'Prepago parcial', 'Pago de deuda',
       500, 0, 0, 0, 0, 'reduce_term', true,
@@ -403,6 +406,61 @@ try {
   try {
     await execSql(withUser(`
       select public.record_debt_payment_v3(
+        '${ids.householdA}', '${ids.debtA}', '${ids.v3InvalidNoScheduleEvent}', 'mov-v3-invalid-no-schedule-1',
+        '2026-04-03', 90, '${ids.accountA}', 'Pago V3 sin cronograma', 'Pago de deuda',
+        50, 0, 0, 0, 0, 40, 'reduce_term', true, '[]'::jsonb,
+        '[]'::jsonb, null, null
+      );
+    `));
+    throw new Error("Payment plus extra without a schedule was NOT rejected!");
+  } catch (err) {
+    if (!String(err.message).includes("INVALID_DEBT_PAYMENT")) throw err;
+  }
+  const invalidPaymentNoScheduleAtomicity = await execSql(`
+    select (select count(*) from public.debt_events where id = '${ids.v3InvalidNoScheduleEvent}')::text || '|'
+      || (select count(*) from public.movements where id = 'mov-v3-invalid-no-schedule-1')::text;
+  `);
+  if (invalidPaymentNoScheduleAtomicity !== "0|0") throw new Error(`Invalid no-schedule payment left financial rows behind: ${invalidPaymentNoScheduleAtomicity}`);
+
+  try {
+    await execSql(withUser(`
+      select public.record_debt_prepayment_v3(
+        '${ids.householdA}', '${ids.debtA}', '${ids.v3PrepaymentInvalidEvent}', 'mov-v3-prepay-invalid-1',
+        '2026-05-01', 50, '${ids.accountA}', 'Prepago V3 sin cronograma', 'Pago de deuda',
+        50, 0, 0, 0, 0, 'reduce_installment', true, '[]'::jsonb, null, null
+      );
+    `));
+    throw new Error("Prepayment with a future-term change and no schedule was NOT rejected!");
+  } catch (err) {
+    if (!String(err.message).includes("INVALID_DEBT_PREPAYMENT")) throw err;
+  }
+  const invalidPrepaymentNoScheduleAtomicity = await execSql(`
+    select (select count(*) from public.debt_events where id = '${ids.v3PrepaymentInvalidEvent}')::text || '|'
+      || (select count(*) from public.movements where id = 'mov-v3-prepay-invalid-1')::text;
+  `);
+  if (invalidPrepaymentNoScheduleAtomicity !== "0|0") throw new Error(`Invalid no-schedule prepayment left financial rows behind: ${invalidPrepaymentNoScheduleAtomicity}`);
+
+  await execSql(withUser(`
+    select public.record_debt_prepayment_v3(
+      '${ids.householdA}', '${ids.debtA}', '${ids.v3PrepaymentPendingEvent}', 'mov-v3-prepay-pending-1',
+      '2026-05-15', 50, '${ids.accountA}', 'Prepago V3 pendiente', 'Pago de deuda',
+      50, 0, 0, 0, 0, 'pending_bank_schedule', true, '[]'::jsonb, null, null
+    );
+  `));
+  const pendingPrepaymentCheck = await execSql(`
+    select e.event_type || '|' || max(e.prepayment_effect) || '|' || count(s.id)::text
+      from public.debt_events as e
+      left join public.debt_schedule_versions as s on s.trigger_event_id = e.id
+     where e.id = '${ids.v3PrepaymentPendingEvent}'
+     group by e.event_type;
+  `);
+  if (pendingPrepaymentCheck !== "principal_prepayment|pending_bank_schedule|0") {
+    throw new Error(`Pending prepayment state mismatch: ${pendingPrepaymentCheck}`);
+  }
+
+  try {
+    await execSql(withUser(`
+      select public.record_debt_payment_v3(
         '${ids.householdA}', '${ids.nonBankDebt}', '${ids.nonBankEvent}', 'mov-v3-nonbank-1',
         '2026-04-02', 60, '${ids.accountA}', 'Pago no bancario pendiente', 'Pago de deuda',
         40, 0, 0, 0, 0, 20, 'pending_bank_schedule', true, '[]'::jsonb,
@@ -455,6 +513,17 @@ try {
   `);
   if (updateCheck !== "principal_adjustment||rate_change|contractual|true|1") {
     throw new Error(`Contractual schedule update mismatch: ${updateCheck}`);
+  }
+  const currentScheduleCheck = await execSql(`
+    select version_number::text || '|' || coalesce(trigger_event_id::text, '') || '|'
+      || schedule_source || '|' || is_authoritative::text
+      from public.debt_schedule_versions
+     where debt_id = '${ids.debtA}'
+     order by version_number desc
+     limit 1;
+  `);
+  if (currentScheduleCheck !== `3|${ids.scheduleUpdateEvent}|contractual|true`) {
+    throw new Error(`Pending schedule was not replaced by the official version: ${currentScheduleCheck}`);
   }
   await execSql(withUser(`
     select public.update_debt_contractual_schedule_v1(

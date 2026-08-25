@@ -155,6 +155,81 @@ describe("buildDebtPlanningItems — schedule version handling", () => {
     const items = build([debt()], [pendingEvent], [scheduleVersion()], [installment()], []);
     expect(items).toHaveLength(0);
   });
+
+  it("hides V1 after a payment plus extra principal enters pending state", () => {
+    const pendingPayment = debtEvent({
+      id: "e_pending_payment",
+      eventType: "payment",
+      eventDate: "2026-08-20",
+      extraPrincipalAmount: 100,
+      prepaymentEffect: "pending_bank_schedule",
+      createdAt: "2026-08-20T00:00:00Z",
+    });
+    const items = build([debt()], [pendingPayment], [scheduleVersion()], [installment()], []);
+    expect(items).toHaveLength(0);
+  });
+
+  it("hides V1 after a standalone prepayment enters pending state", () => {
+    const pendingPrepayment = debtEvent({
+      id: "e_pending_prepayment",
+      eventType: "principal_prepayment",
+      eventDate: "2026-08-20",
+      prepaymentEffect: "pending_bank_schedule",
+      createdAt: "2026-08-20T00:00:00Z",
+    });
+    const items = build([debt()], [pendingPrepayment], [scheduleVersion()], [installment()], []);
+    expect(items).toHaveLength(0);
+  });
+
+  it("uses the official schedule after a pending state is updated", () => {
+    const v1 = scheduleVersion({ id: "sv1", versionNumber: 1 });
+    const v2 = scheduleVersion({
+      id: "sv2",
+      versionNumber: 2,
+      triggerEventId: "e_schedule_update",
+      reason: "manual_adjustment",
+    });
+    const pendingPrepayment = debtEvent({
+      id: "e_pending_prepayment",
+      eventType: "principal_prepayment",
+      eventDate: "2026-08-20",
+      prepaymentEffect: "pending_bank_schedule",
+      createdAt: "2026-08-20T00:00:00Z",
+    });
+    const scheduleUpdate = debtEvent({
+      id: "e_schedule_update",
+      eventType: "principal_adjustment",
+      eventDate: "2026-08-21",
+      cashAmount: 0,
+      principalDelta: 0,
+      movementId: null,
+      description: "Cronograma oficial posterior al prepago",
+      createdAt: "2026-08-21T00:00:00Z",
+    });
+    const nextInstallment = installment({
+      id: "i2",
+      scheduleVersionId: "sv2",
+      dueDate: "2026-10-01",
+      expectedAmount: 850,
+      expectedPrincipal: 700,
+      expectedInterest: 100,
+      expectedFees: 20,
+      expectedInsurance: 30,
+    });
+
+    const items = build(
+      [debt()],
+      [pendingPrepayment, scheduleUpdate],
+      [v1, v2],
+      [installment(), nextInstallment],
+      []
+    );
+
+    expect(items).toHaveLength(1);
+    expect(items[0].installmentId).toBe("i2");
+    expect(items[0].scheduleVersionId).toBe("sv2");
+    expect(items[0].pendingBankSchedule).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

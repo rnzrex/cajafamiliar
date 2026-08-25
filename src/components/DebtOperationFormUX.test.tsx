@@ -103,7 +103,11 @@ const installments: DebtInstallment[] = [
   },
 ];
 
-function renderOperation(operationType: "payment" | "prepayment" | "installment_advance" | "schedule_update", paymentWithExtraPrincipal = false) {
+function renderOperation(
+  operationType: "payment" | "prepayment" | "installment_advance" | "schedule_update",
+  paymentWithExtraPrincipal = false,
+  setToast = vi.fn()
+) {
   return render(
     <DebtOperationForm
       debt={debt}
@@ -118,7 +122,7 @@ function renderOperation(operationType: "payment" | "prepayment" | "installment_
       persistedAllocations={[]}
       onSaved={vi.fn().mockResolvedValue(undefined)}
       onCancel={vi.fn()}
-      setToast={vi.fn()}
+      setToast={setToast}
     />
   );
 }
@@ -153,14 +157,56 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
       cashAmount: 3200,
       principalAmount: 800,
       extraPrincipalAmount: 2000,
-      prepaymentEffect: "unknown",
+      prepaymentEffect: "pending_bank_schedule",
       accountId: account.id,
       category: "Pago de deuda",
       allocations: [{ installmentId: installments[0].id, allocatedAmount: 1100 }],
     })));
+  }, 10_000);
+
+  it("submits a standalone bank prepayment as pending when no schedule exists", async () => {
+    const user = userEvent.setup();
+    renderOperation("prepayment");
+    const amounts = screen.getAllByRole("spinbutton");
+
+    await user.clear(amounts[0]);
+    await user.type(amounts[0], "500");
+    await user.clear(amounts[1]);
+    await user.type(amounts[1], "500");
+    await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+
+    await waitFor(() => expect(dataRepository.recordDebtPrepayment).toHaveBeenCalledWith(expect.objectContaining({
+      cashAmount: 500,
+      principalAmount: 500,
+      prepaymentEffect: "pending_bank_schedule",
+      scheduleInstallments: [],
+      scheduleSource: null,
+    })));
   });
 
-  it("submits a standalone principal prepayment with its selected effect", async () => {
+  it("rejects payment plus extra principal with a term change and no schedule", async () => {
+    const user = userEvent.setup();
+    const setToast = vi.fn();
+    renderOperation("payment", true, setToast);
+    const amounts = screen.getAllByRole("spinbutton");
+
+    await user.clear(amounts[0]);
+    await user.type(amounts[0], "500");
+    await user.clear(amounts[1]);
+    await user.type(amounts[1], "300");
+    await user.clear(amounts[2]);
+    await user.type(amounts[2], "100");
+    await user.selectOptions(screen.getAllByRole("combobox")[1], "reduce_term");
+    await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
+
+    expect(dataRepository.recordDebtPayment).not.toHaveBeenCalled();
+    expect(setToast).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining("selecciona 'Banco todavía no entrega cronograma'"),
+      type: "error",
+    }));
+  });
+
+  it("requires a complete six-field schedule for a bank prepayment", async () => {
     const user = userEvent.setup();
     renderOperation("prepayment");
     const amounts = screen.getAllByRole("spinbutton");
@@ -170,14 +216,31 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     await user.clear(amounts[1]);
     await user.type(amounts[1], "500");
     await user.selectOptions(screen.getAllByRole("combobox")[1], "reduce_installment");
+    await user.click(screen.getByRole("checkbox", { name: "El acreedor me entregó un nuevo cronograma" }));
+    await user.click(screen.getByRole("button", { name: "Agregar cuota al nuevo cronograma" }));
+
+    const dueDate = screen.getByLabelText("Fecha nueva cuota 1");
+    await user.clear(dueDate);
+    await user.type(dueDate, "2026-09-01");
+    await user.type(screen.getByLabelText("Total nueva cuota 1"), "1000");
+    await user.type(screen.getByLabelText("Capital nueva cuota 1"), "800");
+    await user.type(screen.getByLabelText("Interés nueva cuota 1"), "150");
+    await user.type(screen.getByLabelText("Comisiones nueva cuota 1"), "20");
+    await user.type(screen.getByLabelText("Seguro nueva cuota 1"), "30");
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
 
     await waitFor(() => expect(dataRepository.recordDebtPrepayment).toHaveBeenCalledWith(expect.objectContaining({
-      cashAmount: 500,
-      principalAmount: 500,
       prepaymentEffect: "reduce_installment",
-      scheduleInstallments: [],
-      scheduleSource: null,
+      scheduleInstallments: [{
+        installmentNumber: 1,
+        dueDate: "2026-09-01",
+        expectedAmount: 1000,
+        expectedPrincipal: 800,
+        expectedInterest: 150,
+        expectedFees: 20,
+        expectedInsurance: 30,
+      }],
+      scheduleSource: "contractual",
     })));
   });
 

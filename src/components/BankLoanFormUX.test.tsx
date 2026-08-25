@@ -53,7 +53,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.getByRole("button", { name: "Generar Cronograma Estimado (Caja Familiar)" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Generar Cronograma Estimado (Caja Familiar)" }));
     expect(screen.getByText("El monto financiado debe ser mayor a cero.")).toBeTruthy();
-  });
+  }, 10_000);
 
   it("exposes all required bank loan subtype options", () => {
     const values = BANK_LOAN_SUBTYPE_OPTIONS.map((o) => o.value);

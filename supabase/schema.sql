@@ -5467,6 +5467,7 @@ declare
   v_schedule_count integer;
   v_is_replay boolean;
   v_debt_kind text;
+  v_repayment_structure text;
 begin
   v_schedule_count := case
     when p_schedule_installments is null then -1
@@ -5483,15 +5484,25 @@ begin
      or (v_extra = 0 and p_prepayment_effect is not null)
      or (p_prepayment_effect = 'pending_bank_schedule' and (v_extra <= 0 or v_schedule_count > 0))
      or (v_schedule_count > 0 and p_prepayment_effect = 'pending_bank_schedule') then
-     raise exception 'INVALID_DEBT_PAYMENT';
-   end if;
+    raise exception 'INVALID_DEBT_PAYMENT';
+  end if;
+
+  select d.debt_kind, d.repayment_structure
+    into v_debt_kind, v_repayment_structure
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+
+  if v_debt_kind = 'bank_loan' and v_repayment_structure = 'fixed_schedule'
+     and v_extra > 0
+     and v_schedule_count = 0
+     and p_prepayment_effect is distinct from 'pending_bank_schedule' then
+    raise exception 'INVALID_DEBT_PAYMENT';
+  end if;
 
   if v_schedule_count > 0 or p_prepayment_effect = 'pending_bank_schedule' then
-    select d.debt_kind into v_debt_kind
-      from public.debts as d
-     where d.id = p_debt_id
-       and d.household_id = p_household_id;
-    if found and v_debt_kind <> 'bank_loan' then
+    if v_debt_kind is not null and v_debt_kind <> 'bank_loan' then
       raise exception 'DEBT_NOT_BANK_LOAN';
     end if;
   end if;
@@ -6246,6 +6257,81 @@ $$;
 
 
 ALTER FUNCTION "public"."record_debt_prepayment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") OWNER TO "postgres";
+
+--
+-- Name: record_debt_prepayment_v3("uuid", "uuid", "uuid", "text", "date", numeric, "uuid", "text", "text", numeric, numeric, numeric, numeric, numeric, "text", boolean, "jsonb", "text", "text"); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE OR REPLACE FUNCTION "public"."record_debt_prepayment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_result jsonb;
+  v_schedule_count integer;
+  v_debt_kind text;
+  v_repayment_structure text;
+begin
+  v_schedule_count := case
+    when p_schedule_installments is null then -1
+    when pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' then -1
+    else pg_catalog.jsonb_array_length(p_schedule_installments)
+  end;
+
+  select d.debt_kind, d.repayment_structure
+    into v_debt_kind, v_repayment_structure
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+
+  if v_debt_kind = 'bank_loan' and v_repayment_structure = 'fixed_schedule' then
+    if v_schedule_count < 0
+       or (v_schedule_count = 0 and p_prepayment_effect is distinct from 'pending_bank_schedule')
+       or (v_schedule_count = 0 and (p_schedule_source is not null or coalesce(pg_catalog.btrim(p_schedule_notes), '') <> ''))
+       or (v_schedule_count > 0 and p_prepayment_effect = 'pending_bank_schedule')
+       or (v_schedule_count > 0 and p_schedule_source not in ('contractual', 'estimated')) then
+      raise exception 'INVALID_DEBT_PREPAYMENT';
+    end if;
+
+    if v_schedule_count > 0 then
+      perform private.debt2b2_validate_schedule_v3(
+        p_event_date,
+        'prepayment',
+        p_schedule_installments
+      );
+    end if;
+  end if;
+
+  v_result := public.record_debt_prepayment_v2(
+    p_household_id,
+    p_debt_id,
+    p_event_id,
+    p_movement_id,
+    p_event_date,
+    p_cash_amount,
+    p_account_id,
+    p_description,
+    p_category,
+    p_principal_amount,
+    p_interest_paid,
+    p_fees_paid,
+    p_insurance_paid,
+    p_other_cost_paid,
+    p_prepayment_effect,
+    p_breakdown_complete,
+    p_schedule_installments,
+    p_schedule_notes,
+    p_schedule_source
+  );
+
+  return v_result;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."record_debt_prepayment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") OWNER TO "postgres";
+
 
 --
 -- Name: register_push_subscription("uuid", "text", "text", "text", "text", timestamp with time zone); Type: FUNCTION; Schema: public; Owner: postgres
@@ -10566,6 +10652,14 @@ GRANT ALL ON FUNCTION "public"."record_debt_prepayment_v1"("p_household_id" "uui
 
 REVOKE ALL ON FUNCTION "public"."record_debt_prepayment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."record_debt_prepayment_v2"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") TO "authenticated";
+
+
+--
+-- Name: FUNCTION "record_debt_prepayment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text"); Type: ACL; Schema: public; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION "public"."record_debt_prepayment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."record_debt_prepayment_v3"("p_household_id" "uuid", "p_debt_id" "uuid", "p_event_id" "uuid", "p_movement_id" "text", "p_event_date" "date", "p_cash_amount" numeric, "p_account_id" "uuid", "p_description" "text", "p_category" "text", "p_principal_amount" numeric, "p_interest_paid" numeric, "p_fees_paid" numeric, "p_insurance_paid" numeric, "p_other_cost_paid" numeric, "p_prepayment_effect" "text", "p_breakdown_complete" boolean, "p_schedule_installments" "jsonb", "p_schedule_notes" "text", "p_schedule_source" "text") TO "authenticated";
 
 
 --

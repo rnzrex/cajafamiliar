@@ -979,7 +979,7 @@ export async function recordDebtPayment(input: DebtPaymentInput): Promise<DebtFu
 }
 
 export async function recordDebtPrepayment(input: DebtPrepaymentInput): Promise<DebtFundOperationResult> {
-  return callDebtOperation("record_debt_prepayment_v2", toDebtPrepaymentRpcArgs(input), fromDebtFundOperationResult);
+  return callDebtOperation("record_debt_prepayment_v3", toDebtPrepaymentRpcArgs(input), fromDebtFundOperationResult);
 }
 
 export async function recordDebtPayoff(input: DebtPayoffInput): Promise<DebtFundOperationResult> {
