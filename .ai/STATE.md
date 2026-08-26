@@ -17,8 +17,9 @@ complete the final audit fixes for rates, historical references, and AuthGate.
   `a5fcfee fix(sync): preserve unsaved drafts across refresh`.
 - DRAFT PR #62 is open at
   `https://github.com/rnzrex/cajafamiliar/pull/62`.
-- The final audit fixes are committed and pushed as
-  `1812b9d053036b27bdc4e8f916eb49fcf47ff04e`; Git HEAD and origin match.
+- The final audit fixes are committed and pushed in
+  `1812b9d053036b27bdc4e8f916eb49fcf47ff04e`; the continuity handoff is also
+  pushed. Use Git as the authority for the exact current HEAD.
 - Production is untouched in this phase.
 - No SQL, migration, RPC, or Supabase schema change was added; existing card
   RPCs and ledger semantics are reused.
@@ -91,7 +92,8 @@ complete the final audit fixes for rates, historical references, and AuthGate.
 
 - Credit Cards Phase 1, sync preservation, and final audit fixes are pushed and
   awaiting orchestrator audit in DRAFT PR #62.
-- Local browser smoke and the Vercel Preview for `1812b9d` passed.
+- Local browser smoke passed; the Vercel Preview for the latest pushed branch
+  passed and is tracked by `gh pr checks 62`.
 
 ## Blocked
 
@@ -122,8 +124,8 @@ complete the final audit fixes for rates, historical references, and AuthGate.
 - Local built preview: HTTP 200; real Chrome smoke passed expense, income, and
   PEN card draft preservation after periodic refresh and visibility changes.
 - Build emitted existing chunk-size and ineffective dynamic-import warnings.
-- Vercel Preview: PASS for `1812b9d`,
-  `https://cajafamiliar-git-feat-credit-cards-separate-module-renzorex.vercel.app`.
+- Vercel Preview: PASS for the latest pushed branch; verified with
+  `gh pr checks 62`.
 - Vercel Production: READY.
 - Production HTTP: 200.
 - Production runtime errors after merge: none found.
@@ -176,5 +178,5 @@ complete the final audit fixes for rates, historical references, and AuthGate.
   movement references, and AuthGate coverage. Full tests (54/877), build, API
   typecheck, BANK/QAPAQ local smokes, focused suites, and real Chrome local
   browser smoke pass. Auth was restored to disabled and its temporary container
-  stopped. Commit `1812b9d` is pushed, PR #62 remains DRAFT, and Vercel Preview
-  checks pass. Production remains untouched.
+  stopped. Commit `1812b9d` and the continuity handoff are pushed, PR #62
+  remains DRAFT, and Vercel Preview checks pass. Production remains untouched.
