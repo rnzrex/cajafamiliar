@@ -7,7 +7,7 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 ## Active Work
 
-- BANK LOAN ONBOARDING V3 is implemented locally and is awaiting logical commits, push, and a DRAFT PR to `main`.
+- BANK LOAN ONBOARDING V3 is implemented, committed, pushed, and available in DRAFT PR #63 for review.
 - Production remains untouched. Do not apply the new migration remotely, merge, or deploy manually.
 - Historical BANK V2 migrations remain immutable.
 
@@ -15,7 +15,8 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 - Branch: `feat/bank-loan-onboarding-v3`
 - Starting branch HEAD: `d9f16dd55ca77b4bd3cc72051a54273112240db6`
-- Remote branch was clean at the start; current objective changes are uncommitted.
+- Current HEAD and remote branch SHA: `7c51797fa5e30f4e7ed76a0a9ee25f3bf11fbb0b`.
+- DRAFT PR: https://github.com/rnzrex/cajafamiliar/pull/63, base `main`, head `feat/bank-loan-onboarding-v3`.
 - The actual current HEAD and remote state must always be read from Git.
 
 ## Completed — BANK LOAN ONBOARDING V3
@@ -46,12 +47,13 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 - `npm run test:debt2b2`: PASS.
 - `npm run test:debt5fa:local`: PASS — all assertions passed after temporarily enabling local Auth; `supabase/config.toml` was restored to `auth.enabled = false` and local services restarted without Auth.
 - Local HTTP smoke with Vite and local Supabase environment: `/` returned HTTP 200 and rendered the root mount. Visual `agent-browser` verification was unavailable because the CLI/browser connector is not installed; no remote environment was opened.
+- Automatic Vercel Preview checks for PR #63 passed: `Vercel` deployment completed and `Vercel Preview Comments` passed.
 - `supabase db reset` is not a clean repository workflow because the first migration expects an external/base schema. For local SQL validation, `supabase/schema.sql` was loaded only into the local container, then the real migrations/smokes were applied. `supabase/schema.sql` was not modified.
 
 ## Production
 
 - No Production data, migration, SQL, deployment, or manual Vercel action was performed for this objective.
-- Vercel Preview has not yet been checked for the new branch.
+- Vercel Preview check passed automatically for PR #63; Production remains untouched.
 
 ## BANK V2 Baseline / Restrictions
 
@@ -61,10 +63,9 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 ## Next Move
 
-1. Inspect final diff and run `git diff --check`.
-2. Create logical commits for schema/RPC, application UX/import/insurance, tests, and continuity state.
-3. Push `feat/bank-loan-onboarding-v3` and create a DRAFT PR to `main` titled `BANK LOAN ONBOARDING V3 — créditos existentes, importación y seguros`.
-4. Check/report the automatic Vercel Preview, but do not merge or deploy Production.
+1. Await review and requested changes on DRAFT PR #63.
+2. If changes are requested, update `.ai/STATE.md`, preserve the additive migration rule, rerun the relevant local gates, and push a new checkpoint.
+3. Do not merge, apply remote Supabase migrations, or touch Production without explicit authorization.
 
 ## Key Files
 
@@ -83,4 +84,4 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 - Agent: Codex
 - Date: 2026-08-26
-- Summary: BANK LOAN ONBOARDING V3 is implemented and all code/local SQL gates are green. Remaining work is Git checkpoint, push, DRAFT PR, and Preview status report. Production is untouched.
+- Summary: BANK LOAN ONBOARDING V3 is implemented and all code/local SQL gates are green. Four logical commits were pushed at `7c51797fa5e30f4e7ed76a0a9ee25f3bf11fbb0b`; DRAFT PR #63 is open and automatic Vercel Preview checks passed. Production is untouched.
