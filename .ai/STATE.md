@@ -9,8 +9,9 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 ## Active Work
 
 - Work is on `feat/credit-cards-separate-module`, created from `origin/main`.
-- Phase 1 implementation is complete in the working tree and has not been
-  committed, pushed, or opened as a PR.
+- Phase 1 implementation is committed locally as
+  `be0be8163393562f0f1e1250f3bb723a63ce7375`; it is not pushed yet and has no
+  PR.
 - Production is untouched in this phase.
 - No SQL, migration, RPC, or Supabase schema change was added; existing card
   RPCs and ledger semantics are reused.
@@ -62,8 +63,8 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 
 ## Active
 
-- Credit Cards Phase 1 is ready for final diff review and an explicit
-  commit/push decision.
+- Credit Cards Phase 1 is committed and ready for normal push and DRAFT PR
+  creation.
 - Browser-level preview/E2E validation has not been run in this session.
 
 ## Blocked
@@ -75,9 +76,8 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 
 ## Next Move
 
-1. Inspect the final working-tree diff and status for accidental or unrelated changes.
-2. If explicitly authorized, create a coherent commit, push normally, and open a
-   DRAFT PR toward `main`; do not merge.
+1. Push `feat/credit-cards-separate-module` normally and confirm the remote SHA.
+2. Open a DRAFT PR toward `main`; do not merge.
 3. Run preview/browser validation before any future production decision.
 
 ## Validation
@@ -138,6 +138,6 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 - Agent: OpenCode
 - Date: 2026-08-25
 - Summary: implemented and validated Credit Cards Separation Phase 1 on the
-  verified `origin/main` baseline; BANK V2 remains closed and Production
-  untouched. Final code remains uncommitted pending explicit commit/push
-  authorization.
+  verified `origin/main` baseline; commit
+  `be0be8163393562f0f1e1250f3bb723a63ce7375` created. BANK V2 remains closed
+  and Production untouched; push and DRAFT PR are next.
