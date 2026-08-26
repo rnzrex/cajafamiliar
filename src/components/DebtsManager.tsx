@@ -14,9 +14,9 @@ import type {
   CreditCardEntry,
   CreditCardStatement,
 } from "../types.js";
-import type { DebtInstallmentPlanningItem, DebtPlanningAlertSummary } from "../utils/debtPlanning.js";
-import type { DebtIntelligenceItem, DebtPortfolioIntelligence } from "../utils/debtIntelligence.js";
-import type { DebtStrategyResult } from "../utils/debtStrategy.js";
+import { summarizeDebtPlanningAlerts, type DebtInstallmentPlanningItem, type DebtPlanningAlertSummary } from "../utils/debtPlanning.js";
+import { buildDebtPortfolioIntelligence, type DebtIntelligenceItem, type DebtPortfolioIntelligence } from "../utils/debtIntelligence.js";
+import { buildDebtStrategies, type DebtStrategyResult } from "../utils/debtStrategy.js";
 import { formatDebtKind, formatDebtStatus } from "../utils/debtViewModel.js";
 import { formatDebtMoney } from "../utils/debtPresentation.js";
 import { buildAllDebtNextActions } from "../utils/debtAttention.js";
@@ -51,14 +51,8 @@ export interface DebtsManagerProps {
 
 export function DebtsManager({
   debts,
-  creditCardProfiles = [],
-  creditCardEntries = [],
-  cardStatements = [],
   debtPlanningItems,
-  debtPlanningAlertSummary,
   pendingBankScheduleDebtNames = [],
-  debtPortfolioIntelligence,
-  debtStrategies,
   intelligenceItems,
   onOpenNewDebt,
   onSelectDebt,
@@ -66,28 +60,35 @@ export function DebtsManager({
 }: DebtsManagerProps) {
   const [tab, setTab] = useState<"unarchived" | "strategy" | "archived">("unarchived");
   const [searchQuery, setSearchQuery] = useState("");
+  const genericDebts = debts.filter((debt) => debt.debtKind !== "credit_card");
+  const genericDebtIds = new Set(genericDebts.map((debt) => debt.id));
+  const genericPlanningItems = debtPlanningItems.filter((item) => genericDebtIds.has(item.debtId));
+  const genericIntelligenceItems = intelligenceItems.filter((item) => item.debtKind !== "credit_card");
+  const genericPlanningAlertSummary = summarizeDebtPlanningAlerts(genericPlanningItems);
+  const genericPortfolioIntelligence = buildDebtPortfolioIntelligence(genericIntelligenceItems);
+  const genericStrategies = buildDebtStrategies(genericIntelligenceItems);
 
   const handleSelectDebtId = (debtId: string) => {
     if (onSelectDebtId) {
       onSelectDebtId(debtId);
       return;
     }
-    const found = debts.find((d) => d.id === debtId);
+    const found = genericDebts.find((d) => d.id === debtId);
     if (found) onSelectDebt(found);
   };
 
   const nextActions = buildAllDebtNextActions({
-    debts,
-    intelligenceItems,
-    creditCardProfiles,
-    creditCardEntries,
-    cardStatements,
+    debts: genericDebts,
+    intelligenceItems: genericIntelligenceItems,
+    creditCardProfiles: [],
+    creditCardEntries: [],
+    cardStatements: [],
   });
 
   const nextActionMap = new Map(nextActions.map((a) => [a.debtId, a]));
-  const intelligenceMap = new Map(intelligenceItems.map((item) => [item.debtId, item]));
+  const intelligenceMap = new Map(genericIntelligenceItems.map((item) => [item.debtId, item]));
 
-  const filteredDebts = debts.filter((debt) => {
+  const filteredDebts = genericDebts.filter((debt) => {
     const matchesTab = tab === "archived" ? debt.isArchived : !debt.isArchived;
     const matchesQuery =
       debt.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -106,7 +107,7 @@ export function DebtsManager({
             </div>
             <div>
               <h2 className="text-2xl font-extrabold text-slate-900">Gestión de Deudas</h2>
-              <p className="text-xs sm:text-sm text-slate-500">Control de obligaciones, tarjetas, cronogramas y estrategias de pago</p>
+            <p className="text-xs sm:text-sm text-slate-500">Control de obligaciones, cronogramas y estrategias de pago</p>
             </div>
           </div>
         </div>
@@ -133,7 +134,7 @@ export function DebtsManager({
                 tab === "unarchived" ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
               }`}
             >
-              No archivadas ({debts.filter((d) => !d.isArchived).length})
+               No archivadas ({genericDebts.filter((d) => !d.isArchived).length})
             </button>
             <button
               type="button"
@@ -151,7 +152,7 @@ export function DebtsManager({
                 tab === "archived" ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
               }`}
             >
-              Archivadas ({debts.filter((d) => d.isArchived).length})
+               Archivadas ({genericDebts.filter((d) => d.isArchived).length})
             </button>
           </div>
 
@@ -172,16 +173,16 @@ export function DebtsManager({
         {/* 4. Strategy & Analysis Tab */}
         {tab === "strategy" && (
           <div className="space-y-6">
-            <DebtPortfolioIntelligencePanel portfolio={debtPortfolioIntelligence} />
-            <DebtPlanningPanel
-              debtPlanningItems={debtPlanningItems}
-              debtPlanningAlertSummary={debtPlanningAlertSummary}
+               <DebtPortfolioIntelligencePanel portfolio={genericPortfolioIntelligence} />
+               <DebtPlanningPanel
+               debtPlanningItems={genericPlanningItems}
+               debtPlanningAlertSummary={genericPlanningAlertSummary}
               pendingBankScheduleDebtNames={pendingBankScheduleDebtNames}
               onSelectDebtId={handleSelectDebtId}
             />
             <DebtStrategyPanel
-              strategies={debtStrategies}
-              intelligenceItems={intelligenceItems}
+               strategies={genericStrategies}
+               intelligenceItems={genericIntelligenceItems}
               onSelectDebtId={handleSelectDebtId}
             />
           </div>
@@ -190,7 +191,7 @@ export function DebtsManager({
         {/* 5. Main Debt List Cards Grid */}
         {tab !== "strategy" && (
           <div>
-            {filteredDebts.length === 0 ? (
+             {filteredDebts.length === 0 ? (
               <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 p-12 text-center">
                 <Archive className="h-12 w-12 text-slate-300 mb-3" />
                 <p className="text-base font-bold text-slate-700">
@@ -266,7 +267,7 @@ export function DebtsManager({
                       <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between w-full">
                         <div>
                           <p className="text-xs font-semibold text-slate-400">
-                            {debt.debtKind === "credit_card" ? "Saldo actual" : "Saldo principal"}
+                            Saldo principal
                           </p>
                           <p className="text-lg font-extrabold text-slate-900">{principalDisplay}</p>
                         </div>

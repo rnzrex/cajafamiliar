@@ -1,15 +1,14 @@
 import { useState } from "react";
-import { ArrowLeft, Check, Plus, Trash2, Shield, CreditCard, Banknote, Building2, Home, PackageCheck, HelpCircle, AlertCircle } from "lucide-react";
+import { ArrowLeft, Check, Plus, Trash2, Shield, Banknote, Building2, Home, PackageCheck, HelpCircle, AlertCircle } from "lucide-react";
 import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource } from "../types";
 import {
-  isCreditCardDebtKind,
   DEBT_KIND_OPTIONS,
   getCurrencySymbol,
   formatReviewDate,
   buildDebtCreateInputPayload,
   validateDebtFinancialTerms,
 } from "../utils/debtFormMode";
-import { createDebt, createCreditCardDebt, createBankLoan } from "../services/dataRepository";
+import { createDebt, createBankLoan } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError } from "../utils/debtViewModel";
@@ -31,13 +30,12 @@ interface DebtFormProps {
 
 export type OnboardingMode = "EXISTING_DEBT" | "NEW_DEBT";
 
-const KIND_ICONS: Record<DebtKind, typeof Banknote> = {
+const KIND_ICONS: Partial<Record<DebtKind, typeof Banknote>> = {
   bank_loan: Building2,
   family_loan: Banknote,
   installment_purchase: PackageCheck,
   mortgage: Home,
   pledge: Shield,
-  credit_card: CreditCard,
   other: HelpCircle,
 };
 
@@ -109,12 +107,6 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [newInsuranceType, setNewInsuranceType] = useState<DebtInsuranceType>("credit_life");
   const [mortgageInsuranceCoverage, setMortgageInsuranceCoverage] = useState<"bank" | "own_policy" | "endorsed_policy" | "">("");
 
-  // Credit card specific fields
-  const [creditLimit, setCreditLimit] = useState("");
-  const [closingDay, setClosingDay] = useState("");
-  const [dueDay, setDueDay] = useState("");
-  const [last4, setLast4] = useState("");
-
   // Pledge specific fields
   const [pledgeItemDescription, setPledgeItemDescription] = useState("");
   const [pledgeRedemptionDeadline, setPledgeRedemptionDeadline] = useState("");
@@ -142,7 +134,6 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [step, setStep] = useState<"type_select" | "details" | "review">(initialStep);
 
   const currencySymbol = getCurrencySymbol(currencyCode);
-  const isCard = isCreditCardDebtKind(debtKind);
   const isPledge = debtKind === "pledge";
 
   const insuranceLabel = (type: DebtInsuranceType): string => {
@@ -255,28 +246,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       return false;
     }
 
-    if (isCard) {
-      if (!name.trim() || !creditorName.trim() || !openingPrincipalBalance) {
-        setToast({ message: "Complete los campos obligatorios (Nombre, Acreedor/Banco y Saldo).", type: "error" });
-        return false;
-      }
-      if (last4.trim() && !/^[0-9]{4}$/.test(last4.trim())) {
-        setToast({ message: "Los últimos 4 dígitos deben contener exactamente 4 números.", type: "error" });
-        return false;
-      }
-      if (closingDay && (Number(closingDay) < 1 || Number(closingDay) > 31)) {
-        setToast({ message: "El día de cierre debe estar entre 1 y 31.", type: "error" });
-        return false;
-      }
-      if (dueDay && (Number(dueDay) < 1 || Number(dueDay) > 31)) {
-        setToast({ message: "El día de pago habitual debe estar entre 1 y 31.", type: "error" });
-        return false;
-      }
-      if (creditLimit && Number(creditLimit) <= 0) {
-        setToast({ message: "El límite de crédito debe ser un monto positivo.", type: "error" });
-        return false;
-      }
-    } else if (isPledge) {
+    if (isPledge) {
       if (!creditorName.trim() || !openingPrincipalBalance || !pledgeItemDescription.trim()) {
         setToast({ message: "Complete los campos obligatorios (Lugar del empeño, Objeto empeñado y Monto adeudado).", type: "error" });
         return false;
@@ -360,25 +330,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
     setSubmitting(true);
     try {
-      if (isCard) {
-        await createCreditCardDebt({
-          debtId,
-          name: name.trim(),
-          creditorName: creditorName.trim(),
-          currencyCode,
-          originDate: originDate || null,
-          trackingStartDate: trackingStartDate || localDateString(new Date()),
-          openingBalance: Number(openingPrincipalBalance),
-          creditLimit: creditLimit ? Number(creditLimit) : null,
-          closingDay: closingDay ? Number(closingDay) : null,
-          dueDay: dueDay ? Number(dueDay) : null,
-          last4: last4.trim() || null,
-          teaPercent: teaPercent ? Number(teaPercent) : null,
-          tceaPercent: tceaPercent ? Number(tceaPercent) : null,
-          notes,
-        });
-        setToast({ message: "Tarjeta de crédito registrada exitosamente.", type: "success" });
-      } else if (debtKind === "bank_loan") {
+      if (debtKind === "bank_loan") {
         const payload = buildDebtCreateInputPayload({
           debtId,
           debtKind,
@@ -532,9 +484,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
             <h2 className="text-2xl font-bold text-slate-900">
               {step === "review"
                 ? "Confirmar registro de deuda"
-                : isCard
-                ? "Registrar tarjeta de crédito"
-                : isPledge
+                 : isPledge
                 ? "Registrar empeño"
                 : "Registrar deuda"}
             </h2>
@@ -564,7 +514,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
             <p className="text-sm text-slate-500 mb-4">Selecciona el tipo de compromiso financiero.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {DEBT_KIND_OPTIONS.map((opt) => {
-                const IconComponent = KIND_ICONS[opt.value];
+                const IconComponent = KIND_ICONS[opt.value] ?? HelpCircle;
                 const isSelected = debtKind === opt.value;
                 return (
                   <button
@@ -779,68 +729,6 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
                 />
                 <p className="mt-1 text-xs text-slate-500">Si lo dejas en blanco, se generará automáticamente a partir del objeto empeñado.</p>
-              </div>
-            </div>
-          ) : isCard ? (
-            /* Credit Card Form */
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">Nombre de la tarjeta *</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Ej. Visa Black Interbank"
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">Acreedor / Banco *</label>
-                <input
-                  type="text"
-                  required
-                  value={creditorName}
-                  onChange={(e) => setCreditorName(e.target.value)}
-                  placeholder="Ej. Interbank"
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">
-                  {onboardingMode === "EXISTING_DEBT" ? "¿Cuánto debes actualmente en la tarjeta? *" : "Saldo adeudado inicial *"}
-                </label>
-                <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
-                  <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    required
-                    value={openingPrincipalBalance}
-                    onChange={(e) => setOpeningPrincipalBalance(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
-                  />
-                </div>
-                {onboardingMode === "EXISTING_DEBT" && (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Este será tu punto de partida. Registrar esta deuda no volverá a sumar el dinero que recibiste anteriormente.
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-slate-700">Límite de crédito (Opcional)</label>
-                <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 focus-within:border-blue-600">
-                  <span className="select-none pl-4 text-sm font-bold text-slate-500">{currencySymbol}</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={creditLimit}
-                    onChange={(e) => setCreditLimit(e.target.value)}
-                    placeholder="Ej. 5000.00"
-                    className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none"
-                  />
-                </div>
               </div>
             </div>
           ) : (
@@ -1425,7 +1313,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
             </div>
           )}
 
-          {!isCard && (
+          {(
             <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-4">
               <div>
                 <label className="block text-sm font-bold text-slate-800 mb-1">¿Cómo funciona el pago de esta deuda / empeño?</label>
@@ -1657,54 +1545,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           {/* Advanced fields collapsed by default */}
           {showAdvanced && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 pt-3 border-t border-slate-100">
-              {isCard ? (
-                <>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700">Día de cierre (1 - 31)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="31"
-                      value={closingDay}
-                      onChange={(e) => setClosingDay(e.target.value)}
-                      placeholder="Ej. 20"
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700">Día de pago habitual (1 - 31)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="31"
-                      value={dueDay}
-                      onChange={(e) => setDueDay(e.target.value)}
-                      placeholder="Ej. 5"
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700">Últimos 4 dígitos</label>
-                    <input
-                      type="text"
-                      maxLength={4}
-                      value={last4}
-                      onChange={(e) => setLast4(e.target.value)}
-                      placeholder="Ej. 1234"
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-semibold text-slate-700">¿Cuándo comenzó la deuda?</label>
-                    <input
-                      type="date"
-                      value={originDate}
-                      onChange={(e) => setOriginDate(e.target.value)}
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
-                    />
-                  </div>
-                </>
-              ) : (
+              {(
                 <>
                   {repaymentStructure === "open_ended" ? (
                     <div>
@@ -1811,7 +1652,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           </div>
 
           {/* Optional Schedule (Only non-card, fixed schedule) */}
-          {!isCard && showAdvanced && repaymentStructure !== "open_ended" && (
+          {showAdvanced && repaymentStructure !== "open_ended" && (
             <div className="rounded-2xl border border-slate-200 p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-bold text-slate-800">Cronograma inicial de cuotas (Opcional)</h3>
@@ -1902,7 +1743,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           )}
 
           {/* Additional Collaterals for non-pledge debts */}
-          {!isCard && !isPledge && showAdvanced && (
+          {!isPledge && showAdvanced && (
             <div className="rounded-2xl border border-slate-200 p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-lg font-bold text-slate-800">Garantías (Opcional)</h3>
@@ -2134,7 +1975,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                 onClick={handleSubmit}
                 className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50"
               >
-                {submitting ? "Registrando..." : isCard ? "Registrar tarjeta" : "Registrar deuda"}
+                 {submitting ? "Registrando..." : "Registrar deuda"}
               </button>
             </div>
           </div>

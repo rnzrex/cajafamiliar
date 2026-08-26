@@ -1,11 +1,12 @@
 import { Download, Edit, RotateCcw, Search, SlidersHorizontal, Trash2, ShieldCheck, Filter, AlertTriangle, History } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import type { AccountReconciliation, AccountReconciliationMovement, Category, CreditCardEntry, Debt, DebtEvent, FinancialAccount, HouseholdMember, Movement, MovementCorrection, MovementFormInput } from "../types.js";
+import type { AccountReconciliation, AccountReconciliationMovement, Category, CreditCardEntry, CreditCardPurchaseInput, Debt, DebtEvent, FinancialAccount, HouseholdMember, Movement, MovementCorrection, MovementFormInput } from "../types.js";
 import { formatMoneyByCurrency } from "../utils/calculations.js";
 import { UNASSIGNED_ACCOUNT_ID, accountNameForMovement } from "../utils/accountHelpers.js";
 import { defaultMovementFilters, filterMovements } from "../utils/movementFilters.js";
 import { movementLabel, resolveMovementCurrencyCode } from "../utils/movementEconomics.js";
 import { isMovementCertifiedMatched } from "../utils/reconciliationHelpers.js";
+import { isCreditCardMovementContext } from "../utils/creditCardSpending.js";
 import { MovementForm } from "./MovementForm.js";
 import { MovementCorrectionModal } from "./MovementCorrectionModal.js";
 
@@ -15,6 +16,8 @@ interface MovementsListProps {
   pendingMovementIds: ReadonlySet<string>;
   categories: Category[];
   accounts: FinancialAccount[];
+  creditCards?: Debt[];
+  allowCreditCardSource?: boolean;
   debts?: Debt[];
   reconciliations?: AccountReconciliation[];
   reconciliationMovements?: AccountReconciliationMovement[];
@@ -23,6 +26,7 @@ interface MovementsListProps {
   currentMember?: HouseholdMember;
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
   onSave: (movement: MovementFormInput, id?: string) => void | Promise<boolean>;
+  onSaveCreditCardPurchase?: (input: CreditCardPurchaseInput) => void | Promise<boolean>;
   onDelete: (id: string) => void | Promise<boolean>;
   onReloadAllData?: () => void | Promise<void>;
 }
@@ -33,6 +37,8 @@ export function MovementsList({
   pendingMovementIds,
   categories,
   accounts,
+  creditCards = [],
+  allowCreditCardSource = true,
   debts = [],
   reconciliations = [],
   reconciliationMovements = [],
@@ -41,6 +47,7 @@ export function MovementsList({
   currentMember,
   onQuickCreateCategory,
   onSave,
+  onSaveCreditCardPurchase,
   onDelete,
   onReloadAllData,
 }: MovementsListProps) {
@@ -101,7 +108,7 @@ export function MovementsList({
 
     try {
       const { exportMovementsExcel } = await import("../utils/excelExport.js");
-      exportMovementsExcel(filtered, accounts, debtEvents);
+      exportMovementsExcel(filtered, accounts, debtEvents, creditCardEntries, debts);
     } catch {
       window.alert("No se pudo preparar el archivo Excel. Intenta nuevamente.");
     }
@@ -114,7 +121,10 @@ export function MovementsList({
         currentMember={currentMember}
         categories={categories}
         accounts={accounts}
+        creditCards={creditCards}
+        allowCreditCardSource={allowCreditCardSource}
         onQuickCreateCategory={onQuickCreateCategory}
+        onSaveCreditCardPurchase={onSaveCreditCardPurchase}
         onSave={async (movement, id) => {
           const saved = await onSave(movement, id);
           const succeeded = saved !== false;
@@ -276,12 +286,15 @@ export function MovementsList({
           const isCertified = isMovementCertifiedMatched(movement, reconciliations, reconciliationMovements, creditCardEntries);
           const isHistoricallyProtected = historicallyProtectedMovementIds.has(movement.id);
           const isDebtService = movement.movementContext === "debt_service";
+          const isCreditCardMovement = isCreditCardMovementContext(movement.movementContext);
           const isPendingSync = pendingMovementIds.has(movement.id);
-          const isProtectedInUI = isHistoricallyProtected || isDebtService || isPendingSync;
+          const isProtectedInUI = isHistoricallyProtected || isDebtService || isCreditCardMovement || isPendingSync;
           const protectionTitle = isHistoricallyProtected
             ? "Este movimiento fue incluido en una conciliación que cuadró."
             : isDebtService
             ? "Se corrige desde Deudas"
+            : isCreditCardMovement
+            ? "Se corrige desde Tarjetas"
             : undefined;
 
           const currencyCode = resolveMovementCurrencyCode(movement, accounts, debts, debtEvents, creditCardEntries) || "PEN";
@@ -379,12 +392,15 @@ export function MovementsList({
               const isCertified = isMovementCertifiedMatched(movement, reconciliations, reconciliationMovements, creditCardEntries);
               const isHistoricallyProtected = historicallyProtectedMovementIds.has(movement.id);
               const isDebtService = movement.movementContext === "debt_service";
+              const isCreditCardMovement = isCreditCardMovementContext(movement.movementContext);
               const isPendingSync = pendingMovementIds.has(movement.id);
-              const isProtectedInUI = isHistoricallyProtected || isDebtService || isPendingSync;
+              const isProtectedInUI = isHistoricallyProtected || isDebtService || isCreditCardMovement || isPendingSync;
               const protectionTitle = isHistoricallyProtected
                 ? "Este movimiento fue incluido en una conciliación que cuadró."
                 : isDebtService
                 ? "Se corrige desde Deudas"
+                : isCreditCardMovement
+                ? "Se corrige desde Tarjetas"
                 : undefined;
 
               const currencyCode = resolveMovementCurrencyCode(movement, accounts, debts, debtEvents, creditCardEntries) || "PEN";

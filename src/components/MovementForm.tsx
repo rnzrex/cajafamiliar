@@ -1,10 +1,11 @@
 import { CalendarDays, Plus, Save, X } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
-import { Category, CategoryType, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType } from "../types";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { Category, CategoryType, CreditCardPurchaseInput, Debt, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType } from "../types";
 import { detectCategory } from "../utils/categoryDetector";
 import { localDateString } from "../utils/date";
 import { getActiveCashAccount, legacyMethodForAccount } from "../utils/accountHelpers";
-import { loadPreferredPerson, savePreferredPerson } from "../utils/storage";
+import { loadPreferredPerson, makeUuid, savePreferredPerson } from "../utils/storage";
+import { eligibleCreditCardsForSpending } from "../utils/creditCardSpending";
 
 interface MovementFormProps {
   initialType?: MovementType;
@@ -13,8 +14,11 @@ interface MovementFormProps {
   currentMember?: HouseholdMember;
   categories: Category[];
   accounts: FinancialAccount[];
+  creditCards?: Debt[];
+  allowCreditCardSource?: boolean;
   onQuickCreateCategory: (category: Omit<Category, "id" | "created_at">) => Category | null | Promise<Category | null>;
   onSave: (movement: MovementFormInput, id?: string) => void | Promise<boolean>;
+  onSaveCreditCardPurchase?: (input: CreditCardPurchaseInput) => void | Promise<boolean>;
   onCancel?: () => void;
 }
 
@@ -29,8 +33,9 @@ interface ValidationError {
 }
 
 const unassignedAccountLabel = "Sin cuenta (histórico)";
+const creditCardSourcePrefix = "credit-card:";
 
-export function MovementForm({ initialType = "egreso", movement, draft, currentMember, categories, accounts, onQuickCreateCategory, onSave, onCancel }: MovementFormProps) {
+export function MovementForm({ initialType = "egreso", movement, draft, currentMember, categories, accounts, creditCards = [], allowCreditCardSource = true, onQuickCreateCategory, onSave, onSaveCreditCardPurchase, onCancel }: MovementFormProps) {
   const [type, setType] = useState<MovementType>(movement?.type ?? draft?.type ?? initialType);
   const [date, setDate] = useState(movement?.date ?? draft?.date ?? today());
   const [amount, setAmount] = useState(movement?.amount.toString() ?? draft?.amount?.toString() ?? "");
@@ -48,10 +53,14 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
   const [isCreatingCategory, setIsCreatingCategory] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [validationError, setValidationError] = useState<ValidationError | null>(null);
+  const cardPurchaseRequestRef = useRef<{ fingerprint: string; input: CreditCardPurchaseInput } | null>(null);
 
   const availableCategories = categories.filter((item) => item.is_active && (item.type === type || item.type === "ambos"));
   const dateLabel = date === today() ? "Hoy" : formatDateLabel(date);
   const selectableAccounts = accounts.filter((account) => account.isActive || account.id === movement?.accountId);
+  const selectableCards = allowCreditCardSource && onSaveCreditCardPurchase && !movement ? eligibleCreditCardsForSpending(creditCards) : [];
+  const selectedCreditCardId = accountId?.startsWith(creditCardSourcePrefix) ? accountId.slice(creditCardSourcePrefix.length) : null;
+  const selectedCreditCardIsAvailable = selectedCreditCardId !== null && selectableCards.some((card) => card.id === selectedCreditCardId);
 
   useEffect(() => {
     const nextPerson = initialPersonValue(movement, draft, currentMember);
@@ -68,6 +77,18 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
     setShowCategorySelector(Boolean(movement));
     setShowDatePicker(Boolean(movement) || nextDate !== today());
   }, [accounts, currentMember, draft, initialType, movement]);
+
+  useEffect(() => {
+    if (type === "ingreso" && selectedCreditCardId) {
+      setAccountId(getActiveCashAccount(accounts)?.id ?? null);
+    }
+  }, [accounts, selectedCreditCardId, type]);
+
+  useEffect(() => {
+    if (selectedCreditCardId && !selectedCreditCardIsAvailable) {
+      setAccountId(getActiveCashAccount(accounts)?.id ?? null);
+    }
+  }, [accounts, selectedCreditCardId, selectedCreditCardIsAvailable]);
 
   useEffect(() => {
     if (!categoryTouched) {
@@ -100,31 +121,43 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
       return;
     }
     if (!accountId && !movement) {
-      setValidationError({ field: "amount", message: "Selecciona una cuenta para registrar el movimiento." });
+      setValidationError({ field: "amount", message: "Selecciona una cuenta o tarjeta para registrar el movimiento." });
       return;
     }
 
     const parsedAmount = Number(amount);
-    const selectedAccount = accounts.find((item) => item.id === accountId) ?? null;
+    const selectedAccount = selectedCreditCardId ? null : accounts.find((item) => item.id === accountId) ?? null;
     setValidationError(null);
 
     setIsSaving(true);
     try {
-      const saved = await onSave(
-        {
-          type,
-          date,
-          amount: parsedAmount,
-          description: description.trim(),
-          method: accountId === null ? movement?.method ?? "efectivo" : legacyMethodForAccount(selectedAccount),
-          category,
-          accountId,
-          ...(currentMember ? {} : { person: person.trim() }),
-        },
-        movement?.id
-      );
+      const saved = selectedCreditCardId && !movement
+        ? onSaveCreditCardPurchase
+          ? await onSaveCreditCardPurchase(getCreditCardPurchaseInput({
+              requestRef: cardPurchaseRequestRef,
+              debtId: selectedCreditCardId,
+              purchaseDate: date,
+              amount: parsedAmount,
+              description: description.trim(),
+              category,
+            }))
+          : false
+        : await onSave(
+            {
+              type,
+              date,
+              amount: parsedAmount,
+              description: description.trim(),
+              method: accountId === null ? movement?.method ?? "efectivo" : legacyMethodForAccount(selectedAccount),
+              category,
+              accountId: selectedCreditCardId ? null : accountId,
+              ...(currentMember ? {} : { person: person.trim() }),
+            },
+            movement?.id
+          );
 
       if (saved === false) return;
+      if (selectedCreditCardId && !movement) cardPurchaseRequestRef.current = null;
       if (!currentMember) savePreferredPerson(person, personChoice === "Otro");
 
       if (!movement) {
@@ -247,23 +280,33 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
             />
           </label>
 
-          <label className="block space-y-2 text-base font-bold text-slate-700">
-            Cuenta
-            <select value={accountId ?? ""} onChange={(event) => setAccountId(event.target.value || null)} className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-lg">
-              {selectableAccounts.length === 0 && !movement && <option value="">Sin cuentas disponibles</option>}
-              {selectableAccounts.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.isActive ? item.name : `${item.name} (archivada)`}
-                </option>
-              ))}
-              {movement && (
-                <option value="">{unassignedAccountLabel}</option>
-              )}
-            </select>
-            {selectableAccounts.length === 0 && !movement && (
-              <span className="block text-sm font-semibold text-slate-500">Crea una cuenta primero desde la sección Cuentas.</span>
-            )}
-          </label>
+           <label className="block space-y-2 text-base font-bold text-slate-700">
+             {type === "egreso" ? "Pagar con" : "Cuenta de destino"}
+             <select value={accountId ?? ""} onChange={(event) => setAccountId(event.target.value || null)} className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-lg">
+               {selectableAccounts.length === 0 && !movement && <option value="">Sin cuentas disponibles</option>}
+               {selectableAccounts.length > 0 && <optgroup label="Cuentas">
+                 {selectableAccounts.map((item) => (
+                   <option key={item.id} value={item.id}>
+                     {item.isActive ? item.name : `${item.name} (archivada)`}
+                   </option>
+                 ))}
+               </optgroup>}
+               {type === "egreso" && selectableCards.length > 0 && <optgroup label="Tarjetas PEN activas">
+                 {selectableCards.map((card) => (
+                   <option key={card.id} value={`${creditCardSourcePrefix}${card.id}`}>
+                     {card.name} · {card.creditorName}
+                   </option>
+                 ))}
+               </optgroup>}
+               {movement && (
+                 <option value="">{unassignedAccountLabel}</option>
+               )}
+             </select>
+             {selectableAccounts.length === 0 && selectableCards.length === 0 && !movement && (
+               <span className="block text-sm font-semibold text-slate-500">Crea una cuenta primero desde la sección Cuentas o registra una tarjeta PEN activa.</span>
+             )}
+             {selectedCreditCardId && <span className="block text-sm font-semibold text-blue-700">La compra se guardará en el ledger de la tarjeta; no descontará una cuenta bancaria.</span>}
+           </label>
 
           {currentMember ? (
             <section className="rounded-2xl border border-blue-100 bg-blue-50 p-4" aria-label="Autor del movimiento">
@@ -418,6 +461,37 @@ function initialAccountId(movement?: Movement | null, draft?: MovementDraft | nu
   if (movement) return movement.accountId;
   if (draft?.accountId) return draft.accountId;
   return getActiveCashAccount(accounts ?? [])?.id ?? null;
+}
+
+function getCreditCardPurchaseInput({
+  requestRef,
+  debtId,
+  purchaseDate,
+  amount,
+  description,
+  category,
+}: {
+  requestRef: { current: { fingerprint: string; input: CreditCardPurchaseInput } | null };
+  debtId: string;
+  purchaseDate: string;
+  amount: number;
+  description: string;
+  category: string;
+}): CreditCardPurchaseInput {
+  const fingerprint = JSON.stringify({ debtId, purchaseDate, amount, description, category });
+  if (requestRef.current?.fingerprint === fingerprint) return requestRef.current.input;
+
+  const input: CreditCardPurchaseInput = {
+    debtId,
+    entryId: makeUuid(),
+    movementId: makeUuid(),
+    purchaseDate,
+    amount,
+    description,
+    category,
+  };
+  requestRef.current = { fingerprint, input };
+  return input;
 }
 
 function initialPersonValue(movement?: Movement | null, draft?: MovementDraft | null, currentMember?: HouseholdMember) {

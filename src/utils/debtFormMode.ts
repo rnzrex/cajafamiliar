@@ -11,7 +11,6 @@ export const DEBT_KIND_OPTIONS: Array<{ value: DebtKind; label: string }> = [
   { value: "installment_purchase", label: "Compra en cuotas" },
   { value: "mortgage", label: "Hipoteca" },
   { value: "pledge", label: "Empeño" },
-  { value: "credit_card", label: "Tarjeta de crédito" },
   { value: "other", label: "Otra" },
 ];
 

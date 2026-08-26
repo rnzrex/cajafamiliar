@@ -1010,6 +1010,7 @@ export function mapCreditCardOperationError(message: string): CreditCardOperatio
     "AUTH_REQUIRED",
     "HOUSEHOLD_ACCESS_DENIED",
     "DEBT_NOT_FOUND",
+    "DEBT_ALREADY_EXISTS",
     "DEBT_NOT_CREDIT_CARD",
     "DEBT_ARCHIVED",
     "DEBT_NOT_ACTIVE",

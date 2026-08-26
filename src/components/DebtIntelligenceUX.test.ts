@@ -9,6 +9,7 @@ import type {
   DebtScheduleVersion,
 } from "../types.js";
 import { DebtsManager } from "./DebtsManager.js";
+import { CreditCardsManager } from "./CreditCardsManager.js";
 import { DebtAttentionPanel } from "./DebtAttentionPanel.js";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel.js";
 import { DebtDetailModal } from "./DebtDetailModal.js";
@@ -165,7 +166,7 @@ describe("DEBT-5F-B: Debt Intelligence UX Real Component Tests", () => {
     expect(html).not.toContain("Requiere tu atención");
   });
 
-  it("renders DebtsManager distinguishing 'Saldo actual' for cards and 'Saldo principal' for loans", () => {
+  it("renders DebtsManager with generic obligations only", () => {
     const loan = sampleLoanDebt();
     const card = sampleCardDebt();
     const loanIntel = sampleLoanIntelligence(loan, [defaultScheduleVersion], [defaultInstallment], "2026-08-23");
@@ -198,10 +199,28 @@ describe("DEBT-5F-B: Debt Intelligence UX Real Component Tests", () => {
     );
 
     expect(html).toContain("Gestión de Deudas");
-    expect(html).toContain("Saldo actual");
+    expect(html).not.toContain("Saldo actual");
     expect(html).toContain("Saldo principal");
-    expect(html).toContain("Tarjeta Signature");
+    expect(html).not.toContain("Tarjeta Signature");
     expect(html).toContain("Préstamo Vehicular");
+  });
+
+  it("renders cards in the dedicated Tarjetas manager", () => {
+    const card = sampleCardDebt();
+    const html = renderToStaticMarkup(
+      React.createElement(CreditCardsManager, {
+        cards: [card],
+        profiles: [],
+        entries: [],
+        statements: [],
+        onOpenNewCard: () => {},
+        onSelectCard: () => {},
+      })
+    );
+
+    expect(html).toContain("Tarjetas");
+    expect(html).toContain("Tarjeta Signature");
+    expect(html).toContain("Saldo actual");
   });
 
   it("renders CreditCardDetailPanel showing 'Límite no registrado' when credit limit is null", () => {
