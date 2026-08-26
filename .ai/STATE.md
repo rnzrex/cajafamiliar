@@ -15,7 +15,7 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 - Branch: `feat/bank-loan-onboarding-v3`
 - Starting branch HEAD: `d9f16dd55ca77b4bd3cc72051a54273112240db6`
-- Current HEAD and remote branch SHA: `7c51797fa5e30f4e7ed76a0a9ee25f3bf11fbb0b`.
+- Implementation checkpoint SHA: `7c51797fa5e30f4e7ed76a0a9ee25f3bf11fbb0b`; the final continuity metadata commit is on top of it. Read Git for the exact current HEAD and remote SHA.
 - DRAFT PR: https://github.com/rnzrex/cajafamiliar/pull/63, base `main`, head `feat/bank-loan-onboarding-v3`.
 - The actual current HEAD and remote state must always be read from Git.
 
@@ -84,4 +84,4 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 - Agent: Codex
 - Date: 2026-08-26
-- Summary: BANK LOAN ONBOARDING V3 is implemented and all code/local SQL gates are green. Four logical commits were pushed at `7c51797fa5e30f4e7ed76a0a9ee25f3bf11fbb0b`; DRAFT PR #63 is open and automatic Vercel Preview checks passed. Production is untouched.
+- Summary: BANK LOAN ONBOARDING V3 is implemented and all code/local SQL gates are green. The implementation checkpoint and final continuity metadata are pushed; DRAFT PR #63 is open and the latest Vercel Preview check is rerunning after the metadata-only push. Production is untouched.
