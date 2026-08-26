@@ -135,7 +135,7 @@ export function calculateAssistedInterestSuggestion(params: {
     calcInterest = round2(nextInstallment.expectedInterest);
     calculationSource = "contract_schedule";
     certainty = "exact_contract";
-    calculationExplanation = `Calculado según cuota #${nextInstallment.installmentNumber} del cronograma contractual.`;
+    calculationExplanation = `Calculado según cuota #${nextInstallment.contractualInstallmentNumber ?? nextInstallment.installmentNumber} del cronograma contractual.`;
   }
   // Priority 2: Contract Periodic Rate (Requires rate > 0)
   else if (

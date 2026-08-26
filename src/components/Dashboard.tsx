@@ -228,7 +228,7 @@ export function Dashboard({
                     <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-3 py-1 text-xs font-bold text-purple-900">
                       <Landmark className="h-3 w-3" /> {item.dueLabel}
                     </span>
-                    <h3 className="mt-2 text-lg font-bold text-slate-900">{item.debtName} (Cuota #{item.installmentNumber})</h3>
+                    <h3 className="mt-2 text-lg font-bold text-slate-900">{item.debtName} (Cuota #{item.contractualInstallmentNumber ?? item.installmentNumber})</h3>
                     <p className="mt-1 text-xs font-semibold text-slate-600">
                       {item.amountKnown ? (
                         <>Pendiente: <span className="font-bold text-slate-900">{item.currencyCode} {item.remainingAmount?.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span> · Vence: {formatLocalDate(item.dueDate)}</>

@@ -427,7 +427,7 @@ export function buildDebtIntelligenceItems({
       );
       const nextItem = sortedOutstanding[0];
       nextInstallmentId = nextItem.installmentId;
-      nextInstallmentNumber = nextItem.installmentNumber;
+      nextInstallmentNumber = nextItem.contractualInstallmentNumber ?? nextItem.installmentNumber;
       nextInstallmentDueDate = nextItem.dueDate;
       nextInstallmentDueStatus = nextItem.dueStatus;
       nextInstallmentRemainingAmount = nextItem.remainingAmount;

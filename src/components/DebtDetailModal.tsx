@@ -37,6 +37,7 @@ import { getCurrencySymbol, formatReviewDate, validateDebtFinancialTerms } from 
 import { calculateNextPayment } from "../utils/debtNextPayment";
 import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
 import { getAmortizationMethodLabel, getBankLoanSubtypeLabel } from "../utils/bankCreditFormHelper";
+import { resolveContractualDetailNextPayment } from "../utils/debtDetailNextPayment";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 
@@ -298,11 +299,36 @@ export function DebtDetailModal({
   const ledgerResult = buildDebtPaymentLedger(debt, allEventsForDebt);
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
+  const insurancePricingLabel = (insurance: DebtInsuranceTerms): string => {
+    if (insurance.pricingMode === "fixed_amount") {
+      if (insurance.rateBasis === "total_credit_even") return "monto total repartido entre cuotas";
+      if (insurance.rateBasis === "total_credit_upfront") return "monto total cobrado una vez";
+      if (insurance.rateBasis === "total_credit_unknown") return "monto total, distribución por confirmar";
+      return "monto fijo por cuota";
+    }
+    if (insurance.pricingMode === "percent_outstanding_balance") return "% sobre saldo pendiente";
+    if (insurance.pricingMode === "percent_original_principal") return "% sobre monto original";
+    return "según cronograma / por confirmar";
+  };
   const nextPayment = calculateNextPayment({
     debt,
     debtEvents: allEventsForDebt,
     currentPrincipal: debtIntelligence.currentPrincipal,
   });
+  const contractualNextPayment = resolveContractualDetailNextPayment({
+    debt,
+    debtIntelligence,
+    currentScheduleId: currentSchedule?.id ?? null,
+    scheduleSource: currentSchedule?.scheduleSource ?? null,
+    installments: debtInstallments,
+  });
+  const detailNextDueDate = contractualNextPayment?.dueDate ?? nextPayment.nextDueDate;
+  const detailInterestAmount = contractualNextPayment?.installment?.expectedInterest ?? nextPayment.interestAmount;
+  const detailInterestKnown = contractualNextPayment?.installment?.expectedInterest != null || nextPayment.interestKnown;
+  const detailMinimumPrincipalAmount = contractualNextPayment?.installment?.expectedPrincipal ?? nextPayment.minimumPrincipalAmount;
+  const detailMinimumPrincipalKnown = contractualNextPayment?.installment?.expectedPrincipal != null || nextPayment.minimumPrincipalKnown;
+  const detailMinimumPaymentAmount = contractualNextPayment?.amountKnown ? contractualNextPayment.remainingAmount : nextPayment.minimumPaymentAmount;
+  const detailMinimumPaymentKnown = contractualNextPayment?.amountKnown ?? nextPayment.minimumPaymentKnown;
 
   const handleSaveMetadata = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -809,13 +835,19 @@ export function DebtDetailModal({
                     <div><p className="text-xs text-slate-500">Balloon</p><p className="font-bold">{bankProfile.balloonPaymentAmount == null ? "—" : `${currencySymbol} ${bankProfile.balloonPaymentAmount.toFixed(2)}`}</p></div>
                     <div><p className="text-xs text-slate-500">TEA</p><p className="font-bold">{debt.teaPercent == null ? "—" : `${debt.teaPercent}%`}</p></div>
                     <div><p className="text-xs text-slate-500">TCEA</p><p className="font-bold">{debt.tceaPercent == null ? "—" : `${debt.tceaPercent}%`}</p></div>
-                    <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : debtInstallments.filter((installment) => !getInstallmentProgress(installment, allocations, debtEvents).isPaid).length}</p></div>
-                    <div><p className="text-xs text-slate-500">Total pendiente conocido</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : `${currencySymbol} ${debtInstallments.reduce((total, installment) => Math.max(0, total + (installment.expectedAmount ?? 0) - getInstallmentProgress(installment, allocations, debtEvents).allocated), 0).toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Cuotas pagadas antes</p><p className="font-bold">{bankProfile.installmentsPaidBeforeTracking ?? 0}</p></div>
+                    <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : debtInstallments.filter((installment) => !installment.isPaidBeforeTracking && !getInstallmentProgress(installment, allocations, debtEvents).isPaid).length}</p></div>
+                    <div><p className="text-xs text-slate-500">Total pendiente conocido</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : `${currencySymbol} ${debtInstallments.filter((installment) => !installment.isPaidBeforeTracking).reduce((total, installment) => Math.max(0, total + (installment.expectedAmount ?? 0) - getInstallmentProgress(installment, allocations, debtEvents).allocated), 0).toFixed(2)}`}</p></div>
                   </div>
                   <div>
                     <p className="text-xs font-bold uppercase text-slate-500">Seguros</p>
-                    {bankInsurances.length === 0 ? <p className="text-sm text-slate-600">No definidos.</p> : <ul className="mt-1 space-y-1 text-sm text-slate-700">{bankInsurances.map((insurance) => <li key={insurance.id}>{insurance.label} · {insurance.pricingMode}{insurance.provider ? ` · ${insurance.provider}` : ""}{insurance.isRequired ? " · requerido" : " · opcional"}</li>)}</ul>}
+                    {bankInsurances.length === 0 ? <p className="text-sm text-slate-600">No definidos.</p> : <ul className="mt-1 space-y-1 text-sm text-slate-700">{bankInsurances.map((insurance) => <li key={insurance.id}>{insurance.label} · {insurancePricingLabel(insurance)}{insurance.fixedAmount != null && insurance.pricingMode === "fixed_amount" ? ` · ${currencySymbol} ${insurance.fixedAmount.toFixed(2)}` : ""}{insurance.provider ? ` · ${insurance.provider}` : ""}{insurance.isRequired ? " · requerido" : " · opcional"}</li>)}</ul>}
                   </div>
+                  {(bankProfile.installmentsPaidBeforeTracking ?? 0) > 0 && (
+                    <div className="rounded-xl border border-blue-200 bg-white px-4 py-3 text-sm font-semibold text-blue-950">
+                      Al comenzar el seguimiento ya se habían pagado {bankProfile.installmentsPaidBeforeTracking} cuotas. Las filas históricas no tienen movimientos, eventos ni allocations en Caja Familiar.
+                    </div>
+                  )}
                 </section>
               )}
 
@@ -837,9 +869,21 @@ export function DebtDetailModal({
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-blue-100 pb-3">
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wider text-blue-700">PRÓXIMO PAGO</p>
+                      {contractualNextPayment && (
+                        <p className="text-sm font-black text-blue-900">
+                          Próxima cuota {contractualNextPayment.source === "contractual_schedule" ? "contractual" : "estimada"} #{contractualNextPayment.installmentNumber}
+                        </p>
+                      )}
                       <p className="text-2xl font-black text-slate-900">
-                        {nextPayment.nextDueDate ? formatReviewDate(nextPayment.nextDueDate) : "Por confirmar"}
+                        {detailNextDueDate ? formatReviewDate(detailNextDueDate) : "Por confirmar"}
                       </p>
+                      {contractualNextPayment && (
+                        <p className="mt-1 text-xs font-semibold text-blue-800">
+                          Monto restante: {contractualNextPayment.amountKnown && contractualNextPayment.remainingAmount != null
+                            ? formatDebtMoney(contractualNextPayment.remainingAmount, debt.currencyCode)
+                            : "Por confirmar"}
+                        </p>
+                      )}
                     </div>
                     {canWriteDebt && (
                       <button
@@ -856,8 +900,8 @@ export function DebtDetailModal({
                     <div className="rounded-xl bg-white p-3 border border-slate-200">
                       <p className="text-xs text-slate-500 font-medium">Interés estimado</p>
                       <p className="font-bold text-slate-900 mt-0.5">
-                        {nextPayment.interestKnown && nextPayment.interestAmount != null
-                          ? formatDebtMoney(nextPayment.interestAmount, nextPayment.currencyCode)
+                        {detailInterestKnown && detailInterestAmount != null
+                          ? formatDebtMoney(detailInterestAmount, nextPayment.currencyCode)
                           : "Desconocido"}
                       </p>
                     </div>
@@ -865,8 +909,8 @@ export function DebtDetailModal({
                     <div className="rounded-xl bg-white p-3 border border-slate-200">
                       <p className="text-xs text-slate-500 font-medium">Mínimo a capital</p>
                       <p className="font-bold text-slate-900 mt-0.5">
-                        {nextPayment.minimumPrincipalKnown && nextPayment.minimumPrincipalAmount != null
-                          ? formatDebtMoney(nextPayment.minimumPrincipalAmount, nextPayment.currencyCode)
+                        {detailMinimumPrincipalKnown && detailMinimumPrincipalAmount != null
+                          ? formatDebtMoney(detailMinimumPrincipalAmount, nextPayment.currencyCode)
                           : "Sin mínimo"}
                       </p>
                     </div>
@@ -874,8 +918,8 @@ export function DebtDetailModal({
                     <div className="rounded-xl bg-white p-3 border border-blue-200 bg-blue-50/30">
                       <p className="text-xs text-blue-700 font-bold">Pago mínimo</p>
                       <p className="text-lg font-black text-blue-900 mt-0.5">
-                        {nextPayment.minimumPaymentKnown && nextPayment.minimumPaymentAmount != null
-                          ? formatDebtMoney(nextPayment.minimumPaymentAmount, nextPayment.currencyCode)
+                        {detailMinimumPaymentKnown && detailMinimumPaymentAmount != null
+                          ? formatDebtMoney(detailMinimumPaymentAmount, nextPayment.currencyCode)
                           : "Desconocido"}
                       </p>
                     </div>
@@ -1148,9 +1192,14 @@ export function DebtDetailModal({
                           >
                             <div>
                               <div className="flex items-center gap-2">
-                                <span className="font-bold text-slate-900">Cuota #{inst.installmentNumber}</span>
+                                <span className="font-bold text-slate-900">Cuota #{inst.contractualInstallmentNumber ?? inst.installmentNumber}</span>
                                 <span className="text-xs text-slate-500">Vence: {formatReviewDate(inst.dueDate)}</span>
-                                {prog.isPaid && (
+                                {inst.isPaidBeforeTracking && (
+                                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-800">
+                                    Pagada antes de Caja Familiar
+                                  </span>
+                                )}
+                                {prog.isPaid && !inst.isPaidBeforeTracking && (
                                   <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">
                                     Pagada
                                   </span>

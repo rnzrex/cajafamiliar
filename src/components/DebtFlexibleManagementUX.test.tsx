@@ -183,6 +183,7 @@ describe("DEBT-6B Flexible Debt Management UX Tests", () => {
     const html = renderToStaticMarkup(
       <DebtForm
         initialStep="details"
+        initialDebtKind="other"
         accounts={mockAccounts}
         categories={mockCategories}
         onSaved={vi.fn()}

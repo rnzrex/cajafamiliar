@@ -35,7 +35,8 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX & Final Cleanup", () => {
   // 2. DebtForm single authoritative frequency control and no duplicate controls
   it("2. DebtForm renders exactly ONE 'Frecuencia de pago' label and NO duplicate '¿Cada cuánto pagas?'", () => {
     const html = renderToStaticMarkup(
-      <DebtForm
+  <DebtForm
+  initialDebtKind="other"
         accounts={[]}
         categories={[]}
         canWriteDebt={true}
@@ -55,7 +56,8 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX & Final Cleanup", () => {
   // 3. Single monthly due control when monthly frequency is active
   it("3. DebtForm renders at most ONE 'Día de pago mensual (1–31)' control", () => {
     const html = renderToStaticMarkup(
-      <DebtForm
+  <DebtForm
+  initialDebtKind="other"
         accounts={[]}
         categories={[]}
         canWriteDebt={true}

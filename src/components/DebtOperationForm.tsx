@@ -201,7 +201,7 @@ export function DebtOperationForm({
   const currentSchedule = scheduleLifecycle.currentSchedule;
   const currentScheduleInstallments = hasPendingBankSchedule
     ? []
-    : installments.filter((i) => currentSchedule && i.scheduleVersionId === currentSchedule.id);
+    : installments.filter((i) => currentSchedule && i.scheduleVersionId === currentSchedule.id && !i.isPaidBeforeTracking);
   const [allocations, setAllocations] = useState<Array<{ installmentId: string; allocatedAmount: string }>>([]);
 
   const eligibleAdvanceInstallments = currentScheduleInstallments.filter((installment) => {
@@ -1046,7 +1046,7 @@ export function DebtOperationForm({
                 return (
                   <div key={inst.id} className="flex items-center justify-between bg-slate-50 p-3 rounded-xl">
                     <div>
-                      <p className="text-sm font-bold text-slate-800">Cuota #{inst.installmentNumber} (Vence: {inst.dueDate})</p>
+                      <p className="text-sm font-bold text-slate-800">Cuota contractual #{inst.contractualInstallmentNumber ?? inst.installmentNumber} (Vence: {inst.dueDate})</p>
                       <p className="text-xs text-slate-500">
                         {operationType === "installment_advance"
                           ? `Capital: S/ ${(inst.expectedPrincipal ?? 0).toFixed(2)} | Interés: S/ ${(inst.expectedInterest ?? 0).toFixed(2)} | Seguro: S/ ${(inst.expectedInsurance ?? 0).toFixed(2)} | Fees: S/ ${(inst.expectedFees ?? 0).toFixed(2)} | Total: S/ ${(inst.expectedAmount ?? 0).toFixed(2)}`

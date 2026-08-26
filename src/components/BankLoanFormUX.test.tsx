@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DebtForm } from "./DebtForm.js";
 import { BANK_LOAN_SUBTYPE_OPTIONS, AMORTIZATION_METHOD_OPTIONS } from "../utils/bankCreditFormHelper.js";
 import * as dataRepository from "../services/dataRepository.js";
+import { addMonthsClamped } from "../utils/debtEstimation.js";
 
 vi.mock("../services/dataRepository", async () => {
   const actual = await vi.importActual<typeof dataRepository>("../services/dataRepository.js");
@@ -24,6 +25,13 @@ vi.mock("../services/dataRepository", async () => {
 describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
   afterEach(cleanup);
 
+  function scheduleLines(start: number, end: number): string {
+    return Array.from({ length: end - start + 1 }, (_, index) => {
+      const contractualNumber = start + index;
+      return `${contractualNumber}\t${addMonthsClamped("2026-01-15", contractualNumber - 1)}\t100.00\t60.00\t30.00\t5.00\t5.00`;
+    }).join("\n");
+  }
+
   it("advances from type selection to bank details and toggles estimation", async () => {
     const user = userEvent.setup();
     render(
@@ -40,12 +48,12 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.getByRole("heading", { name: "¿Qué deuda quieres registrar?" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Continuar" }));
 
-    expect(screen.getByText("Datos del Crédito Bancario / Financiero")).toBeTruthy();
-    expect(screen.getByText("Fuente del Cronograma *")).toBeTruthy();
+  expect(screen.getByText("1. SOBRE EL CRÉDITO")).toBeTruthy();
+  expect(screen.getByText("5. CRONOGRAMA *")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Agregar seguro" }));
     expect(screen.getByText("Seguro requerido")).toBeTruthy();
 
-    const loanSubtype = screen.getAllByRole("combobox")[1];
+  const loanSubtype = screen.getAllByRole("combobox")[0];
     await user.selectOptions(loanSubtype, "mortgage");
     expect(screen.getByText("¿Cómo se cubre el desgravamen? *")).toBeTruthy();
 
@@ -77,4 +85,45 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(values).toContain("custom");
     expect(values).toContain("unknown");
   });
+
+  it("keeps the original first due date and blocks live baseline mismatches", async () => {
+    const user = userEvent.setup();
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito existente" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco V3" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 10000"), { target: { value: "10000" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 18"), { target: { value: "18" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 7300"), { target: { value: "7000" } });
+    fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
+    const originalFirstDueDate = screen.getByLabelText("Primera cuota ORIGINAL");
+    fireEvent.change(originalFirstDueDate, { target: { value: "2026-01-15" } });
+    const scheduleText = screen.getByLabelText(/Pegar filas del cronograma/);
+
+    fireEvent.change(scheduleText, { target: { value: scheduleLines(6, 18) } });
+    await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
+
+    expect((originalFirstDueDate as HTMLInputElement).value).toBe("2026-01-15");
+    expect(screen.getByText(/Primera cuota pendiente importada: 15\/06\/2026/)).toBeTruthy();
+
+    const paidBeforeInput = screen.getByLabelText("Última cuota contractual que ya pagaste");
+    fireEvent.change(paidBeforeInput, { target: { value: "4" } });
+    expect(screen.getByRole("alert").textContent).toContain("Dijiste que la próxima cuota es la 5");
+    fireEvent.change(paidBeforeInput, { target: { value: "5" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    fireEvent.change(originalFirstDueDate, { target: { value: "" } });
+    fireEvent.change(scheduleText, { target: { value: scheduleLines(1, 18) } });
+    await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
+    expect((originalFirstDueDate as HTMLInputElement).value).toBe("2026-01-15");
+  }, 15_000);
 });

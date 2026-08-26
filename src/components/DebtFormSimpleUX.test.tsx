@@ -207,6 +207,7 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
       const html = renderToStaticMarkup(
         <DebtForm
           initialStep="details"
+          initialDebtKind="other"
           accounts={mockAccounts}
           categories={mockCategories}
           onSaved={mockOnSaved}
@@ -227,6 +228,7 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
       const html = renderToStaticMarkup(
         <DebtForm
           initialStep="details"
+          initialDebtKind="other"
           accounts={mockAccounts}
           categories={mockCategories}
           onSaved={mockOnSaved}
@@ -244,6 +246,7 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
       const html = renderToStaticMarkup(
         <DebtForm
           initialStep="details"
+          initialDebtKind="other"
           accounts={mockAccounts}
           categories={mockCategories}
           onSaved={mockOnSaved}

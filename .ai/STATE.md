@@ -2,136 +2,95 @@
 
 ## Objective
 
-CREDIT CARDS SEPARATION Phase 1 and SYNC DRAFT PRESERVATION are CLOSED in Production.
-
-Credit cards are now separated from generic debt management at the UX/application-routing layer while preserving the existing credit-card ledger. Eligible active PEN cards can be used as spending sources. Authoritative background refreshes preserve active unsaved MovementForm drafts.
-
-BANK CREDIT CONTRACT V2 remains a closed Production baseline.
+Implement BANK LOAN ONBOARDING V3 on the existing `feat/bank-loan-onboarding-v3` branch:
+existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/CSV import, total fixed-insurance semantics, original-contract estimation, and simplified bank-loan UX.
 
 ## Active Work
 
-- No Credit Cards Phase 1 or sync-draft work is pending.
-- Treat PR #62 as a closed Production baseline unless a concrete regression is observed.
-- No BANK V2 work is pending.
+- BANK LOAN ONBOARDING V3 audit fixes are implemented in commit `abb202f`, pushed with the continuity handoff, and available in the existing DRAFT PR #63.
+- The audited V3 migration was applied to Supabase Production exactly from gate HEAD `ecf89fa6e472fd248f68ed9669ef3871f3fc276f`; no application code or migration file was changed for the gate.
+- PR #63 remains OPEN/DRAFT. The Production frontend is still unmerged; no manual Vercel action was performed.
+- Historical BANK V2 migrations remain immutable.
 
 ## Repository
 
-- Default branch: `main`
-- Credit Cards PR: `#62` — MERGED
-- Credit Cards merge commit: `563c67bde79b58d266135e61b826655c935a43e7`
-- Credit Cards validated branch head before merge: `22f7c2aa252ec6493ed71820b92a943d22616465`
-- BANK V2 PR: `#61` — MERGED
-- BANK V2 merge commit: `54d26fcce957cf425067b7e18f8a9eb67c45e69e`
-- BANK V2 validated financial checkpoint: `b859522b0bba761a5e1950305422d487b4bb4575`
-- The actual current HEAD must always be read from Git; do not assume this file's commit is the repository HEAD.
+- Branch: `feat/bank-loan-onboarding-v3`
+- Starting branch HEAD: `d9f16dd55ca77b4bd3cc72051a54273112240db6`
+- Previous pushed checkpoint SHA: `36d7d6817fecad49025c4d7e0bf532ea5eadb762`; audit-fix checkpoint: `abb202f`; continuity commit is on top. Read Git for the exact current HEAD and remote SHA.
+- DRAFT PR: https://github.com/rnzrex/cajafamiliar/pull/63, base `main`, head `feat/bank-loan-onboarding-v3`.
+- The actual current HEAD and remote state must always be read from Git.
 
-## Completed — Credit Cards Separation
+## Completed — BANK LOAN ONBOARDING V3
 
-- Added top-level `Tarjetas` navigation and a dedicated cards manager.
-- Added independent credit-card onboarding instead of creating cards from the generic debt form.
-- Removed `credit_card` from generic debt onboarding while preserving `DebtKind = credit_card` internally for historical/model compatibility.
-- Filtered cards out of generic debt manager, planning, strategy, portfolio, and attention views.
-- Preserved cards in global financial intelligence where their liability is economically relevant without double counting.
-- Added active, non-archived PEN cards as explicit spending sources in `MovementForm`.
-- Recurring-payment flows do not allow cards as payment sources.
-- USD cards remain operable from the Tarjetas domain and are intentionally not exposed in the PEN-oriented generic movement form.
-- Routed card purchases through the existing atomic credit-card operation dispatcher with stable retry IDs.
-- Preserved correct accounting semantics: card purchase counts as the consumption expense once; later card payment reduces cash/account and liability without re-counting the original consumption expense.
-- Protected credit-card movement contexts from generic movement edit/delete flows.
-- Preserved card deep links and routed them to Tarjetas.
-- Moved card-specific statement alerts into Tarjetas.
-- Fixed movement Excel export so card currencies/economics resolve using card entries and debts.
-- Added optional TEA/TCEA capture to card onboarding with non-negative validation and numeric-or-`null` payload semantics.
-
-## Completed — Sync Draft Preservation
-
-- Changed `MovementForm` hydration to use logical form identity rather than authoritative array/object references.
-- Equivalent remote refreshes no longer reset amount, description, date, category, person, or selected source while the user is editing.
-- Existing movement edits are preserved when the same movement ID returns as a new remote object.
-- Explicit transition to a different movement ID or recurring draft identity still rehydrates correctly.
-- If a selected account/card/category becomes unavailable during a new draft, the draft and original selection remain visible, fallback is not performed silently, and submit is blocked until explicit reselection.
-- Historical archived accounts and inactive categories remain valid when they are the original references of an existing movement, avoiding forced rewriting of financial history.
-- Membership revalidation now keeps an already-authorized App mounted during transient remote failures and exposes retry, while an explicit successful membership lookup with no membership still revokes access.
+- Added additive migration `supabase/migrations/20260826141250_bank_loan_onboarding_v3.sql`.
+- Added `bank_loan_profiles.installments_paid_before_tracking` with non-negative and term-bound checks.
+- Added `debt_installments.is_paid_before_tracking` and nullable `contractual_installment_number`, backfilled legacy contractual numbers to internal numbers.
+- Kept BANK V2 `installment_number` internal 1..N; preserved bank numbering separately for partial schedules such as contractual 6..18.
+- Updated `create_bank_loan_v1` without changing its public signature. It stores baseline metadata and marks only complete initial schedules; no historical movements, events, expenses, or allocations are fabricated.
+- Added server and client allocation guards for pre-tracking rows; later schedule versions clear baseline flags.
+- Extended only the initial bank schedule guard to accept a strict pending-only initial schedule; later lifecycle validators still require their existing internal invariants.
+- Closed the partial-schedule invariant gap: initial pending-only schedules must be contractual and start at `installments_paid_before_tracking + 1`; estimated schedules must remain complete 1..N.
+- Replaced parse-time schedule mismatch state with a live derived client error that blocks save and also covers pasted TSV/manual schedules.
+- Partial imports no longer overwrite the original first due date; the first pending imported date is displayed separately.
+- Detail next-payment display now consumes the fixed-schedule intelligence/planning item instead of deriving a date from absent baseline events.
+- Estimator and DebtForm now preserve mixed fixed-insurance buckets independently: per-installment, total-even, upfront, and unknown, while retaining legacy estimator fields.
+- Reordered the bank form into: 1 Sobre el crédito, 2 Contrato original, 3 Situación actual, 4 Seguros y costos, 5 Cronograma, 6 Revisión.
+- Added file import via existing `xlsx` dependency for `.xlsx`, `.xls`, `.csv`, `.tsv`, and `.txt`, with aliases, preview, explicit mapping, duplicate/missing-column errors, and full/partial schedule support.
+- Added fixed insurance bases: per installment, total-even with cent adjustment, upfront, and unknown distribution with warning.
+- Estimation now prioritizes original financed amount, prefers a valid contractual periodic rate, reports theoretical-vs-current balance differences without blocking, and never uses TCEA as interest input.
+- Updated planning, agenda/projection, intelligence, detail, operation selectors, labels, mappers, normalizers, and legacy defaults to exclude baseline rows and display contractual numbers.
+- Preserved non-bank, pledge, QAPAQ, card, and BANK V2 behavior through regression coverage.
 
 ## Validation
 
-- `npm test`: PASS — 54 files / 877 tests.
-- Focused final audit suites: PASS — 3 files / 17 tests.
-- `npm run typecheck:api`: PASS.
+- `npm test -- --reporter=dot`: PASS — 55 files / 893 tests.
+- Focused BANK V3/client UX: PASS — 15 `bankLoanOnboardingV3` tests and 4 `BankLoanFormUX` tests.
 - `npm run build`: PASS.
+- `npm run typecheck:api`: PASS.
+- `git diff --check`: PASS.
+- `npm run test:bank-loan-v3:local`: PASS — baseline, no-history, baseline allocation rejection, pending allocation, later schedule clearing, mismatched baseline=2 with 6..7 rejection, valid baseline=5 with 6..7 normalization, partial estimated rejection, full estimated acceptance, invalid baseline, and new-loan baseline=0.
 - `npm run test:bank-v2-local`: PASS.
 - `npm run test:debt2b2`: PASS.
-- `npm run test:debt5fa:local`: PASS.
-- `git diff --check`: PASS.
-- Real Chrome local smoke: PASS for expense, income, and PEN-card drafts after more than 21 seconds of periodic refresh; expense/card cases also survived tab visibility changes.
-- Temporary local Auth used for smoke was restored to `auth.enabled = false` and the temporary container was stopped.
-- Final branch Vercel Preview: READY for exact head `22f7c2aa252ec6493ed71820b92a943d22616465`; HTTP 200.
+- `npm run test:debt5fa:local`: PASS — all assertions passed after temporarily enabling local Auth; `supabase/config.toml` was restored to `auth.enabled = false` and local services restarted without Auth.
+- Local HTTP smoke with Vite and local Supabase environment: `/` returned HTTP 200 and rendered the root mount on port 5174 because port 5173 was already occupied. Visual `agent-browser` verification was unavailable because the CLI/browser connector is not installed; no remote environment was opened.
+- Automatic Vercel Preview checks for PR #63 passed: `Vercel` deployment completed and `Vercel Preview Comments` passed.
+- `supabase db reset` is not a clean repository workflow because the first migration expects an external/base schema. For local SQL validation, `supabase/schema.sql` was loaded only into the local container, then the real migrations/smokes were applied. `supabase/schema.sql` was not modified.
 
 ## Production
 
-- PR #62 merged to `main` as `563c67bde79b58d266135e61b826655c935a43e7`.
-- Vercel Production deployment: `dpl_9zhKhd8wcdVpG6cP4LeGbEm3cZvZ`.
-- Deployment target: Production.
-- Deployment Git SHA: `563c67bde79b58d266135e61b826655c935a43e7`.
-- Deployment state: READY.
-- Production aliases include `cajafamiliar.vercel.app`.
-- Public Production URL returned HTTP 200 after the merge deployment.
-- Production runtime error/fatal log check after deployment returned no entries.
-- Credit Cards Phase 1 added NO SQL, migration, RPC, or Supabase schema change.
-- Historical/applied BANK V2 migrations remain unchanged.
-- No Production test/junk financial data was created.
+- Authorized gate completed: `npx supabase db push --linked` applied only `20260826141250_bank_loan_onboarding_v3.sql`.
+- Preflight had BANK V2 remote versions `20260824225428`, `20260825010000`, `20260825071034`, and `20260825165854`; V3 was the only pending local migration.
+- Postflight confirms exact local/remote version `20260826141250` and name `bank_loan_onboarding_v3`.
+- No Production loans, movements, households, users, debt changes, test data, junk data, or manual SQL were created. No manual Vercel action was performed.
 
-## BANK V2 Baseline
+## BANK V2 Baseline / Restrictions
 
-- Bank-loan onboarding/profile validation, insurance terms, contractual/estimated schedules, lifecycle operations, append-only schedule versioning, `pending_bank_schedule` guards, and QAPAQ regression preservation remain the validated baseline.
-- Supabase Production BANK V2 migration sequence remains:
-  - `20260824225428_bank_credit_contract_v2.sql`
-  - `20260825010000_bank_credit_contract_v2_audit_fix.sql`
-  - `20260825071034_bank_credit_contract_v2_finalization.sql`
-  - `20260825165854_bank_credit_contract_v2_schedule_state_guard.sql`
-- Temporary accidental `noop` Edge Function remains removed; `reset-commercial-password` remains the intended active baseline.
-
-## Known Non-Blocking Note
-
-- The pre-existing statement-close RPC does not independently reject archived/non-active cards. This historical behavior was intentionally not altered because PR #62 was an application/UX separation with no SQL scope. Revisit only if a concrete card statement-close regression or security requirement demands a new migration.
-
-## Blocked
-
-- None known.
+- Do not edit: `20260824225428_bank_credit_contract_v2.sql`, `20260825010000_bank_credit_contract_v2_audit_fix.sql`, `20260825071034_bank_credit_contract_v2_finalization.sql`, or `20260825165854_bank_credit_contract_v2_schedule_state_guard.sql`.
+- Use a new migration for future SQL. Do not run remote Supabase migrations or touch Production without explicit authorization.
+- Do not reset/clean/discard uncommitted work, force push, merge, or deploy manually. The one explicitly authorized V3 Production migration is complete.
 
 ## Next Move
 
-1. Start the next product objective from current `main`.
-2. Before new work, run the mandatory bootstrap from `AGENTS.md` and read `.ai/STATE.md`, `.ai/DECISIONS.md`, and `.ai/RUNBOOK.md`.
-3. Reopen Credit Cards Phase 1, sync-draft preservation, or BANK V2 only for a concrete regression or explicit new scope.
-
-## Safety / Do Not
-
-- Do not edit historical/applied BANK V2 migrations; future SQL changes require a new migration.
-- Do not create test or junk Production financial data.
-- Do not rewrite history, reset destructively, force push, expose secrets, change billing, or perform unrelated destructive work.
-- Preserve legacy non-bank behavior plus validated QAPAQ, bank-loan, card, account, reconciliation, and movement semantics.
+1. Keep PR #63 in DRAFT and await review/requested changes; do not merge.
+2. If changes are requested, preserve the additive migration rule, rerun the relevant local gates, and push a new checkpoint.
+3. Do not apply further remote Supabase migrations or touch Production without a new explicit authorization.
 
 ## Key Files
 
-- `AGENTS.md`
-- `.ai/README.md`
-- `.ai/STATE.md`
-- `.ai/DECISIONS.md`
-- `.ai/RUNBOOK.md`
-- `src/App.tsx`
-- `src/components/CreditCardForm.tsx`
-- `src/components/CreditCardsManager.tsx`
-- `src/components/MovementForm.tsx`
-- `src/components/AuthGate.tsx`
-- `src/components/MovementsList.tsx`
-- `src/utils/creditCardSpending.ts`
-- `src/components/CreditCardForm.test.tsx`
-- `src/components/MovementFormSync.test.tsx`
-- `src/components/AuthGate.test.tsx`
+- `supabase/migrations/20260826141250_bank_loan_onboarding_v3.sql` — additive schema, allocation guards, create RPC, initial schedule guard.
+- `src/components/DebtForm.tsx` — bank onboarding UX, import/mapping/preview, estimator, insurance semantics, review.
+- `src/utils/debtScheduleFileParser.ts` — XLSX/CSV/TSV/TXT parser and column mapping.
+- `src/utils/bankLoanBaseline.ts` — baseline marking, normalization, consistency summary/warnings.
+- `src/utils/debtEstimation.ts` — original-contract schedule estimator and total-insurance distribution.
+- `src/utils/debtPlanning.ts` — pending planning excludes baseline rows.
+- `src/utils/debtViewModel.ts` — baseline progress and allocation validation.
+- `src/utils/debtDetailNextPayment.ts` — fixed-schedule detail next-payment SSOT adapter.
+- `src/services/dataRepository.ts` and `src/types.ts` — snake/camel mappers and domain types.
+- `src/utils/bankLoanOnboardingV3.test.ts` — focused estimator/import/baseline/planning tests.
+- `scripts/test-bank-loan-onboarding-v3-local.mjs` — local SQL smoke suite.
 
 ## Last Handoff
 
-- Agent: ChatGPT orchestrator
+- Agent: Codex
 - Date: 2026-08-26
-- Summary: final audit of PR #62 passed; blockers were verified resolved; PR #62 was marked ready and merged. The exact merge deployment reached READY in Vercel Production, the public site returned HTTP 200, and recent Production runtime error/fatal logs were clean. Credit Cards Separation Phase 1 and sync-draft preservation are now closed Production baselines.
+- Summary: BANK LOAN ONBOARDING V3 audit fixes are implemented and all code/local SQL gates are green. At expected gate HEAD `ecf89fa6e472fd248f68ed9669ef3871f3fc276f`, the authorized Production push applied only `20260826141250_bank_loan_onboarding_v3.sql`; postflight is exact. PR #63 remains OPEN/DRAFT, frontend is unmerged, and no Production test/junk data or manual Vercel action was used.

@@ -292,8 +292,8 @@ export function buildObligationProjection({
       installmentId: debtItem.installmentId,
       label: debtItem.debtName,
       detail: debtItem.creditorName
-        ? `Cuota #${debtItem.installmentNumber} · ${debtItem.creditorName}`
-        : `Cuota #${debtItem.installmentNumber}`,
+        ? `Cuota #${debtItem.contractualInstallmentNumber ?? debtItem.installmentNumber} · ${debtItem.creditorName}`
+        : `Cuota #${debtItem.contractualInstallmentNumber ?? debtItem.installmentNumber}`,
       dueDate: debtItem.dueDate,
       monthKey: mKey,
       currencyCode: debtItem.currencyCode || "PEN",

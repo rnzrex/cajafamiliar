@@ -41,6 +41,11 @@ export type DebtInsurancePricingMode =
   | "percent_original_principal"
   | "contract_schedule"
   | "unknown";
+export type DebtInsuranceRateBasis =
+  | "per_installment"
+  | "total_credit_even"
+  | "total_credit_upfront"
+  | "total_credit_unknown";
 
 export type ScheduleSource = "contractual" | "estimated" | "manual";
 export type DebtScheduleState = "current" | "pending_bank_schedule" | "missing";
@@ -63,6 +68,7 @@ export interface BankLoanProfile {
   downPaymentAmount: number | null;
   financedAmount: number | null;
   termInstallments: number | null;
+  installmentsPaidBeforeTracking?: number;
   gracePeriodType: "none" | "total" | "partial";
   gracePeriodInstallments: number | null;
   balloonPaymentAmount: number | null;
@@ -211,6 +217,8 @@ export interface DebtInstallment {
   expectedInterest: number | null;
   expectedFees: number | null;
   expectedInsurance: number | null;
+  contractualInstallmentNumber?: number | null;
+  isPaidBeforeTracking?: boolean;
   createdByUserId: string;
   createdAt: string;
 }
@@ -501,6 +509,8 @@ export interface CreditCardProfileSaveResult {
 
 export interface DebtScheduleInstallmentInput {
   installmentNumber: number;
+  contractualInstallmentNumber?: number | null;
+  isPaidBeforeTracking?: boolean;
   dueDate: string;
   expectedAmount?: number | null;
   expectedPrincipal?: number | null;
