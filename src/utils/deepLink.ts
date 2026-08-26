@@ -1,14 +1,14 @@
 import type { Debt } from "../types.js";
 
 export interface DeepLinkParseResult {
-  view: "pagos" | "deudas" | "dashboard" | null;
+  view: "pagos" | "deudas" | "tarjetas" | "dashboard" | null;
   focusedPaymentId: string | null;
   selectedDebtId: string | null;
 }
 
 /**
  * Parses query parameters from a notification deep link URL search string.
- * Resolves views ("pagos", "deudas", "dashboard") and checks existence of debtId in debts array.
+ * Resolves views ("pagos", "deudas", "tarjetas", "dashboard") and checks existence of debtId in debts array.
  */
 export function parseNotificationDeepLink(
   searchString: string,
@@ -30,7 +30,17 @@ export function parseNotificationDeepLink(
     const debtId = params.get("debt")?.trim() || null;
     const foundDebt = debtId ? debts.find((d) => d.id === debtId) : null;
     return {
-      view: "deudas",
+      view: foundDebt?.debtKind === "credit_card" ? "tarjetas" : "deudas",
+      focusedPaymentId: null,
+      selectedDebtId: foundDebt ? foundDebt.id : null,
+    };
+  }
+
+  if (view === "tarjetas") {
+    const debtId = params.get("debt")?.trim() || null;
+    const foundDebt = debtId ? debts.find((d) => d.id === debtId && d.debtKind === "credit_card") : null;
+    return {
+      view: "tarjetas",
       focusedPaymentId: null,
       selectedDebtId: foundDebt ? foundDebt.id : null,
     };

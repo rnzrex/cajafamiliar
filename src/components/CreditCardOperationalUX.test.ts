@@ -814,9 +814,8 @@ describe("DEBT-5F-A: Production Debt Form Helper Tests", () => {
     }
   });
 
-  it("DEBT_KIND_OPTIONS production constant exported from form mode helper contains credit_card as selectable option", () => {
+  it("DEBT_KIND_OPTIONS production constant excludes credit_card from generic debt onboarding", () => {
     const cardOpt = DEBT_KIND_OPTIONS.find((opt) => opt.value === "credit_card");
-    expect(cardOpt).toBeDefined();
-    expect(cardOpt?.label).toBe("Tarjeta de crédito");
+    expect(cardOpt).toBeUndefined();
   });
 });

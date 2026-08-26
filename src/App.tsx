@@ -13,6 +13,7 @@ import {
   Tags,
   Wallet,
   X,
+  CreditCard,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AccountsManager } from "./components/AccountsManager";
@@ -25,17 +26,21 @@ import { MovementsList } from "./components/MovementsList";
 import { RecurringPayments } from "./components/RecurringPayments";
 import { DebtsManager } from "./components/DebtsManager";
 import { DebtForm } from "./components/DebtForm";
+import { CreditCardForm } from "./components/CreditCardForm";
+import { CreditCardsManager } from "./components/CreditCardsManager";
 import { DebtOperationForm } from "./components/DebtOperationForm";
 import { DebtDetailModal } from "./components/DebtDetailModal";
 import { Toast } from "./components/Toast";
 import { translateDebtError } from "./utils/debtViewModel";
-import { AppData, CashCount, Category, Debt, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecordAccountReconciliationResult, RecurringPayment } from "./types";
+import { AppData, CashCount, Category, CreditCardPurchaseInput, Debt, FinancialAccount, HouseholdMember, Movement, MovementDraft, MovementFormInput, MovementType, RecordAccountReconciliationResult, RecurringPayment } from "./types";
 import { expectedCash, formatMoney, formatMoneyByCurrency, isPaymentFinished, isPaymentPaidThisMonth, paymentAlertSummary } from "./utils/calculations";
 import { currentDebtPrincipal } from "./utils/debtCalculations";
 import { buildDebtPlanningItems, summarizeDebtPlanningAlerts } from "./utils/debtPlanning";
 import { buildDebtIntelligenceItems, buildDebtPortfolioIntelligence } from "./utils/debtIntelligence";
 import { buildDebtStrategies } from "./utils/debtStrategy";
 import { parseNotificationDeepLink } from "./utils/deepLink";
+import { buildCreditCardStatementAlerts, selectUrgentCreditCardStatementAlertsForReminder } from "./utils/creditCardCalculations";
+import { eligibleCreditCardsForSpending, isCreditCardMovementContext } from "./utils/creditCardSpending";
 import { buildObligationProjection } from "./utils/obligationProjection";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
 import { mergePendingMovements, shouldStartAuthoritativeRefresh, validateAuthoritativeLoadSource } from "./services/authoritativeSync";
@@ -76,12 +81,13 @@ import {
   updateMovement as updateRemoteMovement,
   updateRecurringPaymentDetails,
 } from "./services/dataRepository";
+import { executeCreditCardOperation } from "./services/creditCardOperationalActions";
 import { enqueueCreateMovement, listPendingCreateMovements, removeOfflineOperation, type OfflineCreateMovementOperation } from "./services/offlineOutbox";
 import { isSupabaseConfigured } from "./services/supabaseClient";
 import { makeId, makeUuid, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
 
-type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "deudas" | "registrar-deuda" | "operacion-deuda" | "reportes" | "categorias" | "cuentas" | "saldo-inicial";
+type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "deudas" | "registrar-deuda" | "operacion-deuda" | "tarjetas" | "registrar-tarjeta" | "reportes" | "categorias" | "cuentas" | "saldo-inicial";
 type SyncStatus = "loading" | "connected" | "local" | "offline" | "problem" | "syncing";
 type PendingSyncState = "idle" | "flushing" | "problem";
 type RemoteContactStatus = "unknown" | "success" | "failure";
@@ -95,6 +101,7 @@ const Reports = lazy(() =>
 interface AppProps {
   currentMember?: HouseholdMember;
   onSignOut?: () => void | Promise<void>;
+  onRetryRemoteAccess?: () => void;
   remoteStatus?: "connected" | "problem" | null;
 }
 
@@ -105,6 +112,7 @@ const navItems: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: "conteo", label: "Caja", icon: Coins },
   { view: "pagos", label: "Pagos", icon: CalendarClock },
   { view: "deudas", label: "Deudas", icon: Landmark },
+  { view: "tarjetas", label: "Tarjetas", icon: CreditCard },
   { view: "reportes", label: "Reportes", icon: BarChart3 },
   { view: "categorias", label: "Categorías", icon: Tags },
   { view: "cuentas", label: "Cuentas", icon: Wallet },
@@ -127,6 +135,8 @@ const titles: Record<View, string> = {
   deudas: "Deudas",
   "registrar-deuda": "Registrar deuda",
   "operacion-deuda": "Operación de deuda",
+  tarjetas: "Tarjetas",
+  "registrar-tarjeta": "Registrar tarjeta",
   reportes: "Reportes",
   categorias: "Categorías",
   cuentas: "Cuentas",
@@ -156,7 +166,7 @@ const EMPTY_APP_DATA: AppData = {
 
 const OFFLINE_WRITE_MESSAGE = "Estás sin conexión. Puedes consultar tu información, pero para registrar o modificar datos necesitas conectarte a internet.";
 
-export default function App({ currentMember, onSignOut, remoteStatus }: AppProps = {}) {
+export default function App({ currentMember, onSignOut, onRetryRemoteAccess, remoteStatus }: AppProps = {}) {
   const [data, setData] = useState<AppData>(() => (isSupabaseConfigured ? EMPTY_APP_DATA : loadData()));
   const [view, setView] = useState<View>("dashboard");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -278,6 +288,8 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     const cashAccount = getActiveCashAccount(data.financialAccounts);
     return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null, data.creditCardEntries);
   }, [data.financialAccounts, data.movements, data.initialBalance, data.creditCardEntries]);
+  const cardDebts = useMemo(() => data.debts.filter((debt) => debt.debtKind === "credit_card"), [data.debts]);
+  const genericDebts = useMemo(() => data.debts.filter((debt) => debt.debtKind !== "credit_card"), [data.debts]);
   const debtPlanningItems = useMemo(
     () =>
       buildDebtPlanningItems(
@@ -316,14 +328,23 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     ]
   );
 
-  const debtPortfolioIntelligence = useMemo(
-    () => buildDebtPortfolioIntelligence(debtIntelligenceItems),
+  const genericDebtPlanningItems = useMemo(
+    () => debtPlanningItems.filter((item) => genericDebts.some((debt) => debt.id === item.debtId)),
+    [debtPlanningItems, genericDebts]
+  );
+  const genericDebtIntelligenceItems = useMemo(
+    () => debtIntelligenceItems.filter((item) => item.debtKind !== "credit_card"),
     [debtIntelligenceItems]
   );
 
+  const debtPortfolioIntelligence = useMemo(
+    () => buildDebtPortfolioIntelligence(genericDebtIntelligenceItems),
+    [genericDebtIntelligenceItems]
+  );
+
   const debtStrategies = useMemo(
-    () => buildDebtStrategies(debtIntelligenceItems),
-    [debtIntelligenceItems]
+    () => buildDebtStrategies(genericDebtIntelligenceItems),
+    [genericDebtIntelligenceItems]
   );
 
   const selectedDebtIntelligence = useMemo(
@@ -342,22 +363,37 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     [data.recurringPayments, data.debts, debtPlanningItems, data.debtEvents]
   );
 
-  const debtPlanningAlertSummary = useMemo(() => summarizeDebtPlanningAlerts(debtPlanningItems), [debtPlanningItems]);
+  const debtPlanningAlertSummary = useMemo(() => summarizeDebtPlanningAlerts(genericDebtPlanningItems), [genericDebtPlanningItems]);
   const pendingBankScheduleDebtNames = useMemo(
-    () => debtIntelligenceItems.filter((item) => item.debtKind === "bank_loan" && item.pendingBankSchedule).map((item) => item.debtName),
-    [debtIntelligenceItems]
+    () => genericDebtIntelligenceItems.filter((item) => item.debtKind === "bank_loan" && item.pendingBankSchedule).map((item) => item.debtName),
+    [genericDebtIntelligenceItems]
+  );
+
+  const creditCardAlerts = useMemo(
+    () =>
+      buildCreditCardStatementAlerts({
+        debts: cardDebts,
+        creditCardProfiles: data.creditCardProfiles,
+        creditCardEntries: data.creditCardEntries,
+        creditCardStatements: data.creditCardStatements,
+      }),
+    [cardDebts, data.creditCardEntries, data.creditCardProfiles, data.creditCardStatements]
+  );
+  const urgentCreditCardAlerts = useMemo(
+    () => selectUrgentCreditCardStatementAlertsForReminder(creditCardAlerts),
+    [creditCardAlerts]
   );
 
   const urgentPaymentSummary = useMemo(() => paymentAlertSummary(data.recurringPayments), [data.recurringPayments]);
   const urgentPaymentLabel = urgentPaymentSummary.total === 1 ? "1 pago requiere atención" : `${urgentPaymentSummary.total} pagos requieren atención`;
-  const combinedAttentionTotal = urgentPaymentSummary.total + debtPlanningAlertSummary.total;
+  const combinedAttentionTotal = urgentPaymentSummary.total + debtPlanningAlertSummary.total + urgentCreditCardAlerts.length;
   const combinedAttentionLabel = `${combinedAttentionTotal} obligaciones que requieren atención`;
 
   function openDebt(debtId: string) {
     const targetDebt = data.debts.find((d) => d.id === debtId);
     if (!targetDebt) return;
     setSelectedDebtId(targetDebt.id);
-    setView("deudas");
+    setView(targetDebt.debtKind === "credit_card" ? "tarjetas" : "deudas");
     setMoreOpen(false);
   }
   const pendingMovementCount = pendingMovementIds.size;
@@ -699,6 +735,10 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
       window.alert("Los pagos de deuda se corrigen desde el dominio de deudas y no pueden editarse aquí.");
       return false;
     }
+    if (id && existingMovement && isCreditCardMovementContext(existingMovement.movementContext)) {
+      window.alert("Los movimientos de tarjeta se corrigen desde Tarjetas y no pueden editarse aquí.");
+      return false;
+    }
     const person = existingMovement?.person ?? currentMember?.displayName ?? movement.person ?? "";
     if (!person.trim() && !(recurringPayment && isSupabaseConfigured)) {
       window.alert("No se pudo determinar quién registra el movimiento. Verifica el provisioning de tu cuenta.");
@@ -826,6 +866,39 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     return true;
   }
 
+  function handleManualSync() {
+    if (remoteStatus === "problem") onRetryRemoteAccess?.();
+    void refreshAuthoritativeData("manual");
+  }
+
+  async function saveCreditCardPurchase(input: CreditCardPurchaseInput): Promise<boolean> {
+    if (!canWriteDebt || !ensureDataReady()) return false;
+
+    const card = eligibleCreditCardsForSpending(cardDebts).find((debt) => debt.id === input.debtId);
+    if (!card) {
+      window.alert("Solo puedes registrar gastos con tarjetas PEN activas y no archivadas.");
+      return false;
+    }
+
+    try {
+      await executeCreditCardOperation({
+        operation: "purchase",
+        purchaseInput: input,
+      });
+      markRemoteSuccess();
+      const refreshed = await refreshAuthoritativeData("manual");
+      setView("movimientos");
+      showToast(refreshed
+        ? "Gasto registrado con tarjeta correctamente"
+        : "Gasto registrado con tarjeta. La sincronización se actualizará en breve.");
+      return true;
+    } catch (error) {
+      markRemoteFailure();
+      window.alert(translateDebtError(error));
+      return false;
+    }
+  }
+
   async function deleteMovement(id: string): Promise<boolean> {
     if (!ensureOnlineWriteAllowed()) return false;
     if (!dataReady) {
@@ -841,6 +914,10 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     const movement = data.movements.find((item) => item.id === id);
     if (movement?.movementContext === "debt_service") {
       window.alert("Los pagos de deuda se corrigen desde el dominio de deudas y no pueden eliminarse aquí.");
+      return false;
+    }
+    if (movement && isCreditCardMovementContext(movement.movementContext)) {
+      window.alert("Los movimientos de tarjeta se corrigen desde Tarjetas y no pueden eliminarse aquí.");
       return false;
     }
 
@@ -1290,6 +1367,8 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                   ? `Pagos${urgentPaymentSummary.total > 0 ? `, ${urgentPaymentLabel}` : ""}`
                   : item.view === "deudas"
                     ? `Deudas${debtPlanningAlertSummary.total > 0 ? `, ${debtPlanningAlertSummary.total} cuotas requieren atención` : ""}`
+                    : item.view === "tarjetas"
+                      ? `Tarjetas${urgentCreditCardAlerts.length > 0 ? `, ${urgentCreditCardAlerts.length} estados requieren atención` : ""}`
                     : undefined
               }
             >
@@ -1297,6 +1376,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               <span className="flex-1">{item.label}</span>
               {item.view === "pagos" && <AttentionBadge total={urgentPaymentSummary.total} className={view === item.view ? "bg-white text-blue-700" : "bg-red-100 text-red-800"} />}
               {item.view === "deudas" && <AttentionBadge total={debtPlanningAlertSummary.total} className={view === item.view ? "bg-white text-purple-100" : "bg-purple-100 text-purple-800"} />}
+              {item.view === "tarjetas" && <AttentionBadge total={urgentCreditCardAlerts.length} className={view === item.view ? "bg-white text-blue-700" : "bg-amber-100 text-amber-800"} />}
             </button>
           ))}
         </nav>
@@ -1324,7 +1404,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
             </div>
               <div className="flex flex-wrap items-center gap-3">
                 {currentMember && <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-800">Sesión: {currentMember.displayName}</span>}
-              <SyncStatus status={syncStatus} pendingCount={pendingMovementCount} lastSyncAt={lastSuccessfulRemoteSyncAt} isOnline={isBrowserOnline} remoteSyncStatus={remoteSyncStatus} onManualSync={() => void refreshAuthoritativeData("manual")} />
+              <SyncStatus status={remoteStatus === "problem" ? "problem" : syncStatus} pendingCount={pendingMovementCount} lastSyncAt={lastSuccessfulRemoteSyncAt} isOnline={isBrowserOnline} remoteSyncStatus={remoteSyncStatus} onManualSync={handleManualSync} />
               {isSupabaseConfigured && isBrowserOnline && pendingSyncState === "problem" && (
                 <button type="button" onClick={() => { setPendingSyncState("idle"); setSyncAttempt((attempt) => attempt + 1); }} className="rounded-full border border-red-200 bg-white px-3 py-1 text-sm font-bold text-red-700 hover:bg-red-50">
                   Reintentar sincronización
@@ -1358,11 +1438,15 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               key={view}
               initialType={initialType}
               draft={movementDraft}
+              draftIdentity={pendingRecurringMovementId}
               currentMember={currentMember}
               categories={data.categories}
               accounts={data.financialAccounts}
+              creditCards={cardDebts}
+              allowCreditCardSource={canWriteDebt && pendingRecurringPaymentId === null && pendingRecurringMovementId === null}
               onQuickCreateCategory={saveCategory}
               onSave={saveMovement}
+              onSaveCreditCardPurchase={saveCreditCardPurchase}
               onCancel={
                 movementDraft
                   ? () => {
@@ -1380,16 +1464,19 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               movements={data.movements}
               debtEvents={data.debtEvents}
               categories={data.categories}
-              accounts={data.financialAccounts}
-              debts={data.debts}
+                accounts={data.financialAccounts}
+                creditCards={cardDebts}
+                allowCreditCardSource={canWriteDebt}
+               debts={data.debts}
               reconciliations={data.accountReconciliations}
               reconciliationMovements={data.accountReconciliationMovements}
               movementCorrections={data.movementCorrections}
               creditCardEntries={data.creditCardEntries}
               currentMember={currentMember}
               pendingMovementIds={pendingMovementIds}
-              onQuickCreateCategory={saveCategory}
-              onSave={saveMovement}
+               onQuickCreateCategory={saveCategory}
+               onSave={saveMovement}
+               onSaveCreditCardPurchase={saveCreditCardPurchase}
               onDelete={deleteMovement}
               onReloadAllData={async () => {
                 await refreshAuthoritativeData("manual");
@@ -1420,10 +1507,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               onMarkPaid={markPaymentPaid}
               onDeactivate={deactivatePayment}
               onReactivate={reactivatePayment}
-              onOpenDebt={(debtId) => {
-                setSelectedDebtId(debtId);
-                setView("deudas");
-              }}
+               onOpenDebt={openDebt}
             />
           )}
           {view === "reportes" && (
@@ -1447,8 +1531,46 @@ async function saveInitialBalance(value: number): Promise<boolean> {
             />
           )}
           {view === "saldo-inicial" && <InitialBalance initialBalance={data.initialBalance} onSave={saveInitialBalance} />}
+          {view === "tarjetas" && (
+            selectedDebt?.debtKind === "credit_card" && selectedDebtIntelligence ? (
+              <DebtDetailModal
+                debt={selectedDebt}
+                debtIntelligence={selectedDebtIntelligence}
+                debtEvents={data.debtEvents}
+                scheduleVersions={data.debtScheduleVersions}
+                installments={data.debtInstallments}
+                allocations={data.debtEventInstallmentAllocations}
+                collaterals={data.debtCollaterals}
+                accounts={data.financialAccounts}
+                categories={data.categories}
+                currentMember={currentMember}
+                creditCardProfiles={data.creditCardProfiles}
+                creditCardEntries={data.creditCardEntries}
+                cardStatements={data.creditCardStatements}
+                bankLoanProfiles={data.bankLoanProfiles}
+                debtInsuranceTerms={data.debtInsuranceTerms}
+                allDebts={data.debts}
+                canWriteDebt={canWriteDebt}
+                onClose={() => setSelectedDebtId(null)}
+                onOpenOperation={() => undefined}
+                onRefresh={async () => {
+                  await refreshAppData();
+                }}
+                setToast={(t) => setToast({ id: Date.now(), message: t.message })}
+              />
+            ) : (
+              <CreditCardsManager
+                cards={cardDebts}
+                profiles={data.creditCardProfiles}
+                entries={data.creditCardEntries}
+                statements={data.creditCardStatements}
+                onOpenNewCard={() => setView("registrar-tarjeta")}
+                onSelectCard={(card) => setSelectedDebtId(card.id)}
+              />
+            )
+          )}
           {view === "deudas" && (
-            selectedDebt && selectedDebtIntelligence ? (
+            selectedDebt?.debtKind !== "credit_card" && selectedDebt && selectedDebtIntelligence ? (
               <DebtDetailModal
                 debt={selectedDebt}
                 debtIntelligence={selectedDebtIntelligence}
@@ -1479,7 +1601,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               />
             ) : (
               <DebtsManager
-                debts={data.debts}
+                debts={genericDebts}
                 debtEvents={data.debtEvents}
                 scheduleVersions={data.debtScheduleVersions}
                 installments={data.debtInstallments}
@@ -1488,20 +1610,31 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 accounts={data.financialAccounts}
                 categories={data.categories}
                 currentMember={currentMember}
-                creditCardProfiles={data.creditCardProfiles}
-                creditCardEntries={data.creditCardEntries}
-                cardStatements={data.creditCardStatements}
-                debtPlanningItems={debtPlanningItems}
+                creditCardProfiles={[]}
+                creditCardEntries={[]}
+                cardStatements={[]}
+                debtPlanningItems={genericDebtPlanningItems}
                 debtPlanningAlertSummary={debtPlanningAlertSummary}
                 pendingBankScheduleDebtNames={pendingBankScheduleDebtNames}
                 debtPortfolioIntelligence={debtPortfolioIntelligence}
                 debtStrategies={debtStrategies}
-                intelligenceItems={debtIntelligenceItems}
+                intelligenceItems={genericDebtIntelligenceItems}
                 onOpenNewDebt={() => setView("registrar-deuda")}
                 onSelectDebt={(debt) => setSelectedDebtId(debt.id)}
                 onSelectDebtId={openDebt}
               />
             )
+          )}
+          {view === "registrar-tarjeta" && (
+            <CreditCardForm
+              canWriteDebt={canWriteDebt}
+              onSaved={async () => {
+                await refreshAppData();
+                setView("tarjetas");
+              }}
+              onCancel={() => setView("tarjetas")}
+              setToast={(t) => setToast({ id: Date.now(), message: t.message })}
+            />
           )}
           {view === "registrar-deuda" && (
             <DebtForm
@@ -1565,7 +1698,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
           onClick={() => setMoreOpen(true)}
           aria-label={`Más opciones${combinedAttentionTotal > 0 ? `, ${combinedAttentionLabel}` : ""}`}
           className={`relative flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-1 text-xs font-bold transition sm:text-sm ${
-            moreOpen || ["pagos", "deudas", "reportes", "categorias", "cuentas", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
+             moreOpen || ["pagos", "deudas", "tarjetas", "reportes", "categorias", "cuentas", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
           }`}
         >
           <MoreHorizontal className="h-6 w-6" />
@@ -1608,6 +1741,15 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               >
                 <span>Deudas</span>
                 <AttentionBadge total={debtPlanningAlertSummary.total} className="shrink-0 bg-purple-600 text-white" />
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("tarjetas")}
+                aria-label={`Tarjetas${urgentCreditCardAlerts.length > 0 ? `, ${urgentCreditCardAlerts.length} estados requieren atención` : ""}`}
+                className="flex min-h-14 items-center justify-between gap-3 rounded-2xl bg-blue-50 px-4 text-left text-base font-bold text-blue-900"
+              >
+                <span>Tarjetas</span>
+                <AttentionBadge total={urgentCreditCardAlerts.length} className="shrink-0 bg-blue-600 text-white" />
               </button>
               <button type="button" onClick={() => navigate("categorias")} className="min-h-14 rounded-2xl bg-emerald-50 px-4 text-left text-base font-bold text-emerald-900">
                 Categorías

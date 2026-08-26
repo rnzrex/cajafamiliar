@@ -32,6 +32,7 @@ function sampleDebt(id: string, name: string): Debt {
 
 describe("DEBT-3C Deep Link Navigation Parsing", () => {
   const debtsList = [sampleDebt("debt-bcp", "Préstamo BCP"), sampleDebt("debt-bbva", "Préstamo BBVA")];
+  const cardDebt = { ...sampleDebt("card-visa", "Visa Signature"), debtKind: "credit_card" as const };
 
   it("1. pagos with valid payment id", () => {
     const res = parseNotificationDeepLink("?view=pagos&payment=pay-123", debtsList);
@@ -67,5 +68,17 @@ describe("DEBT-3C Deep Link Navigation Parsing", () => {
 
     const res2 = parseNotificationDeepLink("", debtsList);
     expect(res2.view).toBeNull();
+  });
+
+  it("6. tarjetas deep link resolves a credit card detail", () => {
+    const res = parseNotificationDeepLink("?view=tarjetas&debt=card-visa", [...debtsList, cardDebt]);
+    expect(res.view).toBe("tarjetas");
+    expect(res.selectedDebtId).toBe("card-visa");
+  });
+
+  it("7. legacy deudas deep link for a card is routed to tarjetas", () => {
+    const res = parseNotificationDeepLink("?view=deudas&debt=card-visa", [...debtsList, cardDebt]);
+    expect(res.view).toBe("tarjetas");
+    expect(res.selectedDebtId).toBe("card-visa");
   });
 });
