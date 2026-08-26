@@ -5,7 +5,8 @@
 CREDIT CARDS SEPARATION Phase 1: separate credit cards from generic debt
 management at the UX/application-routing layer, while preserving the existing
 credit-card ledger and allowing eligible PEN cards as a spending source. Harden
-authoritative refresh handling so active MovementForm drafts are not lost.
+authoritative refresh handling so active MovementForm drafts are not lost, and
+complete the final audit fixes for rates, historical references, and AuthGate.
 
 ## Active Work
 
@@ -16,6 +17,8 @@ authoritative refresh handling so active MovementForm drafts are not lost.
   `a5fcfee fix(sync): preserve unsaved drafts across refresh`.
 - DRAFT PR #62 is open at
   `https://github.com/rnzrex/cajafamiliar/pull/62`.
+- The final audit fixes are implemented locally but have not been committed or
+  pushed yet; the current Git HEAD remains `5cf42a96cae29251436bdabe5939e586c43011f5`.
 - Production is untouched in this phase.
 - No SQL, migration, RPC, or Supabase schema change was added; existing card
   RPCs and ledger semantics are reused.
@@ -73,12 +76,23 @@ authoritative refresh handling so active MovementForm drafts are not lost.
 - Added `MovementFormSync.test.tsx` covering expenses, income, cards, recurring
   drafts, logical movement transitions, unavailable sources/categories, and
   successful reset after save.
+- Added optional TEA/TCEA fields to `CreditCardForm`, including non-negative
+  validation, numeric payload values, and exact `null` values for blank fields.
+- Added historical account/category preservation for existing movements and
+  regression coverage for archived references plus active reselection.
+- Added `CreditCardForm.test.tsx` and `AuthGate.test.tsx` for the final audit
+  payload and membership-revalidation behaviors.
+- Ran real Chrome local smoke coverage for expense, income, and PEN card drafts:
+  each remained intact after more than 21 seconds of periodic refresh; expense
+  and card cases also survived a real target/tab switch with hidden/visible
+  events.
 
 ## Active
 
-- Credit Cards Phase 1 and sync draft preservation are pushed and awaiting
-  orchestrator audit in DRAFT PR #62.
-- Browser-level preview/E2E validation has not been run in this session.
+- Credit Cards Phase 1, sync preservation, and final audit fixes are awaiting
+  one commit/push checkpoint in DRAFT PR #62.
+- Local browser smoke passed; Vercel Preview for the final audit commit is still
+  pending because the commit has not been pushed.
 
 ## Blocked
 
@@ -89,14 +103,14 @@ authoritative refresh handling so active MovementForm drafts are not lost.
 
 ## Next Move
 
-1. Let the orchestrator audit DRAFT PR #62.
-2. Run Vercel preview/browser validation if requested by the audit.
+1. Review and commit only the intended audit files, then push normally.
+2. Verify the resulting Vercel Preview/checks and update DRAFT PR #62.
 3. Do not merge or touch Production from this branch.
 
 ## Validation
 
-- `npm test`: PASS, 52 files / 869 tests.
-- `npx vitest run src/components/MovementFormSync.test.tsx`: PASS, 9 tests.
+- `npm test`: PASS, 54 files / 877 tests.
+- `npx vitest run src/components/CreditCardForm.test.tsx src/components/MovementFormSync.test.tsx src/components/AuthGate.test.tsx`: PASS, 3 files / 17 tests.
 - Focused authoritative, card, debt, and reconciliation suites: PASS.
 - `npm run typecheck:api`: PASS.
 - `npm run build`: PASS.
@@ -106,9 +120,10 @@ authoritative refresh handling so active MovementForm drafts are not lost.
   local smoke; `supabase/config.toml` was restored to `auth.enabled = false`
   and the temporary Auth container was stopped.
 - `git diff --check`: PASS.
-- Local built preview: HTTP 200.
+- Local built preview: HTTP 200; real Chrome smoke passed expense, income, and
+  PEN card draft preservation after periodic refresh and visibility changes.
 - Build emitted existing chunk-size and ineffective dynamic-import warnings.
-- Vercel Preview: not run for Credit Cards Phase 1.
+- Vercel Preview: pending final audit commit push.
 - Vercel Production: READY.
 - Production HTTP: 200.
 - Production runtime errors after merge: none found.
@@ -150,12 +165,16 @@ authoritative refresh handling so active MovementForm drafts are not lost.
   `src/utils/creditCardSpending.ts`, and its focused test.
 - Sync fix additions: `src/components/AuthGate.tsx` and
   `src/components/MovementFormSync.test.tsx`.
+- Final audit tests: `src/components/CreditCardForm.test.tsx` and
+  `src/components/AuthGate.test.tsx`.
 
 ## Last Handoff
 
 - Agent: OpenCode
 - Date: 2026-08-26
-- Summary: implemented and validated the sync draft-preservation fix on top of
-  Credit Cards Phase 1; pushed `a5fcfee` to DRAFT PR #62. Full tests, build,
-  API typecheck, local SQL smokes, and local preview HTTP validation pass. BANK
-  V2 remains closed and Production untouched.
+- Summary: implemented final audit fixes for TEA/TCEA payloads, historical
+  movement references, and AuthGate coverage. Full tests (54/877), build, API
+  typecheck, BANK/QAPAQ local smokes, focused suites, and real Chrome local
+  browser smoke pass. Auth was restored to disabled and its temporary container
+  stopped. Changes remain uncommitted/unpushed; next move is the normal Git
+  checkpoint and DRAFT PR update. Production remains untouched.

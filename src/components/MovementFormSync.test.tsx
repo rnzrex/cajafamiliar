@@ -277,6 +277,67 @@ describe("MovementForm sync draft preservation", () => {
     expect((screen.getByRole("textbox", { name: "Descripción" }) as HTMLInputElement).value).toBe("Luz");
   }, interactionTimeout);
 
+  it("allows editing a historical movement with its archived original account", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn(async () => true);
+    renderForm({
+      movement,
+      accounts: [cashAccount, { ...bankAccount, isActive: false }],
+      onSave,
+    });
+
+    await user.clear(screen.getByRole("textbox", { name: "Descripción" }));
+    await user.type(screen.getByRole("textbox", { name: "Descripción" }), "Mercado semanal");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const input = (onSave.mock.calls as unknown[][])[0]?.[0] as { accountId: string | null; description: string };
+    expect(input.accountId).toBe(bankAccount.id);
+    expect(input.description).toBe("Mercado semanal");
+    expect(screen.queryByText("La cuenta/tarjeta seleccionada ya no está disponible. Elige otra para guardar.")).toBeNull();
+  }, interactionTimeout);
+
+  it("allows editing a historical movement with its inactive original category", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn(async () => true);
+    renderForm({
+      movement,
+      accounts: [cashAccount, bankAccount],
+      categories: categories.map((category) => category.id === "category-food" ? { ...category, is_active: false } : { ...category }),
+      onSave,
+    });
+
+    await user.clear(screen.getByRole("textbox", { name: "Descripción" }));
+    await user.type(screen.getByRole("textbox", { name: "Descripción" }), "Mercado semanal");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const input = (onSave.mock.calls as unknown[][])[0]?.[0] as { category: string; description: string };
+    expect(input.category).toBe(movement.category);
+    expect(input.description).toBe("Mercado semanal");
+    expect(screen.queryByText("La categoría seleccionada ya no está disponible. Elige otra para guardar.")).toBeNull();
+  }, interactionTimeout);
+
+  it("allows an existing movement to change from its archived account to an active one", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn(async () => true);
+    renderForm({
+      movement,
+      accounts: [cashAccount, { ...bankAccount, isActive: false }],
+      onSave,
+    });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Pagar con" }), cashAccount.id);
+    await user.clear(screen.getByRole("textbox", { name: "Descripción" }));
+    await user.type(screen.getByRole("textbox", { name: "Descripción" }), "Mercado semanal");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const input = (onSave.mock.calls as unknown[][])[0]?.[0] as { accountId: string | null; description: string };
+    expect(input.accountId).toBe(cashAccount.id);
+    expect(input.description).toBe("Mercado semanal");
+  }, interactionTimeout);
+
   it("keeps an archived account selected and blocks save until explicit reselection", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn(async () => true);

@@ -22,6 +22,8 @@ export function CreditCardForm({ canWriteDebt = true, onSaved, onCancel, setToas
   const [creditLimit, setCreditLimit] = useState("");
   const [closingDay, setClosingDay] = useState("");
   const [dueDay, setDueDay] = useState("");
+  const [teaPercent, setTeaPercent] = useState("");
+  const [tceaPercent, setTceaPercent] = useState("");
   const [last4, setLast4] = useState("");
   const [originDate, setOriginDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -54,6 +56,12 @@ export function CreditCardForm({ canWriteDebt = true, onSaved, onCancel, setToas
         return false;
       }
     }
+    for (const [label, value] of [["TEA", teaPercent], ["TCEA", tceaPercent]] as const) {
+      if (value.trim() && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+        setToast({ message: `${label} debe ser un número mayor o igual a 0.`, type: "error" });
+        return false;
+      }
+    }
     return true;
   }
 
@@ -73,6 +81,8 @@ export function CreditCardForm({ canWriteDebt = true, onSaved, onCancel, setToas
         creditLimit: creditLimit ? Number(creditLimit) : null,
         closingDay: closingDay ? Number(closingDay) : null,
         dueDay: dueDay ? Number(dueDay) : null,
+        teaPercent: teaPercent.trim() ? Number(teaPercent) : null,
+        tceaPercent: tceaPercent.trim() ? Number(tceaPercent) : null,
         last4: last4.trim() || null,
         notes: notes.trim(),
       } satisfies Omit<CreditCardDebtCreateInput, "debtId">;
@@ -151,6 +161,12 @@ export function CreditCardForm({ canWriteDebt = true, onSaved, onCancel, setToas
           </Field>
           <Field label="Día habitual de pago">
             <input type="number" min="1" max="31" value={dueDay} onChange={(event) => setDueDay(event.target.value)} placeholder="1 - 31" className={inputClass} />
+          </Field>
+          <Field label="TEA (% anual)" hint="Opcional. Tasa efectiva anual informada por el banco.">
+            <input aria-label="TEA (% anual)" type="number" min="0" step="0.01" value={teaPercent} onChange={(event) => setTeaPercent(event.target.value)} placeholder="Opcional" className={inputClass} />
+          </Field>
+          <Field label="TCEA (% anual)" hint="Opcional. Costo efectivo total anual informado por el banco.">
+            <input aria-label="TCEA (% anual)" type="number" min="0" step="0.01" value={tceaPercent} onChange={(event) => setTceaPercent(event.target.value)} placeholder="Opcional" className={inputClass} />
           </Field>
           <Field label="Últimos 4 dígitos">
             <input inputMode="numeric" maxLength={4} value={last4} onChange={(event) => setLast4(event.target.value.replace(/\D/g, ""))} placeholder="Opcional" className={inputClass} />

@@ -69,9 +69,12 @@ export function MovementForm({ initialType = "egreso", movement, draft, draftIde
   const selectedCreditCard = selectedCreditCardId ? creditCards.find((card) => card.id === selectedCreditCardId) : null;
   const selectedCreditCardIsAvailable = type === "egreso" && selectedCreditCardId !== null && selectableCards.some((card) => card.id === selectedCreditCardId);
   const selectedAccount = accountId && !selectedCreditCardId ? accounts.find((account) => account.id === accountId) ?? null : null;
-  const selectedAccountIsAvailable = accountId !== null && selectedCreditCardId === null && Boolean(selectedAccount?.isActive);
+  const historicalAccountIsPreserved = Boolean(movement && accountId === movement.accountId);
+  const selectedAccountIsAvailable = historicalAccountIsPreserved || (accountId !== null && selectedCreditCardId === null && Boolean(selectedAccount?.isActive));
   const selectedSourceIsUnavailable = Boolean(accountId) && (selectedCreditCardId !== null ? !selectedCreditCardIsAvailable : !selectedAccountIsAvailable);
-  const categoryIsUnavailable = categories.length > 0 && !availableCategories.some((item) => item.name === category);
+  const historicalCategoryIsPreserved = Boolean(movement && category === movement.category);
+  const historicalCategoryIsUnavailable = historicalCategoryIsPreserved && !availableCategories.some((item) => item.name === category);
+  const categoryIsUnavailable = categories.length > 0 && !historicalCategoryIsPreserved && !availableCategories.some((item) => item.name === category);
 
   useEffect(() => {
     const nextPerson = initialPersonValue(movement, draft, currentMember);
@@ -301,6 +304,11 @@ export function MovementForm({ initialType = "egreso", movement, draft, draftIde
                   <option value={accountId ?? ""} disabled>{selectedCreditCard?.name ?? "Tarjeta seleccionada"} (no disponible)</option>
                 </optgroup>
               )}
+              {historicalAccountIsPreserved && accountId && !selectableAccounts.some((account) => account.id === accountId) && (
+                <optgroup label="Fuente histórica">
+                  <option value={accountId}>Cuenta histórica (conservada)</option>
+                </optgroup>
+              )}
               {selectedSourceIsUnavailable && !selectedCreditCardId && accountId && !selectableAccounts.some((account) => account.id === accountId) && (
                 <optgroup label="Fuente seleccionada">
                   <option value={accountId} disabled>{selectedAccount?.name ?? "Cuenta seleccionada"} (no disponible)</option>
@@ -309,8 +317,8 @@ export function MovementForm({ initialType = "egreso", movement, draft, draftIde
               {selectableAccounts.length === 0 && !movement && <option value="">Sin cuentas disponibles</option>}
               {selectableAccounts.length > 0 && <optgroup label="Cuentas">
                 {selectableAccounts.map((item) => (
-                  <option key={item.id} value={item.id} disabled={!item.isActive}>
-                    {item.isActive ? item.name : `${item.name} (no disponible)`}
+                  <option key={item.id} value={item.id} disabled={!item.isActive && item.id !== movement?.accountId}>
+                    {item.isActive ? item.name : item.id === movement?.accountId ? `${item.name} (histórica, archivada)` : `${item.name} (no disponible)`}
                   </option>
                 ))}
               </optgroup>}
@@ -399,7 +407,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, draftIde
                   }}
                   className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-lg"
                 >
-                  {categoryIsUnavailable && <option value={category} disabled>{category} (no disponible)</option>}
+                  {(categoryIsUnavailable || historicalCategoryIsUnavailable) && <option value={category} disabled>{category} ({historicalCategoryIsUnavailable ? "histórica, inactiva" : "no disponible"})</option>}
                   {availableCategories.map((item) => (
                     <option key={item.id} value={item.name}>
                       {item.name}
