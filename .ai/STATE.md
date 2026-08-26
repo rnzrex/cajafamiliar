@@ -8,7 +8,8 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 ## Active Work
 
 - BANK LOAN ONBOARDING V3 audit fixes are implemented in commit `abb202f`, pushed with the continuity handoff, and available in the existing DRAFT PR #63.
-- Production remains untouched. Do not apply the new migration remotely, merge, or deploy manually.
+- The audited V3 migration was applied to Supabase Production exactly from gate HEAD `ecf89fa6e472fd248f68ed9669ef3871f3fc276f`; no application code or migration file was changed for the gate.
+- PR #63 remains OPEN/DRAFT. The Production frontend is still unmerged; no manual Vercel action was performed.
 - Historical BANK V2 migrations remain immutable.
 
 ## Repository
@@ -57,20 +58,22 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 ## Production
 
-- No Production data, migration, SQL, deployment, or manual Vercel action was performed for this objective.
-- Automatic Vercel Preview checks for the audit-fix push passed, including deployment completion and Preview Comments. Production remains untouched.
+- Authorized gate completed: `npx supabase db push --linked` applied only `20260826141250_bank_loan_onboarding_v3.sql`.
+- Preflight had BANK V2 remote versions `20260824225428`, `20260825010000`, `20260825071034`, and `20260825165854`; V3 was the only pending local migration.
+- Postflight confirms exact local/remote version `20260826141250` and name `bank_loan_onboarding_v3`.
+- No Production loans, movements, households, users, debt changes, test data, junk data, or manual SQL were created. No manual Vercel action was performed.
 
 ## BANK V2 Baseline / Restrictions
 
 - Do not edit: `20260824225428_bank_credit_contract_v2.sql`, `20260825010000_bank_credit_contract_v2_audit_fix.sql`, `20260825071034_bank_credit_contract_v2_finalization.sql`, or `20260825165854_bank_credit_contract_v2_schedule_state_guard.sql`.
 - Use a new migration for future SQL. Do not run remote Supabase migrations or touch Production without explicit authorization.
-- Do not reset/clean/discard uncommitted work, force push, merge, or deploy manually.
+- Do not reset/clean/discard uncommitted work, force push, merge, or deploy manually. The one explicitly authorized V3 Production migration is complete.
 
 ## Next Move
 
-1. Keep PR #63 in DRAFT and await review/requested changes.
+1. Keep PR #63 in DRAFT and await review/requested changes; do not merge.
 2. If changes are requested, preserve the additive migration rule, rerun the relevant local gates, and push a new checkpoint.
-3. Do not merge, apply remote Supabase migrations, or touch Production without explicit authorization.
+3. Do not apply further remote Supabase migrations or touch Production without a new explicit authorization.
 
 ## Key Files
 
@@ -90,4 +93,4 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 - Agent: Codex
 - Date: 2026-08-26
-- Summary: BANK LOAN ONBOARDING V3 audit fixes are implemented and all code/local SQL gates are green. Fix commit `abb202f` plus continuity handoff are pushed; PR #63 remains DRAFT and automatic Vercel Preview checks passed. Production is untouched.
+- Summary: BANK LOAN ONBOARDING V3 audit fixes are implemented and all code/local SQL gates are green. At expected gate HEAD `ecf89fa6e472fd248f68ed9669ef3871f3fc276f`, the authorized Production push applied only `20260826141250_bank_loan_onboarding_v3.sql`; postflight is exact. PR #63 remains OPEN/DRAFT, frontend is unmerged, and no Production test/junk data or manual Vercel action was used.
