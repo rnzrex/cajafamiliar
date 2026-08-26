@@ -7,7 +7,7 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 ## Active Work
 
-- BANK LOAN ONBOARDING V3 is implemented, committed, pushed, and available in DRAFT PR #63 for review.
+- BANK LOAN ONBOARDING V3 audit fixes are implemented in local commit `abb202f` and ready to push to the existing DRAFT PR #63.
 - Production remains untouched. Do not apply the new migration remotely, merge, or deploy manually.
 - Historical BANK V2 migrations remain immutable.
 
@@ -15,7 +15,7 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 - Branch: `feat/bank-loan-onboarding-v3`
 - Starting branch HEAD: `d9f16dd55ca77b4bd3cc72051a54273112240db6`
-- Implementation checkpoint SHA: `7c51797fa5e30f4e7ed76a0a9ee25f3bf11fbb0b`; the final continuity metadata commit is on top of it. Read Git for the exact current HEAD and remote SHA.
+- Previous pushed checkpoint SHA: `36d7d6817fecad49025c4d7e0bf532ea5eadb762`; local audit-fix checkpoint: `abb202f`. Read Git for the exact current HEAD and remote SHA.
 - DRAFT PR: https://github.com/rnzrex/cajafamiliar/pull/63, base `main`, head `feat/bank-loan-onboarding-v3`.
 - The actual current HEAD and remote state must always be read from Git.
 
@@ -28,6 +28,11 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 - Updated `create_bank_loan_v1` without changing its public signature. It stores baseline metadata and marks only complete initial schedules; no historical movements, events, expenses, or allocations are fabricated.
 - Added server and client allocation guards for pre-tracking rows; later schedule versions clear baseline flags.
 - Extended only the initial bank schedule guard to accept a strict pending-only initial schedule; later lifecycle validators still require their existing internal invariants.
+- Closed the partial-schedule invariant gap: initial pending-only schedules must be contractual and start at `installments_paid_before_tracking + 1`; estimated schedules must remain complete 1..N.
+- Replaced parse-time schedule mismatch state with a live derived client error that blocks save and also covers pasted TSV/manual schedules.
+- Partial imports no longer overwrite the original first due date; the first pending imported date is displayed separately.
+- Detail next-payment display now consumes the fixed-schedule intelligence/planning item instead of deriving a date from absent baseline events.
+- Estimator and DebtForm now preserve mixed fixed-insurance buckets independently: per-installment, total-even, upfront, and unknown, while retaining legacy estimator fields.
 - Reordered the bank form into: 1 Sobre el crédito, 2 Contrato original, 3 Situación actual, 4 Seguros y costos, 5 Cronograma, 6 Revisión.
 - Added file import via existing `xlsx` dependency for `.xlsx`, `.xls`, `.csv`, `.tsv`, and `.txt`, with aliases, preview, explicit mapping, duplicate/missing-column errors, and full/partial schedule support.
 - Added fixed insurance bases: per installment, total-even with cent adjustment, upfront, and unknown distribution with warning.
@@ -37,23 +42,23 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 ## Validation
 
-- `npm test -- --reporter=dot`: PASS — 55 files / 889 tests.
-- Focused `src/utils/bankLoanOnboardingV3.test.ts`: PASS — 12 tests after the latest client-allocation guard and import coverage.
+- `npm test -- --reporter=dot`: PASS — 55 files / 893 tests.
+- Focused BANK V3/client UX: PASS — 15 `bankLoanOnboardingV3` tests and 4 `BankLoanFormUX` tests.
 - `npm run build`: PASS.
 - `npm run typecheck:api`: PASS.
 - `git diff --check`: PASS.
-- `npm run test:bank-loan-v3:local`: PASS — baseline, no-history, baseline allocation rejection, pending allocation, later schedule clearing, partial 6..7 normalization, invalid baseline, and new-loan baseline=0.
+- `npm run test:bank-loan-v3:local`: PASS — baseline, no-history, baseline allocation rejection, pending allocation, later schedule clearing, mismatched baseline=2 with 6..7 rejection, valid baseline=5 with 6..7 normalization, partial estimated rejection, full estimated acceptance, invalid baseline, and new-loan baseline=0.
 - `npm run test:bank-v2-local`: PASS.
 - `npm run test:debt2b2`: PASS.
 - `npm run test:debt5fa:local`: PASS — all assertions passed after temporarily enabling local Auth; `supabase/config.toml` was restored to `auth.enabled = false` and local services restarted without Auth.
-- Local HTTP smoke with Vite and local Supabase environment: `/` returned HTTP 200 and rendered the root mount. Visual `agent-browser` verification was unavailable because the CLI/browser connector is not installed; no remote environment was opened.
+- Local HTTP smoke with Vite and local Supabase environment: `/` returned HTTP 200 and rendered the root mount on port 5174 because port 5173 was already occupied. Visual `agent-browser` verification was unavailable because the CLI/browser connector is not installed; no remote environment was opened.
 - Automatic Vercel Preview checks for PR #63 passed: `Vercel` deployment completed and `Vercel Preview Comments` passed.
 - `supabase db reset` is not a clean repository workflow because the first migration expects an external/base schema. For local SQL validation, `supabase/schema.sql` was loaded only into the local container, then the real migrations/smokes were applied. `supabase/schema.sql` was not modified.
 
 ## Production
 
 - No Production data, migration, SQL, deployment, or manual Vercel action was performed for this objective.
-- Vercel Preview check passed automatically for PR #63; Production remains untouched.
+- The prior PR #63 Preview check passed; the audit-fix push will trigger a new automatic Preview check. Production remains untouched.
 
 ## BANK V2 Baseline / Restrictions
 
@@ -63,8 +68,8 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 ## Next Move
 
-1. Await review and requested changes on DRAFT PR #63.
-2. If changes are requested, update `.ai/STATE.md`, preserve the additive migration rule, rerun the relevant local gates, and push a new checkpoint.
+1. Push the audit-fix commit and continuity update to `feat/bank-loan-onboarding-v3`, then verify the automatic Preview check.
+2. Keep PR #63 in DRAFT and await review/requested changes.
 3. Do not merge, apply remote Supabase migrations, or touch Production without explicit authorization.
 
 ## Key Files
@@ -76,6 +81,7 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 - `src/utils/debtEstimation.ts` — original-contract schedule estimator and total-insurance distribution.
 - `src/utils/debtPlanning.ts` — pending planning excludes baseline rows.
 - `src/utils/debtViewModel.ts` — baseline progress and allocation validation.
+- `src/utils/debtDetailNextPayment.ts` — fixed-schedule detail next-payment SSOT adapter.
 - `src/services/dataRepository.ts` and `src/types.ts` — snake/camel mappers and domain types.
 - `src/utils/bankLoanOnboardingV3.test.ts` — focused estimator/import/baseline/planning tests.
 - `scripts/test-bank-loan-onboarding-v3-local.mjs` — local SQL smoke suite.
@@ -84,4 +90,4 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 - Agent: Codex
 - Date: 2026-08-26
-- Summary: BANK LOAN ONBOARDING V3 is implemented and all code/local SQL gates are green. The implementation checkpoint and final continuity metadata are pushed; DRAFT PR #63 is open and the latest Vercel Preview check is rerunning after the metadata-only push. Production is untouched.
+- Summary: BANK LOAN ONBOARDING V3 audit fixes are implemented and all code/local SQL gates are green. Local fix commit `abb202f` is ready to push; PR #63 must remain DRAFT and Production is untouched.
