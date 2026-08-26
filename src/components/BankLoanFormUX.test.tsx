@@ -40,12 +40,12 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.getByRole("heading", { name: "¿Qué deuda quieres registrar?" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Continuar" }));
 
-    expect(screen.getByText("Datos del Crédito Bancario / Financiero")).toBeTruthy();
-    expect(screen.getByText("Fuente del Cronograma *")).toBeTruthy();
+  expect(screen.getByText("1. SOBRE EL CRÉDITO")).toBeTruthy();
+  expect(screen.getByText("5. CRONOGRAMA *")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Agregar seguro" }));
     expect(screen.getByText("Seguro requerido")).toBeTruthy();
 
-    const loanSubtype = screen.getAllByRole("combobox")[1];
+  const loanSubtype = screen.getAllByRole("combobox")[0];
     await user.selectOptions(loanSubtype, "mortgage");
     expect(screen.getByText("¿Cómo se cubre el desgravamen? *")).toBeTruthy();
 
