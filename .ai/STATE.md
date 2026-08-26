@@ -4,14 +4,16 @@
 
 CREDIT CARDS SEPARATION Phase 1: separate credit cards from generic debt
 management at the UX/application-routing layer, while preserving the existing
-credit-card ledger and allowing eligible PEN cards as a spending source.
+credit-card ledger and allowing eligible PEN cards as a spending source. Harden
+authoritative refresh handling so active MovementForm drafts are not lost.
 
 ## Active Work
 
 - Work is on `feat/credit-cards-separate-module`, created from `origin/main`.
-- Phase 1 implementation is pushed through commits
+- Phase 1 implementation and the sync draft-preservation fix are pushed through commits
   `be0be8163393562f0f1e1250f3bb723a63ce7375` and
-  `3dc6346f03e87c484175bb3c704d281724b6bdb0`.
+  `3dc6346f03e87c484175bb3c704d281724b6bdb0`, plus
+  `a5fcfee fix(sync): preserve unsaved drafts across refresh`.
 - DRAFT PR #62 is open at
   `https://github.com/rnzrex/cajafamiliar/pull/62`.
 - Production is untouched in this phase.
@@ -62,11 +64,20 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
   totals resolve correctly.
 - Added Tarjetas navigation, detail routing, legacy deep-link compatibility,
   statement alerts, focused eligibility tests, and updated UX tests.
+- Changed `MovementForm` hydration to use logical movement/draft identity rather
+  than authoritative array references, preserving dirty fields across refreshes.
+- Preserved unavailable selected accounts, cards, and categories with explicit
+  validation instead of silently falling back to another source.
+- Kept the authorized App mounted during membership revalidation failures and
+  exposed a retry through the existing sync control.
+- Added `MovementFormSync.test.tsx` covering expenses, income, cards, recurring
+  drafts, logical movement transitions, unavailable sources/categories, and
+  successful reset after save.
 
 ## Active
 
-- Credit Cards Phase 1 is pushed and awaiting orchestrator audit in DRAFT PR
-  #62.
+- Credit Cards Phase 1 and sync draft preservation are pushed and awaiting
+  orchestrator audit in DRAFT PR #62.
 - Browser-level preview/E2E validation has not been run in this session.
 
 ## Blocked
@@ -79,12 +90,14 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 ## Next Move
 
 1. Let the orchestrator audit DRAFT PR #62.
-2. Run preview/browser validation if requested by the audit.
+2. Run Vercel preview/browser validation if requested by the audit.
 3. Do not merge or touch Production from this branch.
 
 ## Validation
 
-- `npm test`: PASS, 51 files / 860 tests.
+- `npm test`: PASS, 52 files / 869 tests.
+- `npx vitest run src/components/MovementFormSync.test.tsx`: PASS, 9 tests.
+- Focused authoritative, card, debt, and reconciliation suites: PASS.
 - `npm run typecheck:api`: PASS.
 - `npm run build`: PASS.
 - `npm run test:bank-v2-local`: PASS.
@@ -93,6 +106,7 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
   local smoke; `supabase/config.toml` was restored to `auth.enabled = false`
   and the temporary Auth container was stopped.
 - `git diff --check`: PASS.
+- Local built preview: HTTP 200.
 - Build emitted existing chunk-size and ineffective dynamic-import warnings.
 - Vercel Preview: not run for Credit Cards Phase 1.
 - Vercel Production: READY.
@@ -107,7 +121,7 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 - Edge Function cleanup: PASS.
 - Frontend deployment: READY.
 - Runtime error check: clean.
-- Credit Cards Phase 1 changes: untouched / not deployed.
+- Credit Cards Phase 1 and sync draft-preservation changes: untouched / not deployed.
 
 ## Safety / Do Not
 
@@ -134,13 +148,14 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 - Phase 1 additions: `src/components/CreditCardForm.tsx`,
   `src/components/CreditCardsManager.tsx`,
   `src/utils/creditCardSpending.ts`, and its focused test.
+- Sync fix additions: `src/components/AuthGate.tsx` and
+  `src/components/MovementFormSync.test.tsx`.
 
 ## Last Handoff
 
 - Agent: OpenCode
-- Date: 2026-08-25
-- Summary: implemented and validated Credit Cards Separation Phase 1 on the
-  verified `origin/main` baseline; pushed commits
-  `be0be8163393562f0f1e1250f3bb723a63ce7375` and
-  `3dc6346f03e87c484175bb3c704d281724b6bdb0` and opened DRAFT PR #62. BANK V2
-  remains closed and Production untouched.
+- Date: 2026-08-26
+- Summary: implemented and validated the sync draft-preservation fix on top of
+  Credit Cards Phase 1; pushed `a5fcfee` to DRAFT PR #62. Full tests, build,
+  API typecheck, local SQL smokes, and local preview HTTP validation pass. BANK
+  V2 remains closed and Production untouched.
