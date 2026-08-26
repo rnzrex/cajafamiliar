@@ -29,6 +29,11 @@ export interface DebtScheduleEstimateInput {
   fixedInsuranceAmount?: number | null;  // Fixed insurance amount per period (legacy/default)
   fixedInsuranceTotalAmount?: number | null; // Fixed insurance amount for the whole credit
   fixedInsuranceRateBasis?: DebtInsuranceRateBasis | null;
+  /** Explicit mixed-insurance buckets. These take precedence over the legacy single-basis fields. */
+  fixedInsurancePerInstallmentAmount?: number | null;
+  fixedInsuranceTotalEvenAmount?: number | null;
+  fixedInsuranceTotalUpfrontAmount?: number | null;
+  fixedInsuranceTotalUnknownAmount?: number | null;
   percentOriginalPrincipalRatePercent?: number | null;
   fixedFeesAmount?: number | null;       // Fixed fees amount per period
   installmentsPaidBeforeTracking?: number | null;
@@ -132,6 +137,10 @@ export function generateEstimatedDebtSchedule(
     fixedInsuranceAmount = 0,
     fixedInsuranceTotalAmount = 0,
     fixedInsuranceRateBasis = "per_installment",
+    fixedInsurancePerInstallmentAmount = null,
+    fixedInsuranceTotalEvenAmount = null,
+    fixedInsuranceTotalUpfrontAmount = null,
+    fixedInsuranceTotalUnknownAmount = null,
     percentOriginalPrincipalRatePercent = 0,
     fixedFeesAmount = 0,
     installmentsPaidBeforeTracking = 0,
@@ -149,10 +158,17 @@ export function generateEstimatedDebtSchedule(
   if (!Number.isInteger(installmentsPaidBeforeTracking ?? 0) || (installmentsPaidBeforeTracking ?? 0) < 0 || (installmentsPaidBeforeTracking ?? 0) > termInstallments) {
     throw new Error("Las cuotas pagadas antes de empezar el seguimiento deben estar entre 0 y el plazo total.");
   }
-  if (![fixedInsuranceAmount, fixedInsuranceTotalAmount].every((amount) => amount == null || (Number.isFinite(amount) && amount >= 0))) {
+  const mixedInsuranceAmounts = [
+    fixedInsurancePerInstallmentAmount,
+    fixedInsuranceTotalEvenAmount,
+    fixedInsuranceTotalUpfrontAmount,
+    fixedInsuranceTotalUnknownAmount,
+  ];
+  if (![fixedInsuranceAmount, fixedInsuranceTotalAmount, ...mixedInsuranceAmounts].every((amount) => amount == null || (Number.isFinite(amount) && amount >= 0))) {
     throw new Error("Los importes del seguro deben ser números no negativos.");
   }
-  if (fixedInsuranceTotalAmount && fixedInsuranceRateBasis === "per_installment") {
+  const hasExplicitMixedInsurance = mixedInsuranceAmounts.some((amount) => amount != null);
+  if (!hasExplicitMixedInsurance && fixedInsuranceTotalAmount && fixedInsuranceRateBasis === "per_installment") {
     throw new Error("El seguro total requiere indicar cómo se distribuye.");
   }
   if (!paymentFrequency) {
@@ -194,16 +210,21 @@ export function generateEstimatedDebtSchedule(
 
   const rows: EstimatedInstallmentRow[] = [];
   let currentBalance = financedAmount;
-  const fixedPerInstallment = fixedInsuranceRateBasis === "per_installment" ? round2(fixedInsuranceAmount || 0) : 0;
-  const fixedTotal = fixedInsuranceRateBasis !== "per_installment" ? round2(fixedInsuranceTotalAmount || 0) : 0;
-  const distributedTotalInsurance = fixedInsuranceRateBasis === "total_credit_even"
-    ? Array.from({ length: n }, (_, index) => index === n - 1
-      ? round2(fixedTotal - Array.from({ length: n - 1 }, (_, priorIndex) => round2(fixedTotal / n)).reduce((sum, amount) => sum + amount, 0))
-      : round2(fixedTotal / n))
-    : fixedInsuranceRateBasis === "total_credit_upfront"
-      ? Array.from({ length: n }, (_, index) => index === 0 ? fixedTotal : 0)
-      : Array.from({ length: n }, () => 0);
-  const hasUnknownInsuranceDistribution = fixedInsuranceRateBasis === "total_credit_unknown" && fixedTotal > 0;
+  const fixedPerInstallment = round2(hasExplicitMixedInsurance
+    ? fixedInsurancePerInstallmentAmount || 0
+    : fixedInsuranceRateBasis === "per_installment" ? fixedInsuranceAmount || 0 : 0);
+  const fixedTotalEven = round2(hasExplicitMixedInsurance
+    ? fixedInsuranceTotalEvenAmount || 0
+    : fixedInsuranceRateBasis === "total_credit_even" ? fixedInsuranceTotalAmount || 0 : 0);
+  const fixedTotalUpfront = round2(hasExplicitMixedInsurance
+    ? fixedInsuranceTotalUpfrontAmount || 0
+    : fixedInsuranceRateBasis === "total_credit_upfront" ? fixedInsuranceTotalAmount || 0 : 0);
+  const fixedTotalUnknown = round2(hasExplicitMixedInsurance
+    ? fixedInsuranceTotalUnknownAmount || 0
+    : fixedInsuranceRateBasis === "total_credit_unknown" ? fixedInsuranceTotalAmount || 0 : 0);
+  const distributedEvenInsurance = distributeEvenInsurance(fixedTotalEven, n);
+  const distributedUpfrontInsurance = Array.from({ length: n }, (_, index) => index === 0 ? fixedTotalUpfront : 0);
+  const hasUnknownInsuranceDistribution = fixedTotalUnknown > 0;
 
   for (let i = 1; i <= n; i++) {
     const dueDate = getNextDueDate(firstDueDate, paymentFrequency, i - 1, customFrequencyDays);
@@ -229,7 +250,7 @@ export function generateEstimatedDebtSchedule(
     const originalPrincipalInsurance = percentOriginalPrincipalRatePercent && percentOriginalPrincipalRatePercent > 0
       ? round2(financedAmount * (percentOriginalPrincipalRatePercent / 100))
       : 0;
-    const totalInsuranceForRow = fixedPerInstallment + distributedTotalInsurance[i - 1];
+    const totalInsuranceForRow = fixedPerInstallment + distributedEvenInsurance[i - 1] + distributedUpfrontInsurance[i - 1];
     const insurance = round2(desgravamenAmount + originalPrincipalInsurance + totalInsuranceForRow);
     const fees = round2(fixedFeesAmount || 0);
     const expectedAmount = round2(principal + interest + insurance + fees);
@@ -260,7 +281,7 @@ export function generateEstimatedDebtSchedule(
   const remainingPrincipalBalanceAfterPaidBeforeTracking = paidBefore === 0
     ? round2(financedAmount)
     : rows[paidBefore - 1]?.remainingPrincipalBalance ?? 0;
-  const undistributedInsuranceTotal = hasUnknownInsuranceDistribution ? fixedTotal : 0;
+  const undistributedInsuranceTotal = fixedTotalUnknown;
 
   return {
     rows,
@@ -276,6 +297,15 @@ export function generateEstimatedDebtSchedule(
     hasUnknownInsuranceDistribution,
     isEstimated: true,
   };
+}
+
+function distributeEvenInsurance(total: number, installments: number): number[] {
+  if (total <= 0 || installments <= 0) return Array.from({ length: Math.max(0, installments) }, () => 0);
+  const regularAmount = round2(total / installments);
+  const amounts = Array.from({ length: installments }, () => regularAmount);
+  const priorTotal = amounts.slice(0, -1).reduce((sum, amount) => sum + amount, 0);
+  amounts[installments - 1] = round2(total - priorTotal);
+  return amounts;
 }
 
 function effectivePeriodicRateFromPeriodicRate(params: {

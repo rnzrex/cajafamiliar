@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import type { Debt, DebtInstallment, DebtScheduleVersion } from "../types";
-import { applyInitialBankLoanBaseline, baselineConsistencyWarning } from "./bankLoanBaseline";
-import { generateEstimatedDebtSchedule } from "./debtEstimation";
+import { applyInitialBankLoanBaseline, baselineConsistencyWarning, bankLoanScheduleConsistencyError } from "./bankLoanBaseline";
+import { addMonthsClamped, generateEstimatedDebtSchedule } from "./debtEstimation";
 import { effectivePeriodicRateFromTea } from "./debtInterestEngine";
 import { parseContractualScheduleText } from "./debtScheduleParser";
 import { parseDebtScheduleFile } from "./debtScheduleFileParser";
 import { buildDebtPlanningItems } from "./debtPlanning";
 import { validateDebtAllocations } from "./debtViewModel";
+import { buildDebtIntelligenceItems } from "./debtIntelligence";
+import { resolveContractualDetailNextPayment } from "./debtDetailNextPayment";
 
 function scheduleLine(number: number, date = `2026-${String(number).padStart(2, "0")}-15`): string {
   return `${number}\t${date}\t100.00\t60.00\t30.00\t5.00\t5.00`;
@@ -32,7 +34,7 @@ function fixedScheduleInstallments(debtId: string, scheduleVersionId: string, co
     installmentNumber: index + 1,
     contractualInstallmentNumber: index + 1,
     isPaidBeforeTracking: index < 5,
-    dueDate: `2026-${String(index + 9).padStart(2, "0")}-15`,
+    dueDate: addMonthsClamped("2026-01-15", index),
     expectedAmount: 100,
     expectedPrincipal: 60,
     expectedInterest: 30,
@@ -141,6 +143,59 @@ describe("BANK LOAN ONBOARDING V3", () => {
     expect(unknown.hasUnknownInsuranceDistribution).toBe(true);
   });
 
+  it("preserves mixed fixed-insurance bases in separate estimator buckets", () => {
+    const evenAndUpfront = generateEstimatedDebtSchedule({
+      financedAmount: 1_000,
+      teaPercent: 0,
+      termInstallments: 18,
+      paymentFrequency: "monthly",
+      firstDueDate: "2026-09-15",
+      amortizationMethod: "constant_principal",
+      fixedInsuranceTotalEvenAmount: 180,
+      fixedInsuranceTotalUpfrontAmount: 200,
+    });
+    const unknownAndEven = generateEstimatedDebtSchedule({
+      financedAmount: 1_000,
+      teaPercent: 0,
+      termInstallments: 18,
+      paymentFrequency: "monthly",
+      firstDueDate: "2026-09-15",
+      amortizationMethod: "constant_principal",
+      fixedInsuranceTotalEvenAmount: 180,
+      fixedInsuranceTotalUnknownAmount: 90,
+    });
+    const perInstallmentAndEven = generateEstimatedDebtSchedule({
+      financedAmount: 1_000,
+      teaPercent: 0,
+      termInstallments: 18,
+      paymentFrequency: "monthly",
+      firstDueDate: "2026-09-15",
+      amortizationMethod: "constant_principal",
+      fixedInsurancePerInstallmentAmount: 5,
+      fixedInsuranceTotalEvenAmount: 180,
+    });
+    const sameBasis = generateEstimatedDebtSchedule({
+      financedAmount: 1_000,
+      teaPercent: 0,
+      termInstallments: 18,
+      paymentFrequency: "monthly",
+      firstDueDate: "2026-09-15",
+      amortizationMethod: "constant_principal",
+      fixedInsuranceTotalEvenAmount: 100 + 80,
+    });
+
+    expect(evenAndUpfront.rows[0].expectedInsurance).toBe(210);
+    expect(evenAndUpfront.rows.slice(1).every((row) => row.expectedInsurance === 10)).toBe(true);
+    expect(evenAndUpfront.totalInsurance).toBe(380);
+    expect(unknownAndEven.totalInsurance).toBe(180);
+    expect(unknownAndEven.undistributedInsuranceTotal).toBe(90);
+    expect(unknownAndEven.rows.every((row) => row.expectedInsurance === 10)).toBe(true);
+    expect(perInstallmentAndEven.totalInsurance).toBe(270);
+    expect(perInstallmentAndEven.rows.every((row) => row.expectedInsurance === 15)).toBe(true);
+    expect(sameBasis.totalInsurance).toBe(180);
+    expect(sameBasis.rows[0].expectedInsurance).toBe(10);
+  });
+
   it("marks only a complete initial schedule as pre-tracking baseline", () => {
     const complete = applyInitialBankLoanBaseline(
       Array.from({ length: 18 }, (_, index) => ({ contractualInstallmentNumber: index + 1, isPaidBeforeTracking: false })),
@@ -161,6 +216,29 @@ describe("BANK LOAN ONBOARDING V3", () => {
     expect(partial.every((row) => !row.isPaidBeforeTracking)).toBe(true);
     expect(incompleteFromOne.every((row) => !row.isPaidBeforeTracking)).toBe(true);
     expect(baselineConsistencyWarning(5, 7)).toContain("próxima cuota es la 6");
+  });
+
+  it("derives and blocks the partial-schedule baseline invariant live", () => {
+    const rows = (start: number, end: number) => Array.from({ length: end - start + 1 }, (_, index) => ({
+      installmentNumber: index + 1,
+      contractualInstallmentNumber: start + index,
+    }));
+    const base = {
+      onboardingMode: "EXISTING_DEBT" as const,
+      installmentsPaidBeforeTracking: 5,
+      plannedInstallmentCount: 18,
+      scheduleSource: "contractual" as const,
+    };
+
+    expect(bankLoanScheduleConsistencyError({ ...base, installments: rows(1, 18) })).toBeNull();
+    expect(bankLoanScheduleConsistencyError({ ...base, installments: rows(6, 18) })).toBeNull();
+    expect(bankLoanScheduleConsistencyError({ ...base, installments: rows(7, 18) })).toBe(
+      "Dijiste que la próxima cuota es la 6, pero el cronograma comienza en la 7. Corrige la última cuota pagada o el cronograma."
+    );
+    expect(bankLoanScheduleConsistencyError({ ...base, installmentsPaidBeforeTracking: 4, installments: rows(6, 18) })).toContain("próxima cuota es la 5");
+    expect(bankLoanScheduleConsistencyError({ ...base, installmentsPaidBeforeTracking: 4, installments: rows(6, 18) })).not.toBeNull();
+    expect(bankLoanScheduleConsistencyError({ ...base, installmentsPaidBeforeTracking: 5, installments: rows(6, 18) })).toBeNull();
+    expect(bankLoanScheduleConsistencyError({ ...base, scheduleSource: "estimated", installments: rows(6, 18) })).toContain("contrato completo");
   });
 
   it("excludes pre-tracking installments from planning and starts at contractual 6", () => {
@@ -254,6 +332,14 @@ describe("BANK LOAN ONBOARDING V3", () => {
     expect(partial.rows[0].installmentNumber).toBe(1);
     expect(partial.rows[0].contractualInstallmentNumber).toBe(6);
     expect(partial.rows.at(-1)?.contractualInstallmentNumber).toBe(18);
+
+    expect(bankLoanScheduleConsistencyError({
+      onboardingMode: "EXISTING_DEBT",
+      installmentsPaidBeforeTracking: 5,
+      plannedInstallmentCount: 18,
+      scheduleSource: "contractual",
+      installments: partial.rows,
+    })).toBeNull();
   });
 
   it("imports CSV/TSV text and supports explicit manual column mapping", () => {
@@ -283,6 +369,83 @@ describe("BANK LOAN ONBOARDING V3", () => {
     expect(detected.missingColumns.length).toBeGreaterThan(0);
     expect(manuallyMapped.valid).toBe(true);
     expect(manuallyMapped.rows[0].contractualInstallmentNumber).toBe(7);
+    expect(bankLoanScheduleConsistencyError({
+      onboardingMode: "EXISTING_DEBT",
+      installmentsPaidBeforeTracking: 5,
+      plannedInstallmentCount: 18,
+      scheduleSource: "contractual",
+      installments: manuallyMapped.rows,
+    })).not.toBeNull();
+  });
+
+  it("keeps planning, intelligence, and detail on contractual installment 6", () => {
+    const debtId = "debt-detail-1";
+    const scheduleVersionId = "schedule-detail-1";
+    const debt = {
+      id: debtId,
+      name: "Crédito existente",
+      creditorName: "Banco",
+      debtKind: "bank_loan",
+      currencyCode: "PEN",
+      originDate: "2026-01-01",
+      trackingStartDate: "2026-08-26",
+      originalPrincipal: 10_000,
+      openingPrincipalBalance: 7_000,
+      plannedInstallmentCount: 18,
+      plannedInstallmentAmount: 700,
+      installmentAmountMode: "fixed",
+      paymentFrequency: "monthly",
+      customFrequencyDays: null,
+      firstDueDate: "2026-01-15",
+      teaPercent: null,
+      tceaPercent: null,
+      notes: "",
+      status: "active",
+      isArchived: false,
+      createdByUserId: "user-1",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      repaymentStructure: "fixed_schedule",
+      interestCalculationMode: "contract_schedule",
+    } as Debt;
+    const version = {
+      id: scheduleVersionId,
+      debtId,
+      versionNumber: 1,
+      effectiveDate: "2026-08-26",
+      reason: "initial",
+      scheduleSource: "contractual",
+      isAuthoritative: true,
+      triggerEventId: null,
+      notes: "",
+      createdByUserId: "user-1",
+      createdAt: "2026-08-26T00:00:00Z",
+    } as DebtScheduleVersion;
+    const installments = fixedScheduleInstallments(debtId, scheduleVersionId, 18);
+    const planning = buildDebtPlanningItems([debt], [], [version], installments, [], "2026-08-26");
+    const intelligence = buildDebtIntelligenceItems({
+      debts: [debt],
+      debtEvents: [],
+      debtScheduleVersions: [version],
+      debtInstallments: installments,
+      debtCollaterals: [],
+      debtPlanningItems: planning,
+      todayKey: "2026-08-26",
+    })[0];
+    const detail = resolveContractualDetailNextPayment({
+      debt,
+      debtIntelligence: intelligence,
+      currentScheduleId: scheduleVersionId,
+      scheduleSource: "contractual",
+      installments,
+    });
+
+    expect(planning[0].contractualInstallmentNumber).toBe(6);
+    expect(intelligence.nextInstallmentNumber).toBe(6);
+    expect(detail?.source).toBe("contractual_schedule");
+    expect(detail?.installmentNumber).toBe(6);
+    expect(detail?.dueDate).toBe(installments[5].dueDate);
+    expect(detail?.dueDate).not.toBe(debt.firstDueDate);
   });
 
   it("rejects duplicate or out-of-order contractual schedule rows", () => {

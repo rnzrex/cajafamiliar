@@ -16,7 +16,7 @@ import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
 import { BANK_LOAN_SUBTYPE_OPTIONS, AMORTIZATION_METHOD_OPTIONS } from "../utils/bankCreditFormHelper";
 import { parseContractualScheduleText } from "../utils/debtScheduleParser";
 import { parseDebtScheduleFile, DEBT_SCHEDULE_COLUMN_LABELS, type DebtScheduleColumn, type DebtScheduleFileColumnMapping } from "../utils/debtScheduleFileParser";
-import { applyInitialBankLoanBaseline, baselineConsistencyWarning, bankLoanBaselineSummary } from "../utils/bankLoanBaseline";
+import { applyInitialBankLoanBaseline, bankLoanBaselineSummary, bankLoanScheduleConsistencyError } from "../utils/bankLoanBaseline";
 import { generateEstimatedDebtSchedule } from "../utils/debtEstimation";
 
 interface DebtFormProps {
@@ -92,7 +92,6 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [scheduleFileMapping, setScheduleFileMapping] = useState<DebtScheduleFileColumnMapping>({});
   const [scheduleFileMissingColumns, setScheduleFileMissingColumns] = useState<string[]>([]);
   const [scheduleFileAmbiguousColumns, setScheduleFileAmbiguousColumns] = useState<string[]>([]);
-  const [scheduleConsistencyWarning, setScheduleConsistencyWarning] = useState<string | null>(null);
   const [scheduleEstimationError, setScheduleEstimationError] = useState<string | null>(null);
   const [scheduleEstimationWarning, setScheduleEstimationWarning] = useState<string | null>(null);
   const [estimatedTotals, setEstimatedTotals] = useState<{
@@ -150,6 +149,18 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const currencySymbol = getCurrencySymbol(currencyCode);
   const isPledge = debtKind === "pledge";
   const bankEstimatedHasPeriodicRate = debtKind === "bank_loan" && scheduleSource === "estimated" && periodicRatePercent.trim() !== "" && Number.isFinite(Number(periodicRatePercent)) && Number(periodicRatePercent) > 0;
+  const currentScheduleConsistencyError = debtKind === "bank_loan"
+    ? bankLoanScheduleConsistencyError({
+        onboardingMode,
+        installmentsPaidBeforeTracking,
+        plannedInstallmentCount,
+        scheduleSource,
+        installments,
+      })
+    : null;
+  const firstPendingImportedDueDate = installments[0]?.contractualInstallmentNumber != null && installments[0].contractualInstallmentNumber > 1
+    ? installments[0].dueDate
+    : null;
 
   const insuranceLabel = (type: DebtInsuranceType): string => {
     if (type === "credit_life") return "Seguro de desgravamen";
@@ -169,8 +180,9 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     let creditLifeRatePercent = 0;
     let percentOriginalPrincipalRatePercent = 0;
     let fixedInsuranceAmount = 0;
-    let fixedInsuranceTotalAmount = 0;
-    let fixedInsuranceRateBasis: DebtInsuranceRateBasis = "per_installment";
+    let fixedInsuranceTotalEvenAmount = 0;
+    let fixedInsuranceTotalUpfrontAmount = 0;
+    let fixedInsuranceTotalUnknownAmount = 0;
     let hasUnknownInsuranceCost = false;
 
     for (const insurance of insurances) {
@@ -181,12 +193,11 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       } else if (insurance.pricingMode === "percent_original_principal") {
         percentOriginalPrincipalRatePercent += Number.isFinite(rate) ? rate : 0;
       } else if (insurance.pricingMode === "fixed_amount") {
-        if (insurance.rateBasis === "total_credit_even" || insurance.rateBasis === "total_credit_upfront" || insurance.rateBasis === "total_credit_unknown") {
-          fixedInsuranceTotalAmount += Number.isFinite(fixedAmount) ? fixedAmount : 0;
-          fixedInsuranceRateBasis = insurance.rateBasis;
-        } else {
-          fixedInsuranceAmount += Number.isFinite(fixedAmount) ? fixedAmount : 0;
-        }
+        const safeFixedAmount = Number.isFinite(fixedAmount) ? fixedAmount : 0;
+        if (insurance.rateBasis === "total_credit_even") fixedInsuranceTotalEvenAmount += safeFixedAmount;
+        else if (insurance.rateBasis === "total_credit_upfront") fixedInsuranceTotalUpfrontAmount += safeFixedAmount;
+        else if (insurance.rateBasis === "total_credit_unknown") fixedInsuranceTotalUnknownAmount += safeFixedAmount;
+        else fixedInsuranceAmount += safeFixedAmount;
         if (insurance.rateBasis === "total_credit_unknown" && fixedAmount > 0) hasUnknownInsuranceCost = true;
       } else if (insurance.pricingMode === "contract_schedule" || insurance.pricingMode === "unknown") {
         hasUnknownInsuranceCost = true;
@@ -197,8 +208,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       creditLifeRatePercent,
       percentOriginalPrincipalRatePercent,
       fixedInsuranceAmount,
-      fixedInsuranceTotalAmount,
-      fixedInsuranceRateBasis,
+      fixedInsurancePerInstallmentAmount: fixedInsuranceAmount,
+      fixedInsuranceTotalEvenAmount,
+      fixedInsuranceTotalUpfrontAmount,
+      fixedInsuranceTotalUnknownAmount,
       hasUnknownInsuranceCost,
     };
   };
@@ -279,7 +292,6 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setScheduleFileMapping({});
     setScheduleFileMissingColumns([]);
     setScheduleFileAmbiguousColumns([]);
-    setScheduleConsistencyWarning(null);
     setScheduleEstimationError(null);
     setScheduleEstimationWarning(null);
     setEstimatedTotals(null);
@@ -313,14 +325,15 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setInstallmentAmountMode(amountMode);
     setPaymentFrequency(detectedFrequency);
     if (normalizedRows.length > 0) {
-      setFirstDueDate(normalizedRows[0].dueDate);
       const firstContractualNumber = normalizedRows[0].contractualInstallmentNumber;
       const lastContractualNumber = normalizedRows.at(-1)?.contractualInstallmentNumber;
+      if (firstContractualNumber === 1) {
+        setFirstDueDate(normalizedRows[0].dueDate);
+      }
       if (!plannedInstallmentCount && lastContractualNumber) {
         setPlannedInstallmentCount(lastContractualNumber.toString());
       }
       setPlannedInstallmentAmount(normalizedRows[0].expectedAmount);
-      setScheduleConsistencyWarning(baselineConsistencyWarning(paidBefore, firstContractualNumber));
     }
   };
 
@@ -432,6 +445,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           setToast({ message: "Genera el cronograma estimado antes de guardar.", type: "error" });
           return false;
         }
+      }
+      if (currentScheduleConsistencyError) {
+        setToast({ message: currentScheduleConsistencyError, type: "error" });
+        return false;
       }
       if (loanSubtype === "mortgage" && !mortgageInsuranceCoverage) {
         setToast({ message: "En un crédito hipotecario debes indicar si el desgravamen lo cubre el banco, una póliza propia o una póliza endosada.", type: "error" });
@@ -1099,7 +1116,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-700">Primera cuota ORIGINAL</label>
-                      <input type="date" value={firstDueDate} onChange={(e) => setFirstDueDate(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+                      <input type="date" aria-label="Primera cuota ORIGINAL" value={firstDueDate} onChange={(e) => setFirstDueDate(e.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-700">TEA %</label>
@@ -1146,6 +1163,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                             type="number"
                             min="0"
                             step="1"
+                            aria-label="Última cuota contractual que ya pagaste"
                             value={installmentsPaidBeforeTracking}
                             onChange={(e) => {
                               const value = e.target.value;
@@ -1341,6 +1359,12 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                     </div>
                   </div>
 
+                  {currentScheduleConsistencyError && (
+                    <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-900">
+                      {currentScheduleConsistencyError}
+                    </div>
+                  )}
+
                   {/* Option A: TSV Contractual Parser */}
                   {scheduleSource === "contractual" && (
                     <div className="rounded-xl bg-white p-4 border border-slate-200 space-y-3">
@@ -1349,6 +1373,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                       </label>
                       <textarea
                         rows={4}
+                        aria-label="Pegar filas del cronograma"
                         value={tsvScheduleText}
                         onChange={(e) => setTsvScheduleText(e.target.value)}
                         placeholder={`Ejemplo:\n1\t2026-09-15\t850.00\t500.00\t250.00\t80.00\t20.00\n2\t2026-10-15\t850.00\t510.00\t240.00\t80.00\t20.00`}
@@ -1443,8 +1468,13 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                           {installments.length > 8 && <p className="px-3 py-2 text-xs text-slate-500">Mostrando 8 de {installments.length} cuotas.</p>}
                         </div>
                       )}
-                      {scheduleConsistencyWarning && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">{scheduleConsistencyWarning}</p>}
                     </div>
+                  )}
+
+                  {firstPendingImportedDueDate && (
+                    <p className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-semibold text-blue-900">
+                      Primera cuota pendiente importada: {formatReviewDate(firstPendingImportedDueDate)}. Esta fecha no reemplaza la primera fecha original del contrato.
+                    </p>
                   )}
 
                   {/* Option B: Estimated Schedule Generator */}
@@ -1491,8 +1521,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                                 creditLifeRatePercent: insuranceInputs.creditLifeRatePercent,
                                 percentOriginalPrincipalRatePercent: insuranceInputs.percentOriginalPrincipalRatePercent,
                                 fixedInsuranceAmount: insuranceInputs.fixedInsuranceAmount,
-                                fixedInsuranceTotalAmount: insuranceInputs.fixedInsuranceTotalAmount,
-                                fixedInsuranceRateBasis: insuranceInputs.fixedInsuranceRateBasis,
+                                fixedInsurancePerInstallmentAmount: insuranceInputs.fixedInsurancePerInstallmentAmount,
+                                fixedInsuranceTotalEvenAmount: insuranceInputs.fixedInsuranceTotalEvenAmount,
+                                fixedInsuranceTotalUpfrontAmount: insuranceInputs.fixedInsuranceTotalUpfrontAmount,
+                                fixedInsuranceTotalUnknownAmount: insuranceInputs.fixedInsuranceTotalUnknownAmount,
                                 installmentsPaidBeforeTracking: paidBefore,
                               });
 
@@ -2258,7 +2290,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   <div><p className="text-xs text-slate-500">Cuota inicial</p><p className="font-bold">{downPaymentAmount ? `${currencySymbol} ${Number(downPaymentAmount).toFixed(2)}` : "—"}</p></div>
                   <div><p className="text-xs text-slate-500">Plazo</p><p className="font-bold">{plannedInstallmentCount || "—"} cuotas</p></div>
                   <div><p className="text-xs text-slate-500">Frecuencia</p><p className="font-bold">{paymentFrequency || "—"}</p></div>
-                  <div><p className="text-xs text-slate-500">Primera cuota</p><p className="font-bold">{formatReviewDate(firstDueDate)}</p></div>
+                  <div><p className="text-xs text-slate-500">Primera cuota original</p><p className="font-bold">{formatReviewDate(firstDueDate)}</p></div>
+                  {firstPendingImportedDueDate && <div><p className="text-xs text-slate-500">Primera cuota pendiente importada</p><p className="font-bold">{formatReviewDate(firstPendingImportedDueDate)}</p></div>}
                   <div><p className="text-xs text-slate-500">TEA</p><p className="font-bold">{teaPercent ? `${teaPercent}%` : "—"}</p></div>
                   <div><p className="text-xs text-slate-500">TCEA</p><p className="font-bold">{tceaPercent ? `${tceaPercent}%` : "—"}</p></div>
                   <div><p className="text-xs text-slate-500">Fuente del cronograma</p><p className="font-bold">{scheduleSource === "contractual" ? "Contractual" : "Estimada"}</p></div>

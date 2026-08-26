@@ -554,6 +554,7 @@ declare
   v_contractual_contiguous boolean;
   v_complete_schedule boolean;
   v_partial_pending_schedule boolean;
+  v_installments_paid_before_tracking integer := 0;
 begin
   select pg_catalog.count(*)
     into v_schedule_count
@@ -574,6 +575,12 @@ begin
     from public.debts as d
    where d.id = new.debt_id
      and d.household_id = new.household_id;
+
+  select coalesce(p.installments_paid_before_tracking, 0)
+    into v_installments_paid_before_tracking
+    from public.bank_loan_profiles as p
+   where p.debt_id = new.debt_id
+     and p.household_id = new.household_id;
 
   select
     min(i.installment_number),
@@ -626,10 +633,12 @@ begin
 
   v_partial_pending_schedule := coalesce(
     v_schedule_version = 1
+    and v_schedule_source = 'contractual'
     and v_planned_installment_count is not null
     and v_first_installment = 1
     and v_last_installment = v_distinct_installments
     and v_first_contractual > 1
+    and v_first_contractual = v_installments_paid_before_tracking + 1
     and v_last_contractual = v_planned_installment_count
     and v_distinct_contractual = v_distinct_installments
     and v_contractual_contiguous

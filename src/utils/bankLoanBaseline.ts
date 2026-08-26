@@ -3,6 +3,17 @@ export interface BankLoanBaselineRow {
   isPaidBeforeTracking?: boolean;
 }
 
+export interface BankLoanScheduleConsistencyInput {
+  onboardingMode: "EXISTING_DEBT" | "NEW_DEBT";
+  installmentsPaidBeforeTracking: number | string | null | undefined;
+  plannedInstallmentCount: number | string | null | undefined;
+  scheduleSource: "contractual" | "estimated" | "manual" | null | undefined;
+  installments: Array<{
+    installmentNumber: number;
+    contractualInstallmentNumber?: number | null;
+  }>;
+}
+
 /**
  * Marks historical installments only when the initial schedule is a complete
  * schedule beginning at contractual installment 1. A pending-only import is
@@ -56,4 +67,55 @@ export function baselineConsistencyWarning(
   const expectedNext = installmentsPaidBeforeTracking + 1;
   if (firstContractualInstallmentNumber === expectedNext || firstContractualInstallmentNumber === 1) return null;
   return `Dijiste que la próxima cuota es la ${expectedNext}, pero el archivo comienza en la ${firstContractualInstallmentNumber}. Revisa la última cuota pagada o el archivo.`;
+}
+
+/**
+ * Derives the current client-side invariant for an initial bank schedule.
+ * This deliberately reads current form values on every render instead of
+ * preserving a parse-time snapshot, so edits to the baseline or term cannot
+ * leave a stale warning behind.
+ */
+export function bankLoanScheduleConsistencyError(input: BankLoanScheduleConsistencyInput): string | null {
+  if (input.installments.length === 0 || input.scheduleSource == null) return null;
+
+  const paidBefore = input.onboardingMode === "EXISTING_DEBT"
+    ? Number(input.installmentsPaidBeforeTracking ?? 0)
+    : 0;
+  const term = input.plannedInstallmentCount == null || input.plannedInstallmentCount === ""
+    ? null
+    : Number(input.plannedInstallmentCount);
+  const firstContractual = input.installments[0].contractualInstallmentNumber ?? input.installments[0].installmentNumber;
+  const lastContractual = input.installments.at(-1)?.contractualInstallmentNumber
+    ?? input.installments.at(-1)?.installmentNumber
+    ?? null;
+
+  if (!Number.isInteger(paidBefore) || paidBefore < 0 || !Number.isInteger(firstContractual) || firstContractual <= 0) {
+    return null;
+  }
+
+  if (input.scheduleSource === "estimated") {
+    if (firstContractual !== 1) {
+      return "El cronograma estimado debe representar el contrato completo y comenzar en la cuota 1.";
+    }
+    if (term != null && Number.isInteger(term) && term > 0 && lastContractual !== term) {
+      return `El cronograma estimado debe terminar en la cuota ${term}.`;
+    }
+    return null;
+  }
+
+  if (input.scheduleSource !== "contractual") return null;
+
+  const expectedNext = paidBefore + 1;
+  if (firstContractual > 1 && firstContractual !== expectedNext) {
+    return `Dijiste que la próxima cuota es la ${expectedNext}, pero el cronograma comienza en la ${firstContractual}. Corrige la última cuota pagada o el cronograma.`;
+  }
+
+  if (term != null && Number.isInteger(term) && term > 0 && lastContractual !== term) {
+    if (firstContractual > 1) {
+      return `El cronograma parcial debe terminar en la cuota ${term}.`;
+    }
+    return `El cronograma completo debe terminar en la cuota ${term}.`;
+  }
+
+  return null;
 }

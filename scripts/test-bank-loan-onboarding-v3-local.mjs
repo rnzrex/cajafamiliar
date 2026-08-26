@@ -14,6 +14,9 @@ const ids = {
   baselinePayment: "00000000-0000-4000-8000-000000000807",
   pendingPayment: "00000000-0000-4000-8000-000000000808",
   scheduleUpdate: "00000000-0000-4000-8000-000000000809",
+  estimatedPartialDebt: "00000000-0000-4000-8000-00000000080b",
+  estimatedFullDebt: "00000000-0000-4000-8000-00000000080c",
+  validPartialDebt: "00000000-0000-4000-8000-00000000080d",
 };
 
 function runSql(sql) {
@@ -50,14 +53,14 @@ function scheduleRows(start, end) {
   }));
 }
 
-function createBankLoan(debtId, schedule, baseline, term) {
+function createBankLoan(debtId, schedule, baseline, term, scheduleSource = "contractual") {
   return withUser(`
     select public.create_bank_loan_v1(
       '${ids.household}', '${debtId}', 'Crédito V3', 'Banco V3', 'bank_loan', 'PEN',
       '2026-01-01', '2026-08-26', 1000, 800, ${term}, 100, 'fixed', 'monthly', null, '2026-09-15',
       0, null, '', 'fixed_schedule', 'contract_schedule', null, null, null,
       jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', ${term}, 'installments_paid_before_tracking', ${baseline}),
-      '[]'::jsonb, 'contractual', '${schedule}'::jsonb, '[]'::jsonb
+      '[]'::jsonb, '${scheduleSource}', '${schedule}'::jsonb, '[]'::jsonb
     );
   `);
 }
@@ -161,16 +164,25 @@ try {
   `);
   if (laterBaseline !== "0") throw new Error(`Later schedule inherited baseline flags: ${laterBaseline}`);
 
-  console.log("5. Pending-only schedule 6..7 is accepted with internal 1..2...");
-  await execSql(createBankLoan(ids.partialDebt, scheduleRows(6, 7), 2, 7));
-  const partialResult = await execSql(`
-    select (select string_agg(installment_number::text, ',' order by installment_number) from public.debt_installments where debt_id = '${ids.partialDebt}') || '|' ||
-      (select string_agg(contractual_installment_number::text, ',' order by installment_number) from public.debt_installments where debt_id = '${ids.partialDebt}') || '|' ||
-      (select count(*) from public.debt_installments where debt_id = '${ids.partialDebt}' and is_paid_before_tracking);
-  `);
-  if (partialResult !== "1,2|6,7|0") throw new Error(`Unexpected partial schedule: ${partialResult}`);
+  console.log("5. Mismatched pending-only schedule 6..7 is rejected for baseline=2...");
+  await expectSqlError(createBankLoan(ids.partialDebt, scheduleRows(6, 7), 2, 7), "BANK_SCHEDULE_REQUIRED");
 
-  console.log("6. Invalid baseline is rejected...");
+  console.log("6. Pending-only schedule 6..7 is accepted with baseline=5 and internal 1..2...");
+  await execSql(createBankLoan(ids.validPartialDebt, scheduleRows(6, 7), 5, 7));
+  const rejectedPartialCount = await execSql(`select count(*) from public.debts where id = '${ids.partialDebt}';`);
+  if (rejectedPartialCount !== "0") throw new Error(`Mismatched partial schedule was persisted: ${rejectedPartialCount}`);
+  const validPartialResult = await execSql(`
+    select (select string_agg(installment_number::text, ',' order by installment_number) from public.debt_installments where debt_id = '${ids.validPartialDebt}') || '|' ||
+      (select string_agg(contractual_installment_number::text, ',' order by installment_number) from public.debt_installments where debt_id = '${ids.validPartialDebt}') || '|' ||
+      (select count(*) from public.debt_installments where debt_id = '${ids.validPartialDebt}' and is_paid_before_tracking);
+  `);
+  if (validPartialResult !== "1,2|6,7|0") throw new Error(`Unexpected valid partial schedule: ${validPartialResult}`);
+
+  console.log("7. Partial estimated schedule is rejected while full estimated schedule is accepted...");
+  await expectSqlError(createBankLoan(ids.estimatedPartialDebt, scheduleRows(6, 7), 5, 7, "estimated"), "BANK_SCHEDULE_REQUIRED");
+  await execSql(createBankLoan(ids.estimatedFullDebt, scheduleRows(1, 7), 0, 7, "estimated"));
+
+  console.log("8. Invalid baseline is rejected...");
   await expectSqlError(createBankLoan(ids.invalidDebt, scheduleRows(1, 2), 3, 2), "INVALID_DEBT_INPUT");
   console.log("SUCCESS! BANK LOAN ONBOARDING V3 SQL baseline, allocation, partial schedule and lifecycle checks passed.");
 } catch (error) {
