@@ -9,9 +9,11 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 ## Active Work
 
 - Work is on `feat/credit-cards-separate-module`, created from `origin/main`.
-- Phase 1 implementation is committed locally as
-  `be0be8163393562f0f1e1250f3bb723a63ce7375`; it is not pushed yet and has no
-  PR.
+- Phase 1 implementation is pushed through commits
+  `be0be8163393562f0f1e1250f3bb723a63ce7375` and
+  `3dc6346f03e87c484175bb3c704d281724b6bdb0`.
+- DRAFT PR #62 is open at
+  `https://github.com/rnzrex/cajafamiliar/pull/62`.
 - Production is untouched in this phase.
 - No SQL, migration, RPC, or Supabase schema change was added; existing card
   RPCs and ledger semantics are reused.
@@ -20,7 +22,7 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 
 - Branch: `feat/credit-cards-separate-module`
 - Base: `origin/main` = `f283d5b644046192670b09468319da226e8ef477`
-- PR: none yet; create a DRAFT PR only after validation.
+- PR: `#62` — DRAFT; orchestrator audit pending.
 - Default branch: `main`
 - BANK V2 PR: `#61` — MERGED
 - BANK V2 merge commit: `54d26fcce957cf425067b7e18f8a9eb67c45e69e`
@@ -63,8 +65,8 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 
 ## Active
 
-- Credit Cards Phase 1 is committed and ready for normal push and DRAFT PR
-  creation.
+- Credit Cards Phase 1 is pushed and awaiting orchestrator audit in DRAFT PR
+  #62.
 - Browser-level preview/E2E validation has not been run in this session.
 
 ## Blocked
@@ -76,9 +78,9 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 
 ## Next Move
 
-1. Push `feat/credit-cards-separate-module` normally and confirm the remote SHA.
-2. Open a DRAFT PR toward `main`; do not merge.
-3. Run preview/browser validation before any future production decision.
+1. Let the orchestrator audit DRAFT PR #62.
+2. Run preview/browser validation if requested by the audit.
+3. Do not merge or touch Production from this branch.
 
 ## Validation
 
@@ -138,6 +140,7 @@ credit-card ledger and allowing eligible PEN cards as a spending source.
 - Agent: OpenCode
 - Date: 2026-08-25
 - Summary: implemented and validated Credit Cards Separation Phase 1 on the
-  verified `origin/main` baseline; commit
-  `be0be8163393562f0f1e1250f3bb723a63ce7375` created. BANK V2 remains closed
-  and Production untouched; push and DRAFT PR are next.
+  verified `origin/main` baseline; pushed commits
+  `be0be8163393562f0f1e1250f3bb723a63ce7375` and
+  `3dc6346f03e87c484175bb3c704d281724b6bdb0` and opened DRAFT PR #62. BANK V2
+  remains closed and Production untouched.
