@@ -11,6 +11,7 @@ interface MovementFormProps {
   initialType?: MovementType;
   movement?: Movement | null;
   draft?: MovementDraft | null;
+  draftIdentity?: string | null;
   currentMember?: HouseholdMember;
   categories: Category[];
   accounts: FinancialAccount[];
@@ -25,7 +26,7 @@ interface MovementFormProps {
 const today = () => localDateString();
 const knownPeople = ["Rolando", "Verónica", "Renzo"] as const;
 type PersonChoice = (typeof knownPeople)[number] | "Otro" | "";
-type ValidationField = "amount" | "description" | "person";
+type ValidationField = "amount" | "description" | "person" | "source" | "category";
 
 interface ValidationError {
   field: ValidationField;
@@ -35,7 +36,7 @@ interface ValidationError {
 const unassignedAccountLabel = "Sin cuenta (histórico)";
 const creditCardSourcePrefix = "credit-card:";
 
-export function MovementForm({ initialType = "egreso", movement, draft, currentMember, categories, accounts, creditCards = [], allowCreditCardSource = true, onQuickCreateCategory, onSave, onSaveCreditCardPurchase, onCancel }: MovementFormProps) {
+export function MovementForm({ initialType = "egreso", movement, draft, draftIdentity, currentMember, categories, accounts, creditCards = [], allowCreditCardSource = true, onQuickCreateCategory, onSave, onSaveCreditCardPurchase, onCancel }: MovementFormProps) {
   const [type, setType] = useState<MovementType>(movement?.type ?? draft?.type ?? initialType);
   const [date, setDate] = useState(movement?.date ?? draft?.date ?? today());
   const [amount, setAmount] = useState(movement?.amount.toString() ?? draft?.amount?.toString() ?? "");
@@ -54,13 +55,23 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
   const [isSaving, setIsSaving] = useState(false);
   const [validationError, setValidationError] = useState<ValidationError | null>(null);
   const cardPurchaseRequestRef = useRef<{ fingerprint: string; input: CreditCardPurchaseInput } | null>(null);
+  const logicalFormIdentity = movement?.id
+    ? `movement:${movement.id}`
+    : draftIdentity
+      ? `draft:${draftIdentity}`
+      : `new:${initialType}`;
 
   const availableCategories = categories.filter((item) => item.is_active && (item.type === type || item.type === "ambos"));
   const dateLabel = date === today() ? "Hoy" : formatDateLabel(date);
-  const selectableAccounts = accounts.filter((account) => account.isActive || account.id === movement?.accountId);
+  const selectableAccounts = accounts.filter((account) => account.isActive || account.id === movement?.accountId || account.id === accountId);
   const selectableCards = allowCreditCardSource && onSaveCreditCardPurchase && !movement ? eligibleCreditCardsForSpending(creditCards) : [];
   const selectedCreditCardId = accountId?.startsWith(creditCardSourcePrefix) ? accountId.slice(creditCardSourcePrefix.length) : null;
-  const selectedCreditCardIsAvailable = selectedCreditCardId !== null && selectableCards.some((card) => card.id === selectedCreditCardId);
+  const selectedCreditCard = selectedCreditCardId ? creditCards.find((card) => card.id === selectedCreditCardId) : null;
+  const selectedCreditCardIsAvailable = type === "egreso" && selectedCreditCardId !== null && selectableCards.some((card) => card.id === selectedCreditCardId);
+  const selectedAccount = accountId && !selectedCreditCardId ? accounts.find((account) => account.id === accountId) ?? null : null;
+  const selectedAccountIsAvailable = accountId !== null && selectedCreditCardId === null && Boolean(selectedAccount?.isActive);
+  const selectedSourceIsUnavailable = Boolean(accountId) && (selectedCreditCardId !== null ? !selectedCreditCardIsAvailable : !selectedAccountIsAvailable);
+  const categoryIsUnavailable = categories.length > 0 && !availableCategories.some((item) => item.name === category);
 
   useEffect(() => {
     const nextPerson = initialPersonValue(movement, draft, currentMember);
@@ -76,33 +87,17 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
     setCategoryTouched(Boolean(movement || draft?.category));
     setShowCategorySelector(Boolean(movement));
     setShowDatePicker(Boolean(movement) || nextDate !== today());
-  }, [accounts, currentMember, draft, initialType, movement]);
-
-  useEffect(() => {
-    if (type === "ingreso" && selectedCreditCardId) {
-      setAccountId(getActiveCashAccount(accounts)?.id ?? null);
-    }
-  }, [accounts, selectedCreditCardId, type]);
-
-  useEffect(() => {
-    if (selectedCreditCardId && !selectedCreditCardIsAvailable) {
-      setAccountId(getActiveCashAccount(accounts)?.id ?? null);
-    }
-  }, [accounts, selectedCreditCardId, selectedCreditCardIsAvailable]);
+    setValidationError(null);
+    cardPurchaseRequestRef.current = null;
+  }, [logicalFormIdentity]);
 
   useEffect(() => {
     if (!categoryTouched) {
       const detected = detectCategory(description);
       const isAllowed = availableCategories.some((item) => item.name === detected);
-      setCategory(isAllowed ? detected : "Negocio");
+      setCategory(isAllowed ? detected : availableCategories.find((item) => item.name === "Negocio")?.name ?? availableCategories[0]?.name ?? "Negocio");
     }
   }, [availableCategories, description, categoryTouched]);
-
-  useEffect(() => {
-    if (!availableCategories.some((item) => item.name === category)) {
-      setCategory(availableCategories.find((item) => item.name === "Negocio")?.name ?? availableCategories[0]?.name ?? "");
-    }
-  }, [availableCategories, category]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -121,12 +116,20 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
       return;
     }
     if (!accountId && !movement) {
-      setValidationError({ field: "amount", message: "Selecciona una cuenta o tarjeta para registrar el movimiento." });
+      setValidationError({ field: "source", message: "Selecciona una cuenta o tarjeta para registrar el movimiento." });
+      return;
+    }
+    if (selectedSourceIsUnavailable) {
+      setValidationError({ field: "source", message: "La cuenta/tarjeta seleccionada ya no está disponible. Elige otra para guardar." });
+      return;
+    }
+    if (categoryIsUnavailable) {
+      setValidationError({ field: "category", message: "La categoría seleccionada ya no está disponible. Elige otra para guardar." });
       return;
     }
 
     const parsedAmount = Number(amount);
-    const selectedAccount = selectedCreditCardId ? null : accounts.find((item) => item.id === accountId) ?? null;
+    const selectedAccountForSave = selectedCreditCardId ? null : accounts.find((item) => item.id === accountId) ?? null;
     setValidationError(null);
 
     setIsSaving(true);
@@ -148,7 +151,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
               date,
               amount: parsedAmount,
               description: description.trim(),
-              method: accountId === null ? movement?.method ?? "efectivo" : legacyMethodForAccount(selectedAccount),
+              method: accountId === null ? movement?.method ?? "efectivo" : legacyMethodForAccount(selectedAccountForSave),
               category,
               accountId: selectedCreditCardId ? null : accountId,
               ...(currentMember ? {} : { person: person.trim() }),
@@ -280,33 +283,52 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
             />
           </label>
 
-           <label className="block space-y-2 text-base font-bold text-slate-700">
-             {type === "egreso" ? "Pagar con" : "Cuenta de destino"}
-             <select value={accountId ?? ""} onChange={(event) => setAccountId(event.target.value || null)} className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-lg">
-               {selectableAccounts.length === 0 && !movement && <option value="">Sin cuentas disponibles</option>}
-               {selectableAccounts.length > 0 && <optgroup label="Cuentas">
-                 {selectableAccounts.map((item) => (
-                   <option key={item.id} value={item.id}>
-                     {item.isActive ? item.name : `${item.name} (archivada)`}
-                   </option>
-                 ))}
-               </optgroup>}
-               {type === "egreso" && selectableCards.length > 0 && <optgroup label="Tarjetas PEN activas">
-                 {selectableCards.map((card) => (
-                   <option key={card.id} value={`${creditCardSourcePrefix}${card.id}`}>
-                     {card.name} · {card.creditorName}
-                   </option>
-                 ))}
-               </optgroup>}
-               {movement && (
-                 <option value="">{unassignedAccountLabel}</option>
-               )}
-             </select>
-             {selectableAccounts.length === 0 && selectableCards.length === 0 && !movement && (
-               <span className="block text-sm font-semibold text-slate-500">Crea una cuenta primero desde la sección Cuentas o registra una tarjeta PEN activa.</span>
-             )}
-             {selectedCreditCardId && <span className="block text-sm font-semibold text-blue-700">La compra se guardará en el ledger de la tarjeta; no descontará una cuenta bancaria.</span>}
-           </label>
+          <label className="block space-y-2 text-base font-bold text-slate-700">
+            {type === "egreso" ? "Pagar con" : "Cuenta de destino"}
+            <select
+              aria-label={type === "egreso" ? "Pagar con" : "Cuenta de destino"}
+              aria-invalid={validationError?.field === "source" || selectedSourceIsUnavailable}
+              aria-describedby={validationError?.field === "source" || selectedSourceIsUnavailable ? "movement-form-error" : undefined}
+              value={accountId ?? ""}
+              onChange={(event) => {
+                setAccountId(event.target.value || null);
+                clearValidationError("source");
+              }}
+              className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-lg"
+            >
+              {selectedSourceIsUnavailable && selectedCreditCardId && !selectedCreditCardIsAvailable && (
+                <optgroup label="Fuente seleccionada">
+                  <option value={accountId ?? ""} disabled>{selectedCreditCard?.name ?? "Tarjeta seleccionada"} (no disponible)</option>
+                </optgroup>
+              )}
+              {selectedSourceIsUnavailable && !selectedCreditCardId && accountId && !selectableAccounts.some((account) => account.id === accountId) && (
+                <optgroup label="Fuente seleccionada">
+                  <option value={accountId} disabled>{selectedAccount?.name ?? "Cuenta seleccionada"} (no disponible)</option>
+                </optgroup>
+              )}
+              {selectableAccounts.length === 0 && !movement && <option value="">Sin cuentas disponibles</option>}
+              {selectableAccounts.length > 0 && <optgroup label="Cuentas">
+                {selectableAccounts.map((item) => (
+                  <option key={item.id} value={item.id} disabled={!item.isActive}>
+                    {item.isActive ? item.name : `${item.name} (no disponible)`}
+                  </option>
+                ))}
+              </optgroup>}
+              {type === "egreso" && selectableCards.length > 0 && <optgroup label="Tarjetas PEN activas">
+                {selectableCards.map((card) => (
+                  <option key={card.id} value={`${creditCardSourcePrefix}${card.id}`}>
+                    {card.name} · {card.creditorName}
+                  </option>
+                ))}
+              </optgroup>}
+              {movement && <option value="">{unassignedAccountLabel}</option>}
+            </select>
+            {selectableAccounts.length === 0 && selectableCards.length === 0 && !movement && (
+              <span className="block text-sm font-semibold text-slate-500">Crea una cuenta primero desde la sección Cuentas o registra una tarjeta PEN activa.</span>
+            )}
+            {selectedSourceIsUnavailable && <p role="alert" className="block text-sm font-bold text-red-700">La cuenta/tarjeta seleccionada ya no está disponible. Elige otra para guardar.</p>}
+            {selectedCreditCardId && selectedCreditCardIsAvailable && <span className="block text-sm font-semibold text-blue-700">La compra se guardará en el ledger de la tarjeta; no descontará una cuenta bancaria.</span>}
+          </label>
 
           {currentMember ? (
             <section className="rounded-2xl border border-blue-100 bg-blue-50 p-4" aria-label="Autor del movimiento">
@@ -368,13 +390,16 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
             {showCategorySelector && (
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <select
+                  aria-label="Categoría"
                   value={category}
                   onChange={(event) => {
                     setCategoryTouched(true);
                     setCategory(event.target.value);
+                    clearValidationError("category");
                   }}
                   className="h-14 w-full rounded-2xl border border-slate-200 bg-white px-4 text-lg"
                 >
+                  {categoryIsUnavailable && <option value={category} disabled>{category} (no disponible)</option>}
                   {availableCategories.map((item) => (
                     <option key={item.id} value={item.name}>
                       {item.name}
@@ -387,12 +412,13 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
                 </button>
               </div>
             )}
+            {categoryIsUnavailable && <p role="alert" className="mt-2 text-sm font-bold text-red-700">La categoría seleccionada ya no está disponible. Elige otra para guardar.</p>}
           </section>
 
           {movement ? (
             <label className="block space-y-2 text-base font-bold text-slate-700">
               Fecha
-              <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="h-14 w-full rounded-2xl border border-slate-200 px-4 text-lg" />
+              <input aria-label="Fecha" type="date" value={date} onChange={(event) => setDate(event.target.value)} className="h-14 w-full rounded-2xl border border-slate-200 px-4 text-lg" />
             </label>
           ) : (
             <section className="rounded-2xl border border-slate-200 bg-white p-4">
@@ -405,7 +431,7 @@ export function MovementForm({ initialType = "egreso", movement, draft, currentM
                   {showDatePicker ? "Ocultar selector" : "Cambiar fecha"}
                 </button>
               </div>
-              {showDatePicker && <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="mt-3 h-14 w-full rounded-2xl border border-slate-200 px-4 text-lg" />}
+              {showDatePicker && <input aria-label="Fecha" type="date" value={date} onChange={(event) => setDate(event.target.value)} className="mt-3 h-14 w-full rounded-2xl border border-slate-200 px-4 text-lg" />}
             </section>
           )}
         </div>

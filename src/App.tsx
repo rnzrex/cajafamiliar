@@ -101,6 +101,7 @@ const Reports = lazy(() =>
 interface AppProps {
   currentMember?: HouseholdMember;
   onSignOut?: () => void | Promise<void>;
+  onRetryRemoteAccess?: () => void;
   remoteStatus?: "connected" | "problem" | null;
 }
 
@@ -165,7 +166,7 @@ const EMPTY_APP_DATA: AppData = {
 
 const OFFLINE_WRITE_MESSAGE = "Estás sin conexión. Puedes consultar tu información, pero para registrar o modificar datos necesitas conectarte a internet.";
 
-export default function App({ currentMember, onSignOut, remoteStatus }: AppProps = {}) {
+export default function App({ currentMember, onSignOut, onRetryRemoteAccess, remoteStatus }: AppProps = {}) {
   const [data, setData] = useState<AppData>(() => (isSupabaseConfigured ? EMPTY_APP_DATA : loadData()));
   const [view, setView] = useState<View>("dashboard");
   const [moreOpen, setMoreOpen] = useState(false);
@@ -865,6 +866,11 @@ export default function App({ currentMember, onSignOut, remoteStatus }: AppProps
     return true;
   }
 
+  function handleManualSync() {
+    if (remoteStatus === "problem") onRetryRemoteAccess?.();
+    void refreshAuthoritativeData("manual");
+  }
+
   async function saveCreditCardPurchase(input: CreditCardPurchaseInput): Promise<boolean> {
     if (!canWriteDebt || !ensureDataReady()) return false;
 
@@ -1398,7 +1404,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
             </div>
               <div className="flex flex-wrap items-center gap-3">
                 {currentMember && <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-800">Sesión: {currentMember.displayName}</span>}
-              <SyncStatus status={syncStatus} pendingCount={pendingMovementCount} lastSyncAt={lastSuccessfulRemoteSyncAt} isOnline={isBrowserOnline} remoteSyncStatus={remoteSyncStatus} onManualSync={() => void refreshAuthoritativeData("manual")} />
+              <SyncStatus status={remoteStatus === "problem" ? "problem" : syncStatus} pendingCount={pendingMovementCount} lastSyncAt={lastSuccessfulRemoteSyncAt} isOnline={isBrowserOnline} remoteSyncStatus={remoteSyncStatus} onManualSync={handleManualSync} />
               {isSupabaseConfigured && isBrowserOnline && pendingSyncState === "problem" && (
                 <button type="button" onClick={() => { setPendingSyncState("idle"); setSyncAttempt((attempt) => attempt + 1); }} className="rounded-full border border-red-200 bg-white px-3 py-1 text-sm font-bold text-red-700 hover:bg-red-50">
                   Reintentar sincronización
@@ -1432,14 +1438,15 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               key={view}
               initialType={initialType}
               draft={movementDraft}
+              draftIdentity={pendingRecurringMovementId}
               currentMember={currentMember}
-               categories={data.categories}
-               accounts={data.financialAccounts}
-               creditCards={cardDebts}
-               allowCreditCardSource={canWriteDebt && pendingRecurringPaymentId === null && pendingRecurringMovementId === null}
-               onQuickCreateCategory={saveCategory}
-               onSave={saveMovement}
-               onSaveCreditCardPurchase={saveCreditCardPurchase}
+              categories={data.categories}
+              accounts={data.financialAccounts}
+              creditCards={cardDebts}
+              allowCreditCardSource={canWriteDebt && pendingRecurringPaymentId === null && pendingRecurringMovementId === null}
+              onQuickCreateCategory={saveCategory}
+              onSave={saveMovement}
+              onSaveCreditCardPurchase={saveCreditCardPurchase}
               onCancel={
                 movementDraft
                   ? () => {

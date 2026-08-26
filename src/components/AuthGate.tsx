@@ -119,6 +119,7 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
 
     let active = true;
     const revalidatingOfflineAccess = offlineFallbackRef.current && browserOnline;
+    const hasAuthorizedMember = currentMember !== null;
 
     if (!browserOnline) {
       const cachedRecord = loadOfflineAccessRecord();
@@ -153,15 +154,15 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
       };
     }
 
-    if (!revalidatingOfflineAccess) {
+    if (!revalidatingOfflineAccess && !hasAuthorizedMember) {
       setMembershipState("checking");
       setMembershipError(null);
-      setCurrentMember(null);
     }
+    if (hasAuthorizedMember) setMembershipState("authorized");
     setRemoteStatus(null);
 
     function handleMembershipFailure() {
-      if (revalidatingOfflineAccess) {
+      if (revalidatingOfflineAccess || hasAuthorizedMember) {
         setRemoteStatus("problem");
         return;
       }
@@ -328,7 +329,7 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
     );
   }
 
-  if (membershipState === "authorized" && currentMember) return <App currentMember={currentMember} onSignOut={handleSignOut} remoteStatus={remoteStatus} />;
+  if (membershipState === "authorized" && currentMember) return <App currentMember={currentMember} onSignOut={handleSignOut} onRetryRemoteAccess={retryMembership} remoteStatus={remoteStatus} />;
   return <GateMessage title="Caja Familiar" message="Verificando acceso..." />;
 }
 
