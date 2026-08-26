@@ -47,6 +47,7 @@ export interface DebtInstallmentPlanningItem {
   // Installment identity
   installmentId: string;
   installmentNumber: number;
+  contractualInstallmentNumber?: number;
   scheduleVersionId: string;
   dueDate: string; // "YYYY-MM-DD"
 
@@ -140,7 +141,7 @@ export function buildDebtPlanningItems(
     // not need a persisted schedule, so an empty list is valid for them.
     const debtInstallments = currentSchedule && !scheduleLifecycle.pendingBankSchedule
       ? installments.filter(
-          (i) => i.scheduleVersionId === currentSchedule.id && i.debtId === debt.id
+          (i) => i.scheduleVersionId === currentSchedule.id && i.debtId === debt.id && !i.isPaidBeforeTracking
         )
       : [];
 
@@ -179,6 +180,7 @@ export function buildDebtPlanningItems(
           currencyCode: debt.currencyCode || "PEN",
           installmentId: `derived-next-payment:${debt.id}:${nextPayment.nextDueDate}`,
           installmentNumber: paidCycles + 1,
+          contractualInstallmentNumber: paidCycles + 1,
           scheduleVersionId: currentSchedule?.id ?? `derived-open-ended:${debt.id}`,
           dueDate: nextPayment.nextDueDate,
           daysUntilDue,
@@ -226,6 +228,7 @@ export function buildDebtPlanningItems(
         currencyCode: debt.currencyCode,
         installmentId: installment.id,
         installmentNumber: installment.installmentNumber,
+        contractualInstallmentNumber: installment.contractualInstallmentNumber ?? installment.installmentNumber,
         scheduleVersionId: currentSchedule.id,
         dueDate: installment.dueDate,
         daysUntilDue,

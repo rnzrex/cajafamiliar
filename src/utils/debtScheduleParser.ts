@@ -2,6 +2,7 @@ import type { DebtInstallmentAmountMode, DebtPaymentFrequency } from "../types.j
 
 export interface ContractualScheduleRowInput {
   installmentNumber: number;
+  contractualInstallmentNumber: number;
   dueDate: string;
   expectedAmount: number;
   expectedPrincipal: number;
@@ -218,7 +219,8 @@ export function parseContractualScheduleText(rawText: string): ScheduleParseResu
     }
 
     rows.push({
-      installmentNumber: instNo > 0 ? instNo : rows.length + 1,
+      installmentNumber: rows.length + 1,
+      contractualInstallmentNumber: instNo > 0 ? instNo : rows.length + 1,
       dueDate,
       expectedAmount: round2(expectedAmount),
       expectedPrincipal: round2(expectedPrincipal),
@@ -245,9 +247,10 @@ export function parseContractualScheduleText(rawText: string): ScheduleParseResu
     };
   }
 
-  const expectedSequence = rows.map((row) => row.installmentNumber);
-  if (expectedSequence.some((number, index) => number !== index + 1)) {
-    errors.push("La secuencia de cuotas debe ser continua y comenzar en 1.");
+  const contractualSequence = rows.map((row) => row.contractualInstallmentNumber);
+  const contractualStart = contractualSequence[0];
+  if (contractualSequence.some((number, index) => number !== contractualStart + index)) {
+    errors.push("La numeración contractual debe ser estrictamente creciente y continua; puede comenzar en una cuota distinta de 1.");
   }
 
   const firstAmt = rows[0].expectedAmount;

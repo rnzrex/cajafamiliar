@@ -298,6 +298,17 @@ export function DebtDetailModal({
   const ledgerResult = buildDebtPaymentLedger(debt, allEventsForDebt);
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
+  const insurancePricingLabel = (insurance: DebtInsuranceTerms): string => {
+    if (insurance.pricingMode === "fixed_amount") {
+      if (insurance.rateBasis === "total_credit_even") return "monto total repartido entre cuotas";
+      if (insurance.rateBasis === "total_credit_upfront") return "monto total cobrado una vez";
+      if (insurance.rateBasis === "total_credit_unknown") return "monto total, distribución por confirmar";
+      return "monto fijo por cuota";
+    }
+    if (insurance.pricingMode === "percent_outstanding_balance") return "% sobre saldo pendiente";
+    if (insurance.pricingMode === "percent_original_principal") return "% sobre monto original";
+    return "según cronograma / por confirmar";
+  };
   const nextPayment = calculateNextPayment({
     debt,
     debtEvents: allEventsForDebt,
@@ -809,13 +820,19 @@ export function DebtDetailModal({
                     <div><p className="text-xs text-slate-500">Balloon</p><p className="font-bold">{bankProfile.balloonPaymentAmount == null ? "—" : `${currencySymbol} ${bankProfile.balloonPaymentAmount.toFixed(2)}`}</p></div>
                     <div><p className="text-xs text-slate-500">TEA</p><p className="font-bold">{debt.teaPercent == null ? "—" : `${debt.teaPercent}%`}</p></div>
                     <div><p className="text-xs text-slate-500">TCEA</p><p className="font-bold">{debt.tceaPercent == null ? "—" : `${debt.tceaPercent}%`}</p></div>
-                    <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : debtInstallments.filter((installment) => !getInstallmentProgress(installment, allocations, debtEvents).isPaid).length}</p></div>
-                    <div><p className="text-xs text-slate-500">Total pendiente conocido</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : `${currencySymbol} ${debtInstallments.reduce((total, installment) => Math.max(0, total + (installment.expectedAmount ?? 0) - getInstallmentProgress(installment, allocations, debtEvents).allocated), 0).toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Cuotas pagadas antes</p><p className="font-bold">{bankProfile.installmentsPaidBeforeTracking ?? 0}</p></div>
+                    <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : debtInstallments.filter((installment) => !installment.isPaidBeforeTracking && !getInstallmentProgress(installment, allocations, debtEvents).isPaid).length}</p></div>
+                    <div><p className="text-xs text-slate-500">Total pendiente conocido</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : `${currencySymbol} ${debtInstallments.filter((installment) => !installment.isPaidBeforeTracking).reduce((total, installment) => Math.max(0, total + (installment.expectedAmount ?? 0) - getInstallmentProgress(installment, allocations, debtEvents).allocated), 0).toFixed(2)}`}</p></div>
                   </div>
                   <div>
                     <p className="text-xs font-bold uppercase text-slate-500">Seguros</p>
-                    {bankInsurances.length === 0 ? <p className="text-sm text-slate-600">No definidos.</p> : <ul className="mt-1 space-y-1 text-sm text-slate-700">{bankInsurances.map((insurance) => <li key={insurance.id}>{insurance.label} · {insurance.pricingMode}{insurance.provider ? ` · ${insurance.provider}` : ""}{insurance.isRequired ? " · requerido" : " · opcional"}</li>)}</ul>}
+                    {bankInsurances.length === 0 ? <p className="text-sm text-slate-600">No definidos.</p> : <ul className="mt-1 space-y-1 text-sm text-slate-700">{bankInsurances.map((insurance) => <li key={insurance.id}>{insurance.label} · {insurancePricingLabel(insurance)}{insurance.fixedAmount != null && insurance.pricingMode === "fixed_amount" ? ` · ${currencySymbol} ${insurance.fixedAmount.toFixed(2)}` : ""}{insurance.provider ? ` · ${insurance.provider}` : ""}{insurance.isRequired ? " · requerido" : " · opcional"}</li>)}</ul>}
                   </div>
+                  {(bankProfile.installmentsPaidBeforeTracking ?? 0) > 0 && (
+                    <div className="rounded-xl border border-blue-200 bg-white px-4 py-3 text-sm font-semibold text-blue-950">
+                      Al comenzar el seguimiento ya se habían pagado {bankProfile.installmentsPaidBeforeTracking} cuotas. Las filas históricas no tienen movimientos, eventos ni allocations en Caja Familiar.
+                    </div>
+                  )}
                 </section>
               )}
 
@@ -1148,9 +1165,14 @@ export function DebtDetailModal({
                           >
                             <div>
                               <div className="flex items-center gap-2">
-                                <span className="font-bold text-slate-900">Cuota #{inst.installmentNumber}</span>
+                                <span className="font-bold text-slate-900">Cuota #{inst.contractualInstallmentNumber ?? inst.installmentNumber}</span>
                                 <span className="text-xs text-slate-500">Vence: {formatReviewDate(inst.dueDate)}</span>
-                                {prog.isPaid && (
+                                {inst.isPaidBeforeTracking && (
+                                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-800">
+                                    Pagada antes de Caja Familiar
+                                  </span>
+                                )}
+                                {prog.isPaid && !inst.isPaidBeforeTracking && (
                                   <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">
                                     Pagada
                                   </span>

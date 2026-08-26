@@ -1,4 +1,4 @@
-import type { AmortizationMethod, DebtPaymentFrequency } from "../types.js";
+import type { AmortizationMethod, DebtInsuranceRateBasis, DebtPaymentFrequency, PeriodicRateBasis } from "../types.js";
 import { effectivePeriodicRateFromTea } from "./debtInterestEngine.js";
 
 export interface EstimatedInstallmentRow {
@@ -15,6 +15,8 @@ export interface EstimatedInstallmentRow {
 export interface DebtScheduleEstimateInput {
   financedAmount: number;
   teaPercent: number | null;
+  periodicRatePercent?: number | null;
+  periodicRateBasis?: PeriodicRateBasis | null;
   termInstallments: number;
   paymentFrequency: DebtPaymentFrequency | null;
   customFrequencyDays?: number | null;
@@ -24,9 +26,12 @@ export interface DebtScheduleEstimateInput {
   gracePeriodInstallments?: number | null;
   balloonPaymentAmount?: number | null;
   creditLifeRatePercent?: number | null; // Desgravamen % over balance per period
-  fixedInsuranceAmount?: number | null;  // Fixed insurance amount per period
+  fixedInsuranceAmount?: number | null;  // Fixed insurance amount per period (legacy/default)
+  fixedInsuranceTotalAmount?: number | null; // Fixed insurance amount for the whole credit
+  fixedInsuranceRateBasis?: DebtInsuranceRateBasis | null;
   percentOriginalPrincipalRatePercent?: number | null;
   fixedFeesAmount?: number | null;       // Fixed fees amount per period
+  installmentsPaidBeforeTracking?: number | null;
 }
 
 export interface DebtScheduleEstimateResult {
@@ -38,6 +43,9 @@ export interface DebtScheduleEstimateResult {
   totalFees: number;
   financialInstallmentAmount: number; // Principal + Interest base cuota
   installmentAmountMode: "fixed" | "variable";
+  remainingPrincipalBalanceAfterPaidBeforeTracking: number;
+  undistributedInsuranceTotal: number;
+  hasUnknownInsuranceDistribution: boolean;
   isEstimated: true;
 }
 
@@ -111,6 +119,8 @@ export function generateEstimatedDebtSchedule(
   const {
     financedAmount,
     teaPercent,
+    periodicRatePercent = null,
+    periodicRateBasis = null,
     termInstallments,
     paymentFrequency,
     customFrequencyDays,
@@ -120,18 +130,30 @@ export function generateEstimatedDebtSchedule(
     balloonPaymentAmount = 0,
     creditLifeRatePercent = 0,
     fixedInsuranceAmount = 0,
+    fixedInsuranceTotalAmount = 0,
+    fixedInsuranceRateBasis = "per_installment",
     percentOriginalPrincipalRatePercent = 0,
     fixedFeesAmount = 0,
+    installmentsPaidBeforeTracking = 0,
   } = input;
 
   if (!Number.isFinite(financedAmount) || financedAmount <= 0) {
     throw new Error("El monto financiado debe ser mayor a cero.");
   }
-  if (!Number.isFinite(teaPercent) || teaPercent == null || teaPercent < 0) {
-    throw new Error("La TEA debe ser un porcentaje válido.");
+  if ((!Number.isFinite(teaPercent) || teaPercent == null || teaPercent < 0) && !(periodicRatePercent != null && Number.isFinite(periodicRatePercent) && periodicRatePercent >= 0)) {
+    throw new Error("La TEA o la tasa periódica contractual debe ser un porcentaje válido.");
   }
   if (!Number.isInteger(termInstallments) || termInstallments <= 0) {
     throw new Error("El plazo debe ser un número de cuotas mayor a cero.");
+  }
+  if (!Number.isInteger(installmentsPaidBeforeTracking ?? 0) || (installmentsPaidBeforeTracking ?? 0) < 0 || (installmentsPaidBeforeTracking ?? 0) > termInstallments) {
+    throw new Error("Las cuotas pagadas antes de empezar el seguimiento deben estar entre 0 y el plazo total.");
+  }
+  if (![fixedInsuranceAmount, fixedInsuranceTotalAmount].every((amount) => amount == null || (Number.isFinite(amount) && amount >= 0))) {
+    throw new Error("Los importes del seguro deben ser números no negativos.");
+  }
+  if (fixedInsuranceTotalAmount && fixedInsuranceRateBasis === "per_installment") {
+    throw new Error("El seguro total requiere indicar cómo se distribuye.");
   }
   if (!paymentFrequency) {
     throw new Error("La frecuencia de pago es obligatoria para estimar el cronograma.");
@@ -152,12 +174,14 @@ export function generateEstimatedDebtSchedule(
   }
 
   const freq = paymentFrequency;
-  const { rateDecimal } = effectivePeriodicRateFromTea({
-    teaPercent,
-    frequency: freq,
-    customFrequencyDays,
-    yearBasis: 365,
-  });
+  const rateDecimal = periodicRatePercent != null && Number.isFinite(periodicRatePercent) && periodicRatePercent > 0 && periodicRateBasis
+    ? effectivePeriodicRateFromPeriodicRate({ periodicRatePercent, periodicRateBasis, frequency: freq, customFrequencyDays })
+    : effectivePeriodicRateFromTea({
+        teaPercent: teaPercent ?? 0,
+        frequency: freq,
+        customFrequencyDays,
+        yearBasis: 365,
+      }).rateDecimal;
 
   const n = termInstallments;
   let baseFinancialInstallment = 0;
@@ -170,6 +194,16 @@ export function generateEstimatedDebtSchedule(
 
   const rows: EstimatedInstallmentRow[] = [];
   let currentBalance = financedAmount;
+  const fixedPerInstallment = fixedInsuranceRateBasis === "per_installment" ? round2(fixedInsuranceAmount || 0) : 0;
+  const fixedTotal = fixedInsuranceRateBasis !== "per_installment" ? round2(fixedInsuranceTotalAmount || 0) : 0;
+  const distributedTotalInsurance = fixedInsuranceRateBasis === "total_credit_even"
+    ? Array.from({ length: n }, (_, index) => index === n - 1
+      ? round2(fixedTotal - Array.from({ length: n - 1 }, (_, priorIndex) => round2(fixedTotal / n)).reduce((sum, amount) => sum + amount, 0))
+      : round2(fixedTotal / n))
+    : fixedInsuranceRateBasis === "total_credit_upfront"
+      ? Array.from({ length: n }, (_, index) => index === 0 ? fixedTotal : 0)
+      : Array.from({ length: n }, () => 0);
+  const hasUnknownInsuranceDistribution = fixedInsuranceRateBasis === "total_credit_unknown" && fixedTotal > 0;
 
   for (let i = 1; i <= n; i++) {
     const dueDate = getNextDueDate(firstDueDate, paymentFrequency, i - 1, customFrequencyDays);
@@ -195,7 +229,8 @@ export function generateEstimatedDebtSchedule(
     const originalPrincipalInsurance = percentOriginalPrincipalRatePercent && percentOriginalPrincipalRatePercent > 0
       ? round2(financedAmount * (percentOriginalPrincipalRatePercent / 100))
       : 0;
-    const insurance = round2(desgravamenAmount + originalPrincipalInsurance + (fixedInsuranceAmount || 0));
+    const totalInsuranceForRow = fixedPerInstallment + distributedTotalInsurance[i - 1];
+    const insurance = round2(desgravamenAmount + originalPrincipalInsurance + totalInsuranceForRow);
     const fees = round2(fixedFeesAmount || 0);
     const expectedAmount = round2(principal + interest + insurance + fees);
 
@@ -221,6 +256,11 @@ export function generateEstimatedDebtSchedule(
   const installmentAmountMode = rows.every((row) => Math.abs(row.expectedAmount - rows[0].expectedAmount) <= 0.01)
     ? "fixed"
     : "variable";
+  const paidBefore = installmentsPaidBeforeTracking ?? 0;
+  const remainingPrincipalBalanceAfterPaidBeforeTracking = paidBefore === 0
+    ? round2(financedAmount)
+    : rows[paidBefore - 1]?.remainingPrincipalBalance ?? 0;
+  const undistributedInsuranceTotal = hasUnknownInsuranceDistribution ? fixedTotal : 0;
 
   return {
     rows,
@@ -231,6 +271,22 @@ export function generateEstimatedDebtSchedule(
     totalFees,
     financialInstallmentAmount: round2(baseFinancialInstallment),
     installmentAmountMode,
+    remainingPrincipalBalanceAfterPaidBeforeTracking,
+    undistributedInsuranceTotal,
+    hasUnknownInsuranceDistribution,
     isEstimated: true,
   };
+}
+
+function effectivePeriodicRateFromPeriodicRate(params: {
+  periodicRatePercent: number;
+  periodicRateBasis: PeriodicRateBasis;
+  frequency: DebtPaymentFrequency;
+  customFrequencyDays?: number | null;
+}): number {
+  const daysForFrequency = params.frequency === "monthly" ? 30 : params.frequency === "biweekly" ? 14 : params.frequency === "weekly" ? 7 : params.customFrequencyDays ?? 30;
+  const basisDays = params.periodicRateBasis === "monthly" ? 30 : params.periodicRateBasis === "biweekly" ? 14 : params.periodicRateBasis === "weekly" ? 7 : 1;
+  const baseRate = params.periodicRatePercent / 100;
+  if (basisDays === daysForFrequency) return baseRate;
+  return Math.pow(1 + baseRate, daysForFrequency / basisDays) - 1;
 }

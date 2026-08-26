@@ -283,7 +283,7 @@ export function DebtPlanningPanel({
 
                       <p className="text-xs text-slate-500">
                         {item.creditorName && `Acreedor: ${item.creditorName} · `}
-                        Cuota #{item.installmentNumber} · Vence: {formatLocalDate(item.dueDate)}
+                        Cuota contractual #{item.contractualInstallmentNumber ?? item.installmentNumber} · Vence: {formatLocalDate(item.dueDate)}
                       </p>
                     </div>
 
