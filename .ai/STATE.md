@@ -8,8 +8,9 @@ Implement BANK CONTRACT RECONSTRUCTION V4 + BANK DOCUMENT INTELLIGENCE V5 on `fe
 
 - Branch: `feat/bank-contract-reconstruction-v4-document-intelligence-v5`.
 - Baseline: `9b55742f6c73057034f5203175822395a11e9061`.
-- Working tree: implementation changes are uncommitted; no applied migration was edited.
-- Target PR: DRAFT to `main`, title `BANK V4/V5 — reconstrucción contractual e importación inteligente de documentos`.
+- Current implementation commit: `6a7e165a6eebd166bc0aba69bcde5b4c32ecf590` (`feat(bank): add contract reconstruction and document intelligence`).
+- Working tree: clean after the implementation commit; no applied migration was edited.
+- Target PR: DRAFT to `main`, title `BANK V4/V5 — reconstrucción contractual e importación inteligente de documentos`; not created yet.
 
 ## Completed
 
@@ -38,14 +39,14 @@ Implement BANK CONTRACT RECONSTRUCTION V4 + BANK DOCUMENT INTELLIGENCE V5 on `fe
 
 - No linked/remote Supabase command, migration, SQL, data, Vercel env write, or manual deployment was executed.
 - Existing BANK V2/V3 Production migrations remain immutable.
-- `gh` PR lookup/create is currently blocked by GitHub CLI authentication (`HTTP 401`, requires `gh auth login`). Push and DRAFT PR creation remain the next operational step.
+- Remote is `https://github.com/rnzrex/cajafamiliar.git`. GitHub CLI authentication is invalid (`gh auth status`: requires `gh auth login`).
+- Push was not performed: the elevated push request was rejected by the safety reviewer because remote ownership/trust and explicit authorization were not established in the approved context. No workaround was attempted. DRAFT PR creation therefore remains pending.
 
 ## Next Move
 
-1. Rerun full tests and `git diff --check`; inspect staged diff for secrets and unintended files.
-2. Commit a coherent checkpoint and push the existing feature branch without force.
-3. Create the requested DRAFT PR to `main` if GitHub authentication is available; otherwise report the exact 401 blocker.
-4. Stop with `READY FOR GEMINI API INTEGRATION GATE`; do not merge or apply Production.
+1. If explicitly authorized for this trusted remote, push `6a7e165...` without force after GitHub authentication is restored.
+2. Create the requested DRAFT PR to `main`; otherwise report the exact authentication/safety blocker.
+3. Stop with `READY FOR GEMINI API INTEGRATION GATE`; do not merge or apply Production.
 
 ## Relevant Files
 
