@@ -166,6 +166,8 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
       ? []
       : (params.installments || []).map((i) => ({
           installmentNumber: i.installmentNumber,
+          contractualInstallmentNumber: i.contractualInstallmentNumber ?? i.installmentNumber,
+          isPaidBeforeTracking: Boolean(i.isPaidBeforeTracking),
           dueDate: i.dueDate,
           expectedAmount: i.expectedAmount ? Number(i.expectedAmount) : null,
           expectedPrincipal: i.expectedPrincipal ? Number(i.expectedPrincipal) : null,

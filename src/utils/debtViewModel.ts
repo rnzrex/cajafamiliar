@@ -123,6 +123,14 @@ export function getInstallmentProgress(
   allocations: DebtEventInstallmentAllocation[],
   events: DebtEvent[]
 ) {
+  if (installment.isPaidBeforeTracking) {
+    return {
+      allocated: 0,
+      expected: installment.expectedAmount ?? 0,
+      isPaid: true,
+      progressPercent: 100,
+    };
+  }
   const allocated = allocatedAmountForInstallment(installment.id, allocations, events);
   const expected = installment.expectedAmount ?? 0;
   const isPaid = expected > 0 ? allocated >= expected : allocated > 0;
@@ -353,13 +361,16 @@ export function validateDebtAllocations(
     if (!inst) {
       return { valid: false, error: "Una de las cuotas asignadas no existe en el cronograma." };
     }
+    if (inst.isPaidBeforeTracking) {
+      return { valid: false, error: `La cuota contractual #${inst.contractualInstallmentNumber ?? inst.installmentNumber} ya estaba pagada antes de Caja Familiar.` };
+    }
 
     const alreadyAllocated = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
     const expectedAmount = inst.expectedAmount;
     if (expectedAmount != null && Number.isFinite(expectedAmount)) {
       const remaining = Math.max(0, expectedAmount - alreadyAllocated);
       if (alloc.allocatedAmount > remaining + 0.01) {
-        return { valid: false, error: `El monto asignado a la cuota #${inst.installmentNumber} supera el saldo restante (S/ ${remaining.toFixed(2)}).` };
+        return { valid: false, error: `El monto asignado a la cuota #${inst.contractualInstallmentNumber ?? inst.installmentNumber} supera el saldo restante (S/ ${remaining.toFixed(2)}).` };
       }
     }
   }

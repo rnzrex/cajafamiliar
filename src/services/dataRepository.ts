@@ -720,6 +720,7 @@ export async function createDebt(input: DebtCreateInput): Promise<DebtCreateResu
 
 export interface BankLoanCreateInput extends DebtCreateInput {
   loanSubtype: BankLoanSubtype;
+  installmentsPaidBeforeTracking?: number;
   contractNumber?: string | null;
   amortizationMethod: AmortizationMethod;
   disbursedAmount?: number | null;
@@ -758,6 +759,7 @@ export async function createBankLoan(input: BankLoanCreateInput): Promise<DebtCr
       down_payment_amount: input.downPaymentAmount ?? null,
       financed_amount: input.financedAmount ?? null,
       term_installments: input.termInstallments ?? null,
+      installments_paid_before_tracking: input.installmentsPaidBeforeTracking ?? 0,
       grace_period_type: input.gracePeriodType ?? "none",
       grace_period_installments: input.gracePeriodInstallments ?? null,
       balloon_payment_amount: input.balloonPaymentAmount ?? null,
@@ -1300,6 +1302,8 @@ function toDebtAllocationRow(input: DebtAllocationInput) {
 function toDebtScheduleInstallmentRow(input: DebtScheduleInstallmentInput) {
   return {
     installment_number: input.installmentNumber,
+    contractual_installment_number: input.contractualInstallmentNumber ?? input.installmentNumber,
+    is_paid_before_tracking: input.isPaidBeforeTracking ?? false,
     due_date: input.dueDate,
     expected_amount: input.expectedAmount ?? null,
     expected_principal: input.expectedPrincipal ?? null,
@@ -1729,6 +1733,10 @@ function fromDebtInstallmentRow(row: Record<string, any>): DebtInstallment {
     expectedInterest: row.expected_interest == null ? null : Number(row.expected_interest),
     expectedFees: row.expected_fees == null ? null : Number(row.expected_fees),
     expectedInsurance: row.expected_insurance == null ? null : Number(row.expected_insurance),
+    contractualInstallmentNumber: row.contractual_installment_number == null
+      ? Number(row.installment_number)
+      : Number(row.contractual_installment_number),
+    isPaidBeforeTracking: Boolean(row.is_paid_before_tracking),
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
   };
@@ -1774,6 +1782,9 @@ export function fromBankLoanProfileRow(row: Record<string, any>): BankLoanProfil
     downPaymentAmount: row.down_payment_amount != null ? Number(row.down_payment_amount) : null,
     financedAmount: row.financed_amount != null ? Number(row.financed_amount) : null,
     termInstallments: row.term_installments != null ? Number(row.term_installments) : null,
+    installmentsPaidBeforeTracking: row.installments_paid_before_tracking == null
+      ? 0
+      : Number(row.installments_paid_before_tracking),
     gracePeriodType: row.grace_period_type ?? "none",
     gracePeriodInstallments: row.grace_period_installments != null ? Number(row.grace_period_installments) : null,
     balloonPaymentAmount: row.balloon_payment_amount != null ? Number(row.balloon_payment_amount) : null,

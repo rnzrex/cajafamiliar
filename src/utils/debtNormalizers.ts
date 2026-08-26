@@ -48,6 +48,10 @@ export function normalizeDebtInstallments(saved: DebtInstallment[]): DebtInstall
   return saved.map((installment) => ({
     ...installment,
     installmentNumber: Number(installment.installmentNumber),
+    contractualInstallmentNumber: installment.contractualInstallmentNumber == null
+      ? Number(installment.installmentNumber)
+      : Number(installment.contractualInstallmentNumber),
+    isPaidBeforeTracking: Boolean(installment.isPaidBeforeTracking),
     expectedAmount: installment.expectedAmount == null ? null : Number(installment.expectedAmount),
     expectedPrincipal: installment.expectedPrincipal == null ? null : Number(installment.expectedPrincipal),
     expectedInterest: installment.expectedInterest == null ? null : Number(installment.expectedInterest),
