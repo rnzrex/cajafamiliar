@@ -174,6 +174,7 @@ export function buildDebtCreateInputPayload(params: DebtOnboardingInputParams): 
           expectedInterest: i.expectedInterest ? Number(i.expectedInterest) : null,
           expectedFees: i.expectedFees ? Number(i.expectedFees) : null,
           expectedInsurance: i.expectedInsurance ? Number(i.expectedInsurance) : null,
+          reportedBalance: i.reportedBalance ? Number(i.reportedBalance) : null,
         })),
     collaterals,
     repaymentStructure: params.repaymentStructure || "unknown",

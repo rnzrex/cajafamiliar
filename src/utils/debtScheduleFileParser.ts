@@ -9,7 +9,7 @@ import {
   type ScheduleParseResult,
 } from "./debtScheduleParser.js";
 
-export type DebtScheduleColumn = "installmentNumber" | "dueDate" | "expectedAmount" | "expectedPrincipal" | "expectedInterest" | "expectedInsurance" | "expectedFees";
+export type DebtScheduleColumn = "installmentNumber" | "dueDate" | "expectedAmount" | "expectedPrincipal" | "expectedInterest" | "expectedInsurance" | "expectedFees" | "reportedBalance";
 
 export const DEBT_SCHEDULE_COLUMN_LABELS: Record<DebtScheduleColumn, string> = {
   installmentNumber: "Cuota",
@@ -19,6 +19,7 @@ export const DEBT_SCHEDULE_COLUMN_LABELS: Record<DebtScheduleColumn, string> = {
   expectedInterest: "Interés",
   expectedInsurance: "Seguro",
   expectedFees: "Gastos",
+  reportedBalance: "Saldo informado",
 };
 
 export interface DebtScheduleFileColumnMapping {
@@ -29,6 +30,7 @@ export interface DebtScheduleFileColumnMapping {
   expectedInterest?: number;
   expectedInsurance?: number;
   expectedFees?: number;
+  reportedBalance?: number;
 }
 
 export interface DebtScheduleFileParseResult extends ScheduleParseResult {
@@ -57,6 +59,7 @@ const HEADER_ALIASES: Record<DebtScheduleColumn, string[]> = {
   expectedInterest: ["interes"],
   expectedInsurance: ["seguro", "desgravamen", "segurodesgravamen"],
   expectedFees: ["gastos", "comision", "portes", "otros"],
+  reportedBalance: ["saldo", "saldopendiente", "saldocapital", "balance", "saldobanco"],
 };
 
 function normalizeHeader(value: string): string {
@@ -121,6 +124,13 @@ function detectMapping(headers: string[]): { mapping: DebtScheduleFileColumnMapp
       if (candidates.length > 1) ambiguousColumns.push(column);
     }
   }
+  const reportedBalanceCandidates = normalized.flatMap((header, index) =>
+    HEADER_ALIASES.reportedBalance.some((alias) => header === alias || (alias.length >= 5 && header.includes(alias))) ? [index] : []
+  );
+  if (reportedBalanceCandidates.length > 0) {
+    mapping.reportedBalance = reportedBalanceCandidates[0];
+    if (reportedBalanceCandidates.length > 1) ambiguousColumns.push("reportedBalance");
+  }
   return { mapping, missingColumns, ambiguousColumns };
 }
 
@@ -151,7 +161,12 @@ export function parseDebtScheduleFile(
 ): DebtScheduleFileParseResult {
   let workbook: XLSX.WorkBook;
   try {
-    workbook = XLSX.read(data, { type: "array", cellDates: true });
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    const isZipWorkbook = bytes[0] === 0x50 && bytes[1] === 0x4b;
+    const isLegacyWorkbook = bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0;
+    workbook = isZipWorkbook || isLegacyWorkbook
+      ? XLSX.read(bytes, { type: "array", cellDates: true })
+      : XLSX.read(new TextDecoder("utf-8").decode(bytes), { type: "string", cellDates: true });
   } catch {
     return emptyResult({ errors: ["No pudimos leer el archivo. Verifica que sea un Excel o CSV válido."] });
   }
@@ -181,7 +196,7 @@ export function parseDebtScheduleFile(
     });
   }
 
-  const mappedColumnEntries = REQUIRED_COLUMNS.map((column) => [column, mapping[column]!] as const);
+  const mappedColumnEntries = [...REQUIRED_COLUMNS, ...(mapping.reportedBalance != null ? ["reportedBalance" as const] : [])].map((column) => [column, mapping[column]!] as const);
   const duplicateSourceColumns = Array.from(new Set(
     mappedColumnEntries
       .map(([, sourceIndex]) => sourceIndex)
@@ -210,6 +225,7 @@ export function parseDebtScheduleFile(
       row[mapping.expectedInsurance!],
       row[mapping.expectedFees!],
     ].map(cellText);
+    if (mapping.reportedBalance != null) amountValues.push(cellText(row[mapping.reportedBalance]));
     lines.push([cellText(installmentValue), dueDate ?? cellText(row[mapping.dueDate!]), ...amountValues].join("\t"));
   }
 
@@ -221,7 +237,7 @@ export function scheduleFileRowsToInternal(rows: ContractualScheduleRowInput[]):
   return rows.map((row, index) => ({ ...row, installmentNumber: index + 1 }));
 }
 
-export function formatScheduleFilePreview(result: DebtScheduleFileParseResult): Array<Record<DebtScheduleColumn, string | number>> {
+export function formatScheduleFilePreview(result: DebtScheduleFileParseResult): Array<Record<DebtScheduleColumn, string | number | null>> {
   return result.rows.map((row) => ({
     installmentNumber: row.contractualInstallmentNumber,
     dueDate: row.dueDate,
@@ -230,6 +246,7 @@ export function formatScheduleFilePreview(result: DebtScheduleFileParseResult): 
     expectedInterest: row.expectedInterest,
     expectedInsurance: row.expectedInsurance,
     expectedFees: row.expectedFees,
+    reportedBalance: row.reportedBalance ?? null,
   }));
 }
 

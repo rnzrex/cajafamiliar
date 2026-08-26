@@ -816,7 +816,7 @@ export function DebtDetailModal({
                       <span className="rounded-full bg-amber-100 px-2.5 py-1 text-amber-900">Cronograma posterior pendiente</span>
                     ) : currentSchedule && (
                       <div className="flex items-center gap-2 text-xs font-bold">
-                        <span className="rounded-full bg-white px-2.5 py-1 text-blue-800">{currentSchedule.scheduleSource === "contractual" ? "Contractual" : currentSchedule.scheduleSource === "estimated" ? "Estimado" : "Manual"}</span>
+                        <span className="rounded-full bg-white px-2.5 py-1 text-blue-800">{currentSchedule.scheduleSource === "contractual" ? "Contractual" : currentSchedule.scheduleSource === "reconstructed" ? "Reconstruido" : currentSchedule.scheduleSource === "estimated" ? "Estimado" : "Manual"}</span>
                         <span className={`rounded-full px-2.5 py-1 ${currentSchedule.isAuthoritative ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{currentSchedule.isAuthoritative ? "Autoritativo" : "No autoritativo"}</span>
                       </div>
                     )}
@@ -1169,7 +1169,7 @@ export function DebtDetailModal({
                     </h3>
                     {currentSchedule && (
                       <div className="text-right text-xs font-bold text-slate-600">
-                        <p>Fuente: {currentSchedule.scheduleSource === "contractual" ? "Contractual" : currentSchedule.scheduleSource === "estimated" ? "Estimado" : "Manual"}</p>
+                        <p>Fuente: {currentSchedule.scheduleSource === "contractual" ? "Contractual" : currentSchedule.scheduleSource === "reconstructed" ? "Reconstruido" : currentSchedule.scheduleSource === "estimated" ? "Estimado" : "Manual"}</p>
                         <p>{currentSchedule.isAuthoritative ? "Cronograma autoritativo" : "No autoritativo"}</p>
                       </div>
                     )}

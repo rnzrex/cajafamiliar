@@ -2,86 +2,56 @@
 
 ## Objective
 
-BANK LOAN ONBOARDING V3 is CLOSED in Production.
-
-The bank-loan onboarding now supports existing-loan baselines without synthetic history, contractual numbering distinct from internal schedule numbering, XLSX/XLS/CSV/TSV/TXT schedule import, fixed-total insurance semantics, original-contract estimation, and the reordered six-step bank UX.
+Implement BANK CONTRACT RECONSTRUCTION V4 + BANK DOCUMENT INTELLIGENCE V5 on `feat/bank-contract-reconstruction-v4-document-intelligence-v5`, based on `9b55742f6c73057034f5203175822395a11e9061`, and stop at the Gemini API integration gate. Do not merge, apply Supabase Production migrations, deploy manually, add secrets, or create financial test data.
 
 ## Repository
 
-- Default branch: `main`.
-- PR #63: MERGED.
-- Validated PR head: `389aeff376a38b6a1b4e3c85fde551d037254940`.
-- Merge commit: `65851e7e11f597e858e2eea606368dd04e78be9c`.
-- Read Git for the current HEAD because this continuity update is committed after the functional merge.
+- Branch: `feat/bank-contract-reconstruction-v4-document-intelligence-v5`.
+- Baseline: `9b55742f6c73057034f5203175822395a11e9061`.
+- Working tree: implementation changes are uncommitted; no applied migration was edited.
+- Target PR: DRAFT to `main`, title `BANK V4/V5 — reconstrucción contractual e importación inteligente de documentos`.
 
-## Completed — BANK LOAN ONBOARDING V3
+## Completed
 
-- Added `bank_loan_profiles.installments_paid_before_tracking`.
-- Added `debt_installments.contractual_installment_number` and `is_paid_before_tracking`.
-- Pre-tracking installments are metadata-only: no historical movements, debt events, expenses, account changes, or allocations are fabricated.
-- Internal schedule numbering remains 1..N; contractual numbering preserves bank numbering such as 6..18 for partial imports.
-- Initial partial contractual schedules must start at `installments_paid_before_tracking + 1`; partial estimated schedules are rejected.
-- Pre-tracking rows cannot receive allocations; later schedule versions cannot inherit the baseline flag.
-- Bank form order: 1 Sobre el crédito, 2 Contrato original, 3 Situación actual, 4 Seguros y costos, 5 Cronograma, 6 Revisión.
-- Partial imports do not overwrite the original first due date; the first pending imported date is separate.
-- Import supports XLSX/XLS/CSV/TSV/TXT with aliases, preview, manual mapping, duplicate/continuity/date validation, and full or pending-only schedules.
-- Estimation prioritizes original financed amount, supports contractual periodic rate, does not use TCEA for interest, and compares theoretical vs actual current principal without overwriting the real baseline.
-- Fixed insurance supports per-installment, total-even, upfront, and unknown-distribution buckets independently, including cent adjustment.
-- Agenda, planning, intelligence, and debt detail share the contractual next-installment SSOT.
-- Existing BANK V2, QAPAQ, non-bank debt, pledge, credit-card, account, and movement semantics were preserved by regression coverage.
+- Added isolated V4 reconstruction with actual-days/360 and actual-days/365 candidates, due-date rules, total-installment semantics, insurance-rate inference, and `contractual`/`reconstructed`/`estimated` provenance.
+- Added reconciliation and reported-balance classification. The anonymized fixture reconstructs 18/18 rows, infers actual-days/360, Sunday-to-Monday adjustment, approximately 0.35% outstanding-balance insurance, totals 4100.00 principal / 2003.41 interest / 154.79 insurance / 6258.20 total, and derives 3294.39 after five paid installments.
+- Added V4/V5 persistence mappers and one additive migration: `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql`.
+- Added private temporary Supabase Storage uploads, metadata-only `bank_document_import_jobs`, RLS/path ownership checks, cleanup cron, deterministic spreadsheet parsing, structured extraction normalization/merge, Gemini REST provider abstraction, fake provider, countTokens cost guard, one bounded repair pass, and review-only API output.
+- Added bank onboarding import panel with multi-file support, image quality guard, progress/cancel states, review statuses, balance choices, auto-fill, and manual fallback. The UI never saves AI output without the existing user review/submit step.
+- Added server-only `.env.example` configuration; no real key or client-side `VITE_` secret.
 
 ## Validation
 
-- `npm test`: PASS — 55 files / 893 tests.
-- Focused BANK V3: PASS — 15 tests.
-- DebtForm bank UX: PASS — 4 tests.
-- Build: PASS.
-- Typecheck API: PASS.
+- `npm test -- --reporter=dot`: PASS — 63 files / 916 tests.
+- Focused reconstruction/document/security/UI tests: PASS — reconstruction 5, document V5 15, server/UI authorization 7; the prescribed focused suite also passed 11 tests.
+- `npm run typecheck:api`: PASS.
+- `npm run build`: PASS; only existing ineffective dynamic-import and large-chunk warnings.
 - `git diff --check`: PASS.
-- BANK V3 SQL smoke: PASS.
-- BANK V2 / DEBT2B2 / DEBT5FA local suites: PASS.
-- Local HTTP smoke: 200.
-- Vercel Preview for final PR head `389aeff...`: READY.
+- Client bundle search: no `GEMINI_API_KEY`, Gemini model, or Generative Language API reference found.
+- Local BANK V3 SQL smoke: PASS. Local BANK V2 SQL smoke: PASS. DEBT-2B.2: PASS.
+- DEBT-5F-A local smoke reached and applied the repository migration sequence, including the new migration's relational DDL, but reported the local Storage tables missing and then failed its pre-existing auth-user assertion; no repository file or Production state was changed.
+- `npx supabase db push --local --dry-run`: PASS; local history is empty, so every local migration is listed pending.
+- `npx supabase db lint --local --fail-on error`: blocked by pre-existing unrelated local errors; no V4/V5 error was reported.
+- Transactional local SQL smoke reached the new ALTER TABLE statements, then stopped because this local database lacks `storage.buckets`; transaction rolled back. Production was untouched.
 
-## Supabase Production
+## Production / Remote
 
-Project: `dxogrdvgdbvbdyoepqtx`.
-
-- Migration applied exactly: `20260826141250_bank_loan_onboarding_v3`.
-- Historical BANK V2 migrations remain unchanged.
-- Production audit PASS for new columns/defaults/constraints/index/triggers, `create_bank_loan_v1`, partial-schedule guard, allocation guard, RLS, and policy presence.
-- `create_bank_loan_v1` remains the intentional authenticated SECURITY DEFINER RPC with `auth.uid()`, household-membership authorization, `search_path=''`, and no EXECUTE for `anon`.
-- Security/performance advisors were reviewed. Current notices are pre-existing/intended or informational; the new pretracking index is naturally reported unused immediately after creation.
-- No Production test/junk financial data was created. No synthetic historical payments were inserted.
-
-## Vercel Production
-
-- Functional merge deployment: `dpl_84PKvggUcWDpY5UQWcepggKgBeXM`.
-- Deployment Git SHA: `65851e7e11f597e858e2eea606368dd04e78be9c`.
-- State: READY.
-- `https://cajafamiliar.vercel.app`: HTTP 200.
-- Runtime `error` / `fatal` check after deployment: no entries.
-
-## BANK V2 / Migration Safety
-
-Do not edit applied migrations:
-
-- `20260824225428_bank_credit_contract_v2.sql`
-- `20260825010000_bank_credit_contract_v2_audit_fix.sql`
-- `20260825071034_bank_credit_contract_v2_finalization.sql`
-- `20260825165854_bank_credit_contract_v2_schedule_state_guard.sql`
-- `20260826141250_bank_loan_onboarding_v3.sql`
-
-Future SQL changes require a new additive migration. Never use destructive reset/clean/force-push workflows for routine work.
+- No linked/remote Supabase command, migration, SQL, data, Vercel env write, or manual deployment was executed.
+- Existing BANK V2/V3 Production migrations remain immutable.
+- `gh` PR lookup/create is currently blocked by GitHub CLI authentication (`HTTP 401`, requires `gh auth login`). Push and DRAFT PR creation remain the next operational step.
 
 ## Next Move
 
-BANK LOAN ONBOARDING V3 has no pending implementation gate. Reopen it only for a concrete Production regression or explicit new scope.
+1. Rerun full tests and `git diff --check`; inspect staged diff for secrets and unintended files.
+2. Commit a coherent checkpoint and push the existing feature branch without force.
+3. Create the requested DRAFT PR to `main` if GitHub authentication is available; otherwise report the exact 401 blocker.
+4. Stop with `READY FOR GEMINI API INTEGRATION GATE`; do not merge or apply Production.
 
-The next planned debt-domain objective is broader Peru debt taxonomy coverage (for example non-card revolving credit, overdraft, leasing/lease-back, merchant financing, and business-credit classifications), but it is not part of BANK V3.
+## Relevant Files
 
-## Last Handoff
-
-- Agent: ChatGPT orchestrator.
-- Date: 2026-08-26.
-- Summary: Production schema audit passed, PR #63 was marked ready and merged with exact expected head, merge deployment reached READY, public Production returned HTTP 200, and runtime error/fatal logs were clean. BANK LOAN ONBOARDING V3 is CLOSED in Production.
+- `src/utils/bankContractReconstruction.ts` — V4 reconstruction engine.
+- `src/utils/bankContractReconciliation.ts` — reconciliation, balance classifier, baseline derivation.
+- `src/utils/bankDocumentExtraction.ts` — allowlisted extraction schema, normalization, conflict merge, review statuses.
+- `src/components/BankDocumentImportPanel.tsx` — recommended multi-document upload UX.
+- `api/bank-document/` and `api/_lib/bankDocument*.ts` — secure server pipeline/provider/cost/cleanup.
+- `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` — additive persistence/storage/RPC changes.
