@@ -7,7 +7,7 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 ## Active Work
 
-- BANK LOAN ONBOARDING V3 audit fixes are implemented in local commit `abb202f` and ready to push to the existing DRAFT PR #63.
+- BANK LOAN ONBOARDING V3 audit fixes are implemented in commit `abb202f`, pushed with the continuity handoff, and available in the existing DRAFT PR #63.
 - Production remains untouched. Do not apply the new migration remotely, merge, or deploy manually.
 - Historical BANK V2 migrations remain immutable.
 
@@ -15,7 +15,7 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 - Branch: `feat/bank-loan-onboarding-v3`
 - Starting branch HEAD: `d9f16dd55ca77b4bd3cc72051a54273112240db6`
-- Previous pushed checkpoint SHA: `36d7d6817fecad49025c4d7e0bf532ea5eadb762`; local audit-fix checkpoint: `abb202f`. Read Git for the exact current HEAD and remote SHA.
+- Previous pushed checkpoint SHA: `36d7d6817fecad49025c4d7e0bf532ea5eadb762`; audit-fix checkpoint: `abb202f`; continuity commit is on top. Read Git for the exact current HEAD and remote SHA.
 - DRAFT PR: https://github.com/rnzrex/cajafamiliar/pull/63, base `main`, head `feat/bank-loan-onboarding-v3`.
 - The actual current HEAD and remote state must always be read from Git.
 
@@ -58,7 +58,7 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 ## Production
 
 - No Production data, migration, SQL, deployment, or manual Vercel action was performed for this objective.
-- The prior PR #63 Preview check passed; the audit-fix push will trigger a new automatic Preview check. Production remains untouched.
+- Automatic Vercel Preview checks for the audit-fix push passed, including deployment completion and Preview Comments. Production remains untouched.
 
 ## BANK V2 Baseline / Restrictions
 
@@ -68,8 +68,8 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 ## Next Move
 
-1. Push the audit-fix commit and continuity update to `feat/bank-loan-onboarding-v3`, then verify the automatic Preview check.
-2. Keep PR #63 in DRAFT and await review/requested changes.
+1. Keep PR #63 in DRAFT and await review/requested changes.
+2. If changes are requested, preserve the additive migration rule, rerun the relevant local gates, and push a new checkpoint.
 3. Do not merge, apply remote Supabase migrations, or touch Production without explicit authorization.
 
 ## Key Files
@@ -90,4 +90,4 @@ existing-loan baseline, contractual-vs-internal schedule numbering, smart Excel/
 
 - Agent: Codex
 - Date: 2026-08-26
-- Summary: BANK LOAN ONBOARDING V3 audit fixes are implemented and all code/local SQL gates are green. Local fix commit `abb202f` is ready to push; PR #63 must remain DRAFT and Production is untouched.
+- Summary: BANK LOAN ONBOARDING V3 audit fixes are implemented and all code/local SQL gates are green. Fix commit `abb202f` plus continuity handoff are pushed; PR #63 remains DRAFT and automatic Vercel Preview checks passed. Production is untouched.
