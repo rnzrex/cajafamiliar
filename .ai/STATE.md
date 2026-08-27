@@ -9,8 +9,8 @@ Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-r
 - Branch: feat/bank-prepayment-recalculation-v1.
 - Base: c46d4b6faaee1cdcb2121a53696f69f757790eb5.
 - Implementation commit: 89a562e74782f925a57b42af7caa3d53f7715ec3 (fix(bank): correct prepayment schedule semantics), pushed normally with no force.
-- Working tree is clean; remote branch currently points to 89a562e74782f925a57b42af7caa3d53f7715ec3.
-- Metadata checkpoint commit is required after this state update.
+- Working tree is clean; remote branch currently points to eec7c0f1c5ac11a13c09c89f907120431b416416.
+- Metadata checkpoint commit: eec7c0f1c5ac11a13c09c89f907120431b416416 (chore(ai): record bank prepayment audit fix state), pushed normally with no force.
 
 ## Constraints
 
@@ -47,8 +47,8 @@ Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-r
 ## Delivery
 
 - gh auth status: authenticated to github.com as rnzrex via keyring/HTTPS; token not exposed.
-- PR #66: https://github.com/rnzrex/cajafamiliar/pull/66, open, draft=true, base main, head branch feat/bank-prepayment-recalculation-v1, head SHA 89a562e74782f925a57b42af7caa3d53f7715ec3.
-- Automatic Preview for implementation SHA: deployment dpl_CcMNoPYkCYWhU5CFuYa1Bn4u5pS1, URL https://cajafamiliar-fadkiro1g-renzorex.vercel.app, branch alias https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app, exact Git SHA 89a562e74782f925a57b42af7caa3d53f7715ec3, state READY.
+- PR #66: https://github.com/rnzrex/cajafamiliar/pull/66, open, draft=true, base main, head branch feat/bank-prepayment-recalculation-v1, head SHA eec7c0f1c5ac11a13c09c89f907120431b416416.
+- Automatic Preview for final pushed SHA: deployment dpl_AqNegND6ftxzntioXa68EcVcCWzk, URL https://cajafamiliar-ployeaqr6-renzorex.vercel.app, branch alias https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app, exact Git SHA eec7c0f1c5ac11a13c09c89f907120431b416416, state READY.
 - Preview metadata was verified through the read-only Vercel API; no manual deployment was run.
 
 ## Production
@@ -58,7 +58,7 @@ Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-r
 
 ## Next Step
 
-- After the metadata checkpoint is pushed, stop. The orchestrator may audit the DRAFT Preview and later perform the separate prepayment migration gate.
+- The metadata checkpoint is pushed; stop. The orchestrator may audit the DRAFT Preview and later perform the separate prepayment migration gate.
 - Do not apply 20260827214244_bank_prepayment_schedule_lifecycle_v1.sql in Production from this task.
 
 ## Relevant Files
@@ -71,3 +71,4 @@ Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-r
 - src/utils/debtPlanning.ts — exact prepayment event target selection.
 - supabase/migrations/20260827214244_bank_prepayment_schedule_lifecycle_v1.sql — pending forward-only lifecycle migration.
 - scripts/test-bank-prepayment-lifecycle-local.mjs — local-only SQL smoke test.
+
