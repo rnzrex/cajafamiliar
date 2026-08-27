@@ -8,7 +8,8 @@ Implement and publish the complete-dossier/full-schedule improvements for the pe
 
 - Branch: `feat/bank-external-ai-complete-dossier-v1`.
 - Base before this work: `776caaf03401f62701434d75f7881028ebbc40d6`.
-- Current work is uncommitted and must receive the requested feature commit before push.
+- Feature implementation commit: `8caf5d902133e7d69a58653675896d7702aa5d0b` (`feat(bank): require complete external ai dossier extraction`).
+- The final delivery checkpoint below is metadata-only and will be a separate normal commit; Git remains authoritative for its exact SHA.
 - No new migration; applied `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` is untouched and immutable.
 
 ## Constraints
@@ -38,15 +39,20 @@ Implement and publish the complete-dossier/full-schedule improvements for the pe
 - `git diff --check`: PASS.
 - Destructive local reset harnesses `test:debt5fa:local` and `test:recon1a:local` were not run, per safety constraints.
 
-## Delivery Pending
+## Delivery
 
-- Commit with message `feat(bank): require complete external ai dossier extraction`.
-- Normal push to the same branch, then create/update a DRAFT PR against `main` with title `BANK External AI — extracción completa de expediente y cronograma`.
-- Wait for automatic Vercel Preview and verify the deployment is READY for the exact pushed SHA.
+- Normal push completed; remote branch currently contains the feature commit above.
+- PR #65 is open against `main`, title `BANK External AI — extracción completa de expediente y cronograma`, and remains `isDraft: true`.
+- The feature commit Preview is READY at `https://cajafamiliar-ht4jgcekt-renzorex.vercel.app`, deployment `dpl_6MLtiMiLeE4B1km3VBfZkNGASCd2`, exact Git SHA `8caf5d902133e7d69a58653675896d7702aa5d0b`, source `git`, branch `feat/bank-external-ai-complete-dossier-v1`, and HTTP 200.
+- This state update is the required metadata-only delivery checkpoint; after it is pushed, re-check the branch SHA, PR head SHA, and automatic Preview because the checkpoint itself changes the branch head.
 
 ## Production
 
 - Production remains untouched by this task. No Supabase write, Vercel Production deployment, Gemini key, billing change, or real bank document was used.
+
+## Next Step
+
+- Stop after the metadata checkpoint and automatic Preview verification. The orchestrator may now audit the DRAFT PR and later run the real redacted external-AI contract test; do not merge or deploy Production from this task.
 
 ## Relevant Files
 
