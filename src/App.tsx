@@ -43,7 +43,8 @@ import { buildCreditCardStatementAlerts, selectUrgentCreditCardStatementAlertsFo
 import { eligibleCreditCardsForSpending, isCreditCardMovementContext } from "./utils/creditCardSpending";
 import { buildObligationProjection } from "./utils/obligationProjection";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
-import { mergePendingMovements, shouldStartAuthoritativeRefresh, validateAuthoritativeLoadSource } from "./services/authoritativeSync";
+import { containsDebtCreateResult, mergeDebtCreateResultIntoAppData, mergePendingMovements, shouldStartAuthoritativeRefresh, validateAuthoritativeLoadSource } from "./services/authoritativeSync";
+import type { DebtCreateResult } from "./services/dataRepository";
 import {
   CategoryNotFoundError,
   createCashCount,
@@ -194,7 +195,17 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
   const [remoteSyncStatus, setRemoteSyncStatus] = useState<"loading" | "fresh" | "refreshing" | "error" | "offline">("loading");
   const refreshInFlightRef = useRef(false);
   const lastRefreshStartedAtRef = useRef(0);
+  const pendingDebtCreateResultsRef = useRef(new Map<string, DebtCreateResult>());
+  const pendingDebtScopeRef = useRef<string | null>(null);
   const dataReadyRef = useRef(dataReady);
+
+  useEffect(() => {
+    const scope = currentMember ? `${currentMember.householdId}:${currentMember.userId}` : null;
+    if (pendingDebtScopeRef.current !== scope) {
+      pendingDebtCreateResultsRef.current.clear();
+      pendingDebtScopeRef.current = scope;
+    }
+  }, [currentMember?.householdId, currentMember?.userId]);
 
   useEffect(() => {
     dataReadyRef.current = dataReady;
@@ -239,8 +250,24 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
 
         updatePendingMovementIds(pendingOperations.map((op) => op.movement.id));
         const mergedData = mergePendingMovements(res.data, pendingOperations);
+        const pendingDebtCreateResults = [...pendingDebtCreateResultsRef.current.values()];
+        const dataWithPendingDebtCreates = pendingDebtCreateResults.reduce(
+          (current, result) => mergeDebtCreateResultIntoAppData(current, result),
+          mergedData,
+        );
 
-        setData(mergedData);
+        // A refresh may have started before the RPC completed. Keep the
+        // returned create rows over a stale snapshot, then release them once
+        // a remote load contains every returned ID.
+        if (res.source === "remote") {
+          for (const result of pendingDebtCreateResults) {
+            if (containsDebtCreateResult(res.data, result)) {
+              pendingDebtCreateResultsRef.current.delete(result.debt.id);
+            }
+          }
+        }
+
+        setData(dataWithPendingDebtCreates);
         setDataReady(true);
         setDataLoadError(null);
 
@@ -280,6 +307,13 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
   );
   const flushInFlightRef = useRef(false);
   const appMountedRef = useRef(true);
+  const handleDebtSaved = useCallback((result: DebtCreateResult) => {
+    pendingDebtCreateResultsRef.current.set(result.debt.id, result);
+    setData((current) => mergeDebtCreateResultIntoAppData(current, result));
+    setSelectedDebtId(null);
+    setView("deudas");
+    void refreshAuthoritativeData("manual");
+  }, [refreshAuthoritativeData]);
   const refreshAppData = async (reason = "debt-event") => {
     await refreshAuthoritativeData(reason);
   };
@@ -1642,10 +1676,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               accounts={data.financialAccounts}
               categories={data.categories}
               canWriteDebt={canWriteDebt}
-              onSaved={async () => {
-                await refreshAppData();
-                setView("deudas");
-              }}
+              onSaved={handleDebtSaved}
               onCancel={() => setView("deudas")}
               setToast={(t) => setToast({ id: Date.now(), message: t.message })}
             />

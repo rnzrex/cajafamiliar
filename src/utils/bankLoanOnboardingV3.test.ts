@@ -77,6 +77,20 @@ describe("BANK LOAN ONBOARDING V3", () => {
     expect(estimate.remainingPrincipalBalanceAfterPaidBeforeTracking).not.toBe(smallerEstimate.remainingPrincipalBalanceAfterPaidBeforeTracking);
   });
 
+  it("preserves an unknown paid-before baseline instead of treating it as zero", () => {
+    const estimate = generateEstimatedDebtSchedule({
+      financedAmount: 10_000,
+      teaPercent: 60.1,
+      termInstallments: 18,
+      paymentFrequency: "monthly",
+      firstDueDate: "2026-09-15",
+      amortizationMethod: "fixed_installment",
+      installmentsPaidBeforeTracking: null,
+    });
+
+    expect(estimate.remainingPrincipalBalanceAfterPaidBeforeTracking).toBeNull();
+  });
+
   it.each([
     ["per_installment", 10, 180, false],
     ["total_credit_even", 180, 180, false],

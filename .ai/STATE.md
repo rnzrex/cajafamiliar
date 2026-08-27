@@ -2,58 +2,63 @@
 
 ## Objective
 
-BANK CONTRACT RECONSTRUCTION V4 + BANK DOCUMENT INTELLIGENCE V5 + the permanent External AI Import Bridge are CLOSED IN PRODUCTION. Integrated Gemini API support is implemented but configuration is intentionally deferred until a future explicit `GEMINI_API_KEY` / billing gate.
+Close the bank-loan onboarding UX gate on `feat/bank-external-ai-complete-dossier-v1`, publish the fix for orchestrator audit, and keep PR #65 in DRAFT.
 
 ## Repository
 
-- PR: #64 — merged to `main`.
-- Final feature head: `3e0925590b16b840f6042e86f74aa1b5e25f14d0`.
-- Functional merge commit: `6eda80b2d4fd6239b1b471faa870dd0fd67e8138`.
-- V4/V5 migration: `20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` — applied in Production and immutable.
+- Branch: `feat/bank-external-ai-complete-dossier-v1`.
+- Current local HEAD before this metadata commit: `cc6cb41c08679f0b2ff7d6c55a7cf28339171cb8`.
+- Feature commits: `5687eaa` (`feat(bank): add explicit current principal calculation`) and `86d190b` (`fix(debt): surface created debt immediately after save`), both pushed normally to origin.
+- Git is authoritative for the exact HEAD after this metadata checkpoint.
+- Applied migrations remain untouched and immutable.
+
+## Constraints
+
+- Calculated current principal is a suggestion only; the user must explicitly confirm it with `CALCULAR` / `USAR CÁLCULO`.
+- Blank `none` principal remains unknown/null; manual and explicitly imported principal provenance remains distinct.
+- Created debt rows must be visible immediately after save through the returned create result, followed by background authoritative reconciliation.
+- No migration changes, Supabase Production writes, Gemini key/provider calls, Vercel env/deploy changes, merge, or financial test data.
+- PR #65 must remain open against `main` and DRAFT.
 
 ## Completed
 
-- BANK V4 deterministic contract reconstruction supports actual/360 and actual/365, due-date adjustments, total-installment semantics, insurance inference, reconciliation, balance classification, and `contractual` / `reconstructed` / `estimated` provenance.
-- The anonymized 18-row regression fixture reconciles exactly: principal 4100.00, interest 2003.41, insurance 154.79, contractual total 6258.20; paidBefore=5 derives current principal 3294.39 and next contractual installment 6.
-- BANK V5 adds secure PDF/image/spreadsheet document intelligence architecture, private temporary Storage, metadata-only import jobs, cost guards, provider abstraction, deterministic structured-file parsing, and user review before persistence.
-- Integrated Gemini provider remains dormant without `GEMINI_API_KEY`; no real key or billing configuration is required for the released feature.
-- Permanent External AI Import Bridge is available with protocol `CAJA_FAMILIAR_BANK_DOCUMENT_V1`: copy the official prompt, analyze the document in an external AI, paste the structured JSON back into Caja Familiar, then run the same V4/V5 normalization, reconciliation, review, and save gates locally.
-- External responses are size/version checked, parsed with `JSON.parse`, normalized through the allowlisted `BankDocumentExtraction` domain, preserve null as unknown, ignore unknown fields, filter PII metadata, surface conflicts, and never save directly without review.
-- Four bank onboarding paths are supported: external AI, integrated AI, reconstruction from contract terms, and manual entry. Structured XLS/XLSX/CSV/TSV/TXT can still be parsed deterministically without AI when possible.
+- Added source-aware calculated-principal semantics, explicit confirmation, recalculation after `paidBefore` changes, manual override, invalidation, and friendly completeness guidance.
+- Added `DebtForm.onSaved(result)` propagation for `createDebt` / `createBankLoan`.
+- Added idempotent AppData merging for returned debt, schedule version, installments, and collaterals; unrelated rows are preserved and pending results survive stale/failed refreshes.
+- Added regression coverage for principal UX/completeness and immediate post-save debt visibility.
 
 ## Validation
 
-- Full suite reported PASS: 65 files / 953 tests with 15s UI timeout allowance.
-- External bridge: 2 files / 17 tests PASS.
-- Document Intelligence V5: 6 files / 26 tests PASS.
-- Reconstruction V4: 1 file / 11 tests PASS.
-- BANK V3 local SQL: PASS.
-- BANK V2 local SQL: PASS.
-- DEBT-2B.2: PASS.
-- API typecheck: PASS.
-- Build: PASS.
+- `npm test -- --testTimeout=15000`: PASS, 68 files / 981 tests.
+- `npm run build`: PASS; only existing dynamic-import and large-chunk warnings.
+- `npm run typecheck:api`: PASS.
+- `npm run test:bank-external-ai-import`: PASS, 3 files / 29 tests.
+- `npm run test:bank-reconstruction-v4`: PASS, 1 file / 11 tests.
+- `npm run test:bank-document-v5-local`: PASS, 6 files / 26 tests.
 - `git diff --check`: PASS.
-- DEBT-5F-A and RECON-1A destructive local harnesses were intentionally not rerun in the bridge checkpoint; no workaround or Production data mutation was used.
+- `test:bank-loan-v3:local`, `test:bank-v2-local`, and `test:debt2b2` were attempted but are blocked because the local `supabase_db_caja-familiar` container is not running; no Production access or data mutation was used.
+
+## Delivery
+
+- Remote branch currently verified at `cc6cb41c08679f0b2ff7d6c55a7cf28339171cb8`.
+- PR #65: `https://github.com/rnzrex/cajafamiliar/pull/65`, open, `draft=true`, head branch `feat/bank-external-ai-complete-dossier-v1`, head SHA `cc6cb41c08679f0b2ff7d6c55a7cf28339171cb8`.
+- PR description updated with explicit principal confirmation, immediate AppData merge, background reconciliation, and no-reload behavior.
+- Automatic Vercel Preview: deployment `dpl_9tLR6Yqsq632vAaMD8R6CwCNSx9L`, URL `https://cajafamiliar-b0u7qksly-renzorex.vercel.app`, branch alias `https://cajafamiliar-git-feat-bank-external-ai-complete-7f0639-renzorex.vercel.app`, exact Git SHA `cc6cb41c08679f0b2ff7d6c55a7cf28339171cb8`, state `READY`.
+- No force push, merge, Production deployment, or Vercel environment write was performed.
 
 ## Production
 
-- Supabase Production migration history independently confirms `20260826204418 bank_contract_reconstruction_v4_document_intelligence_v5`.
-- Read-only Production verification confirms the new V4/V5 bank-loan columns, `debt_installments.reported_balance`, `bank_document_import_jobs`, private `bank-document-imports` bucket, and RLS on import jobs.
-- Functional Production deployment: `dpl_4z2AWGcSfW6jvfsSK8ZSWrYoPaCc`, Git SHA `6eda80b2d4fd6239b1b471faa870dd0fd67e8138`, state READY.
-- Public `https://cajafamiliar.vercel.app` returned HTTP 200 after the deployment.
-- No error/fatal runtime logs were found for the functional Production deployment at closeout.
-- No real Gemini key, OpenAI key, AI billing change, real contract upload, or financial test data was introduced during the closeout.
+- Production untouched. No Gemini key, billing change, real bank document, financial test data, Vercel env write, frontend Production deployment, migration, or merge was performed.
 
-## Deferred Integrated AI Gate
+## Next Step
 
-- `GEMINI_API_KEY` remains intentionally unconfigured.
-- The API path is already implemented; a future enablement should configure a Paid Tier server-side key, begin in Vercel Preview, verify quality/cost on real redacted documents, and only then enable Production.
-- The External AI Import Bridge remains a permanent supported fallback even after integrated AI is enabled.
+- Stop after this metadata checkpoint; orchestrator may perform the final real bank-loan UX retest from the DRAFT Preview.
 
-## Next Planned Domain Scope
+## Relevant Files
 
-- Broader Peru debt taxonomy remains the next planned debt-domain objective unless a concrete Production regression or explicit new priority is reported.
+- `src/components/DebtForm.tsx` — explicit principal calculation action, source semantics, and create-result propagation.
+- `src/utils/bankDocumentCompleteness.ts` — current-principal required/confirmed behavior.
+- `src/services/authoritativeSync.ts` — idempotent create-result merge and containment helpers.
+- `src/App.tsx` — immediate debt merge plus background authoritative refresh.
+- `src/components/BankLoanFormUX.test.tsx`, `src/utils/bankDocumentCompleteness.test.ts`, `src/services/authoritativeSyncDebtCreate.test.ts`, `src/App.test.tsx` — regression coverage.
 
-## Reopen Criteria
-
-Reopen BANK V4/V5 only for a concrete Production regression, an explicit integrated-AI configuration request, or new bank-document capability scope.

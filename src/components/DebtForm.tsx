@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Check, Plus, Trash2, Shield, Banknote, Building2, Home, PackageCheck, HelpCircle, AlertCircle, Upload } from "lucide-react";
 import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, DebtInsuranceRateBasis, ScheduleSource } from "../types";
 import {
@@ -8,7 +8,7 @@ import {
   buildDebtCreateInputPayload,
   validateDebtFinancialTerms,
 } from "../utils/debtFormMode";
-import { createDebt, createBankLoan } from "../services/dataRepository";
+import { createDebt, createBankLoan, type DebtCreateResult } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError } from "../utils/debtViewModel";
@@ -20,9 +20,12 @@ import { applyInitialBankLoanBaseline, bankLoanBaselineSummary, bankLoanSchedule
 import { generateEstimatedDebtSchedule } from "../utils/debtEstimation";
 import { BankDocumentImportPanel } from "./BankDocumentImportPanel";
 import { BankExternalAiImportPanel } from "./BankExternalAiImportPanel";
+import { BankDocumentReviewPanel } from "./BankDocumentReviewPanel";
+import { BankSchedulePreview, type BankSchedulePreviewRow } from "./BankSchedulePreview";
 import type { BankDocumentExtraction } from "../utils/bankDocumentExtraction";
 import { reviewFieldStatus } from "../utils/bankDocumentExtraction";
 import type { BankFinancialValidationResult } from "../utils/bankDocumentFinancialValidation";
+import { evaluateBankDocumentCompleteness, type BankDocumentCompletenessResult } from "../utils/bankDocumentCompleteness";
 import type { BankInterestDayCountBasis, BankDueDateAdjustmentRule, BankInstallmentTotalMode, BankReportedBalanceKind } from "../types";
 import { deriveCurrentPrincipalBalance } from "../utils/bankContractReconciliation";
 import { detectFrequencyFromDates } from "../utils/debtScheduleParser";
@@ -32,7 +35,7 @@ interface DebtFormProps {
   accounts: FinancialAccount[];
   categories: Category[];
   canWriteDebt?: boolean;
-  onSaved: () => void;
+  onSaved: (result: DebtCreateResult) => void | Promise<void>;
   onCancel: () => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
   initialStep?: "type_select" | "details" | "review";
@@ -51,6 +54,7 @@ type BankBalanceInformation =
 type BankOpeningBalanceSource = "user_principal" | "schedule_derived" | "imported_principal" | "none";
 type BankLoanEntryPath = "external_ai" | "integrated_ai" | "reconstruction" | "manual";
 type BankDocumentImportSource = "external_ai" | "integrated_ai";
+type BankScheduleEntryProvenance = "external_ai" | "integrated_ai" | "spreadsheet" | "manual" | null;
 
 const KIND_ICONS: Partial<Record<DebtKind, typeof Banknote>> = {
   bank_loan: Building2,
@@ -106,8 +110,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [documentImportReady, setDocumentImportReady] = useState(false);
   const [documentImportSource, setDocumentImportSource] = useState<BankDocumentImportSource | null>(null);
   const [documentImportExtraction, setDocumentImportExtraction] = useState<BankDocumentExtraction | null>(null);
+  const [documentImportValidation, setDocumentImportValidation] = useState<BankFinancialValidationResult | null>(null);
   const [documentImportWarnings, setDocumentImportWarnings] = useState<string[]>([]);
   const [documentImportReconciliation, setDocumentImportReconciliation] = useState<string | null>(null);
+  const [documentImportResetVersion, setDocumentImportResetVersion] = useState(0);
   const [assetPrice, setAssetPrice] = useState("");
   const [downPaymentAmount, setDownPaymentAmount] = useState("");
   const [financedAmount, setFinancedAmount] = useState("");
@@ -134,6 +140,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   } | null>(null);
   const [estimatedScheduleSignature, setEstimatedScheduleSignature] = useState<string | null>(null);
   const [bankLoanEntryPath, setBankLoanEntryPath] = useState<BankLoanEntryPath>("external_ai");
+  const [scheduleEntryProvenance, setScheduleEntryProvenance] = useState<BankScheduleEntryProvenance>(null);
+  const [scheduleManualEditOpen, setScheduleManualEditOpen] = useState(false);
 
   const [insurances, setInsurances] = useState<Array<{
     insuranceType: DebtInsuranceType;
@@ -195,13 +203,25 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     ? installments[0].dueDate
     : null;
   const balanceOriginal = Number(financedAmount || originalPrincipal);
-  const balancePaidBefore = Number(installmentsPaidBeforeTracking || 0);
+  const paidBeforeRaw = installmentsPaidBeforeTracking.trim();
+  const paidBeforeForExisting = paidBeforeRaw === "" ? null : Number(paidBeforeRaw);
+  const effectivePaidBefore = onboardingMode === "EXISTING_DEBT" ? paidBeforeForExisting : 0;
+  const bankTermForValidation = Number(plannedInstallmentCount);
+  const paidBeforeInputMessage = onboardingMode !== "EXISTING_DEBT"
+    ? null
+    : paidBeforeRaw === ""
+      ? "Indica cuál fue la última cuota contractual que ya pagaste."
+      : !Number.isInteger(paidBeforeForExisting) || (paidBeforeForExisting ?? 0) < 1
+        ? "Si ya vienes pagando este crédito, la última cuota pagada debe ser un número entero mayor o igual a 1."
+        : Number.isInteger(bankTermForValidation) && bankTermForValidation > 0 && (paidBeforeForExisting ?? 0) >= bankTermForValidation
+          ? "Este flujo registra créditos activos. La última cuota pagada debe ser menor al total de cuotas."
+          : null;
   const isPendingOnlyOfficialSchedule = documentImportReady
     && scheduleSource === "contractual"
     && onboardingMode === "EXISTING_DEBT"
-    && Number.isInteger(balancePaidBefore)
-    && balancePaidBefore >= 0
-    && installments[0]?.contractualInstallmentNumber === balancePaidBefore + 1
+    && Number.isInteger(paidBeforeForExisting)
+    && (paidBeforeForExisting ?? 0) >= 1
+    && installments[0]?.contractualInstallmentNumber === (paidBeforeForExisting ?? 0) + 1
     && installments[0].contractualInstallmentNumber > 1
     && Number.isInteger(Number(plannedInstallmentCount))
     && Number(plannedInstallmentCount) > 0
@@ -211,25 +231,103 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     && onboardingMode === "EXISTING_DEBT"
     && Number.isFinite(balanceOriginal)
     && balanceOriginal > 0
-      && Number.isInteger(balancePaidBefore)
-      && balancePaidBefore >= 0
-      && (balancePaidBefore === 0
-      || (installments.length >= balancePaidBefore
-        && installments.slice(0, balancePaidBefore).every((row, index) => row.contractualInstallmentNumber === index + 1 && hasKnownAmount(row.expectedPrincipal))));
+    && Number.isInteger(paidBeforeForExisting)
+    && (paidBeforeForExisting ?? 0) >= 1
+    && installments.length >= (paidBeforeForExisting ?? 0)
+    && installments.slice(0, paidBeforeForExisting ?? 0).every((row, index) => row.contractualInstallmentNumber === index + 1 && hasKnownAmount(row.expectedPrincipal));
   const derivedOpeningBalance = canDeriveOpeningBalance
-    ? balancePaidBefore === 0
-      ? balanceOriginal
-      : deriveCurrentPrincipalBalance(
-          balanceOriginal,
-          installments.slice(0, balancePaidBefore).map((row) => ({ principal: Number(row.expectedPrincipal) })),
-          balancePaidBefore,
-        )
+    ? deriveCurrentPrincipalBalance(
+        balanceOriginal,
+        installments.slice(0, paidBeforeForExisting ?? 0).map((row) => ({ principal: Number(row.expectedPrincipal) })),
+        paidBeforeForExisting ?? 0,
+      )
     : null;
+  const explicitOpeningPrincipalBalance = openingPrincipalBalance.trim() ? Number(openingPrincipalBalance) : null;
   const effectiveOpeningPrincipalBalance = openingBalanceSource === "schedule_derived"
     ? derivedOpeningBalance
-    : openingPrincipalBalance.trim()
-      ? Number(openingPrincipalBalance)
-      : derivedOpeningBalance;
+    : openingBalanceSource === "user_principal" || openingBalanceSource === "imported_principal"
+      ? explicitOpeningPrincipalBalance
+      : null;
+  const canOfferDerivedOpeningBalance = openingBalanceSource === "none"
+    && canDeriveOpeningBalance
+    && derivedOpeningBalance != null
+    && Number.isFinite(derivedOpeningBalance)
+    && derivedOpeningBalance >= 0;
+
+  useEffect(() => {
+    if (openingBalanceSource !== "schedule_derived") return;
+    if (derivedOpeningBalance != null && Number.isFinite(derivedOpeningBalance) && derivedOpeningBalance >= 0) {
+      const derivedValue = String(derivedOpeningBalance);
+      if (openingPrincipalBalance !== derivedValue) setOpeningPrincipalBalance(derivedValue);
+      return;
+    }
+    setOpeningPrincipalBalance("");
+    setOpeningBalanceSource("none");
+  }, [derivedOpeningBalance, openingBalanceSource, openingPrincipalBalance]);
+  const documentImportCompleteness: BankDocumentCompletenessResult | null = documentImportReady && documentImportExtraction
+    ? documentImportValidation
+      ? evaluateBankDocumentCompleteness(documentImportExtraction, documentImportValidation, {
+        onboardingMode,
+        installmentsPaidBeforeTracking: effectivePaidBefore,
+        currentPrincipal: effectiveOpeningPrincipalBalance,
+        creditorName,
+        currencyCode,
+      })
+      : null
+    : null;
+  const hasLoadedSchedule = installments.length > 0;
+  const hasOperationalScheduleSource = scheduleSource === "contractual" || scheduleSource === "reconstructed";
+  const scheduleExpectedInstallments = Number.isInteger(Number(plannedInstallmentCount)) && Number(plannedInstallmentCount) > 0 ? Number(plannedInstallmentCount) : null;
+  const scheduleFirstContractualInstallment = installments[0]?.contractualInstallmentNumber ?? null;
+  const scheduleLastContractualInstallment = installments.at(-1)?.contractualInstallmentNumber ?? null;
+  const schedulePaidBefore = effectivePaidBefore;
+  const schedulePendingOnly = scheduleExpectedInstallments != null
+    && onboardingMode === "EXISTING_DEBT"
+    && Number.isInteger(schedulePaidBefore)
+    && (schedulePaidBefore ?? 0) >= 1
+    && scheduleFirstContractualInstallment === (schedulePaidBefore ?? 0) + 1
+    && scheduleLastContractualInstallment === scheduleExpectedInstallments;
+  const scheduleIsFull = scheduleExpectedInstallments != null
+    && installments.length === scheduleExpectedInstallments
+    && scheduleFirstContractualInstallment === 1
+    && scheduleLastContractualInstallment === scheduleExpectedInstallments;
+  const scheduleCoverageText = !hasLoadedSchedule
+    ? null
+    : schedulePendingOnly
+      ? `Cuotas pendientes ${scheduleFirstContractualInstallment} a ${scheduleLastContractualInstallment}`
+      : scheduleExpectedInstallments == null
+        ? `${installments.length} cuotas detectadas`
+        : scheduleIsFull
+          ? `${installments.length} de ${scheduleExpectedInstallments} cuotas`
+          : `${installments.length} de ${scheduleExpectedInstallments} cuotas — revisar`;
+  const scheduleIsAutomatic = scheduleEntryProvenance === "external_ai" || scheduleEntryProvenance === "integrated_ai";
+  const scheduleProvenanceLabel = scheduleEntryProvenance === "external_ai"
+    ? "Importado desde IA externa"
+    : scheduleEntryProvenance === "integrated_ai"
+      ? "Importado con IA integrada"
+      : scheduleEntryProvenance === "spreadsheet"
+        ? "Importado desde Excel/CSV"
+        : scheduleEntryProvenance === "manual"
+          ? "Ingresado manualmente"
+          : null;
+  const schedulePreviewRows: BankSchedulePreviewRow[] = installments.map((row) => {
+    const amountOrNull = (value: string): number | null => {
+      if (!value.trim()) return null;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    return {
+      contractualInstallmentNumber: row.contractualInstallmentNumber,
+      dueDate: row.dueDate,
+      principal: amountOrNull(row.expectedPrincipal),
+      interest: amountOrNull(row.expectedInterest),
+      insurance: amountOrNull(row.expectedInsurance),
+      fees: amountOrNull(row.expectedFees),
+      total: amountOrNull(row.expectedAmount),
+      reportedBalance: amountOrNull(row.reportedBalance),
+    };
+  });
+  const scheduleEditorVisible = !hasLoadedSchedule || scheduleManualEditOpen;
 
   const insuranceLabel = (type: DebtInsuranceType): string => {
     if (type === "credit_life") return "Seguro de desgravamen";
@@ -348,8 +446,19 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setCollaterals([...collaterals, { description: "", pledgedValue: "", estimatedValue: "", redemptionDeadline: "" }]);
   };
 
+  const clearDocumentImportState = () => {
+    setDocumentImportReady(false);
+    setDocumentImportSource(null);
+    setDocumentImportExtraction(null);
+    setDocumentImportValidation(null);
+    setDocumentImportWarnings([]);
+    setDocumentImportReconciliation(null);
+    setDocumentImportResetVersion((version) => version + 1);
+  };
+
   const resetBankScheduleDraft = () => {
     setInstallments([]);
+    setTsvScheduleText("");
     setPlannedInstallmentCount("");
     setPlannedInstallmentAmount("");
     setFirstDueDate("");
@@ -366,6 +475,24 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setScheduleEstimationWarning(null);
     setEstimatedTotals(null);
     setEstimatedScheduleSignature(null);
+    setScheduleEntryProvenance(null);
+    setScheduleManualEditOpen(false);
+    clearDocumentImportState();
+  };
+
+  const applyBankLoanBaselineForCurrentMode = <T extends {
+    contractualInstallmentNumber: number;
+    isPaidBeforeTracking?: boolean;
+  }>(rows: T[], totalInstallments?: number | null, mode: OnboardingMode = onboardingMode, paidBefore: number | null = effectivePaidBefore): T[] => {
+    const knownTotal = totalInstallments != null && Number.isInteger(totalInstallments) && totalInstallments > 0
+      ? totalInstallments
+      : null;
+    const canApplyBaseline = mode === "NEW_DEBT"
+      || (Number.isInteger(paidBefore) && (paidBefore ?? 0) >= 1 && (knownTotal == null || (paidBefore ?? 0) < knownTotal));
+    if (!canApplyBaseline) {
+      return rows.map((row) => ({ ...row, isPaidBeforeTracking: false }));
+    }
+    return applyInitialBankLoanBaseline(rows, paidBefore ?? 0, knownTotal);
   };
 
   const applyParsedSchedule = (rows: Array<{
@@ -378,7 +505,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     expectedInsurance: number;
     expectedFees: number;
     reportedBalance?: number | null;
-  }>, amountMode: DebtInstallmentAmountMode, detectedFrequency: DebtPaymentFrequency) => {
+  }>, amountMode: DebtInstallmentAmountMode, detectedFrequency: DebtPaymentFrequency, provenance: Exclude<BankScheduleEntryProvenance, null> = "manual") => {
     const normalizedRows = rows.map((row, index) => ({
       installmentNumber: index + 1,
       contractualInstallmentNumber: row.contractualInstallmentNumber ?? row.installmentNumber,
@@ -391,11 +518,15 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       expectedFees: row.expectedFees.toString(),
       reportedBalance: row.reportedBalance == null ? "" : row.reportedBalance.toString(),
     }));
-    const paidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
     const knownTotal = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : null;
-    setInstallments(applyInitialBankLoanBaseline(normalizedRows, paidBefore, knownTotal));
+    setInstallments(applyBankLoanBaselineForCurrentMode(normalizedRows, knownTotal));
     setInstallmentAmountMode(amountMode);
     setPaymentFrequency(detectedFrequency);
+    setScheduleEntryProvenance(provenance);
+    setScheduleManualEditOpen(false);
+    setScheduleParseError(null);
+    setTsvScheduleText("");
+    if (provenance === "manual" || provenance === "spreadsheet") clearDocumentImportState();
     if (normalizedRows.length > 0) {
       const firstContractualNumber = normalizedRows[0].contractualInstallmentNumber;
       const lastContractualNumber = normalizedRows.at(-1)?.contractualInstallmentNumber;
@@ -421,11 +552,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       setScheduleFileAmbiguousColumns(result.ambiguousColumns.map((column) => DEBT_SCHEDULE_COLUMN_LABELS[column]));
       if (!result.valid) {
         setScheduleParseError(result.errors.join("; "));
-        setInstallments([]);
         return;
       }
       setScheduleParseError(null);
-      applyParsedSchedule(result.rows, result.installmentAmountMode, result.detectedFrequency);
+      applyParsedSchedule(result.rows, result.installmentAmountMode, result.detectedFrequency, "spreadsheet");
     } catch {
       setScheduleParseError("No pudimos leer el archivo seleccionado.");
     }
@@ -446,7 +576,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       return;
     }
     setScheduleParseError(null);
-    applyParsedSchedule(result.rows, result.installmentAmountMode, result.detectedFrequency);
+    applyParsedSchedule(result.rows, result.installmentAmountMode, result.detectedFrequency, "spreadsheet");
   };
 
   const applyDocumentExtraction = (
@@ -469,9 +599,20 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       reportedBalance: "reportedBalance" in row && row.reportedBalance != null ? String(row.reportedBalance) : "",
     }));
 
+    setTsvScheduleText("");
+    setScheduleParseError(null);
+    setScheduleManualEditOpen(false);
+    setScheduleFileName(null);
+    setScheduleFileData(null);
+    setScheduleFileHeaders([]);
+    setScheduleFileMapping({});
+    setScheduleFileMissingColumns([]);
+    setScheduleFileAmbiguousColumns([]);
+    setScheduleEntryProvenance(importedRows.length > 0 ? source : null);
     setDocumentImportReady(true);
     setDocumentImportSource(source);
     setDocumentImportExtraction(extraction);
+    setDocumentImportValidation(result);
     setDocumentImportReconciliation(result.reconciliation?.status ?? null);
     setDocumentImportWarnings([...new Set([
       ...extraction.extractionWarnings,
@@ -496,7 +637,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     if (extraction.ordinaryDueDay != null) setMonthlyDueDay(String(extraction.ordinaryDueDay));
     if (extraction.firstDueDate && (importedRows[0]?.contractualInstallmentNumber ?? 1) === 1) setFirstDueDate(extraction.firstDueDate);
     if (importedRows.length > 0) {
-      setInstallments(applyInitialBankLoanBaseline(importedRows, Number(installmentsPaidBeforeTracking || 0), extraction.termInstallments));
+      setInstallments(applyBankLoanBaselineForCurrentMode(importedRows, extraction.termInstallments));
       setPaymentFrequency(detectFrequencyFromDates(importedRows.map((row) => row.dueDate)));
       setInstallmentAmountMode(importedRows.slice(0, -1).every((row) => row.expectedAmount === importedRows[0]?.expectedAmount) ? "fixed" : "variable");
     }
@@ -515,20 +656,18 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     }
     if (extraction.reportedBalance.amount != null) setReportedBalanceAmount(String(extraction.reportedBalance.amount));
 
-    const original = extraction.originalPrincipal ?? extraction.financedAmount;
-    const paidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
     if (extraction.reportedBalance.inferredKind === "principal_balance" && extraction.reportedBalance.amount != null) {
       setOpeningPrincipalBalance(String(extraction.reportedBalance.amount));
       setOpeningBalanceSource("imported_principal");
-    } else if (original != null && Number.isInteger(paidBefore) && paidBefore >= 0 && (paidBefore === 0 || (importedRows.length >= paidBefore && importedRows.slice(0, paidBefore).every((row, index) => row.contractualInstallmentNumber === index + 1 && hasKnownAmount(row.expectedPrincipal))))) {
-      setOpeningPrincipalBalance(String(paidBefore === 0
-        ? original
-        : deriveCurrentPrincipalBalance(original, importedRows.slice(0, paidBefore).map((row) => ({ principal: Number(row.expectedPrincipal) })), paidBefore)));
-      setOpeningBalanceSource("schedule_derived");
     } else if (onboardingMode === "NEW_DEBT" && extraction.financedAmount != null) {
       setOpeningPrincipalBalance(String(extraction.financedAmount));
       setOpeningBalanceSource("imported_principal");
+    } else if (onboardingMode === "EXISTING_DEBT" && openingBalanceSource === "user_principal" && openingPrincipalBalance.trim()) {
+      // Preserve an amount the user explicitly entered; a document without a
+      // clear principal must never replace it with an unconfirmed derivation.
+      setOpeningBalanceSource("user_principal");
     } else {
+      setOpeningPrincipalBalance("");
       setOpeningBalanceSource("none");
     }
 
@@ -546,6 +685,30 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         notes: "Importado para confirmación; verificar contra el contrato.",
       })));
     }
+  };
+
+  const openScheduleManualReplacement = () => {
+    setScheduleManualEditOpen(true);
+    setScheduleParseError(null);
+    setTsvScheduleText("");
+    setScheduleFileName(null);
+    setScheduleFileData(null);
+    setScheduleFileHeaders([]);
+    setScheduleFileMapping({});
+    setScheduleFileMissingColumns([]);
+    setScheduleFileAmbiguousColumns([]);
+  };
+
+  const cancelScheduleManualReplacement = () => {
+    setScheduleManualEditOpen(false);
+    setScheduleParseError(null);
+    setTsvScheduleText("");
+    setScheduleFileName(null);
+    setScheduleFileData(null);
+    setScheduleFileHeaders([]);
+    setScheduleFileMapping({});
+    setScheduleFileMissingColumns([]);
+    setScheduleFileAmbiguousColumns([]);
   };
 
   const validateDetails = (): boolean => {
@@ -573,17 +736,20 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         return false;
       }
       const bankTerm = Number(plannedInstallmentCount);
-      const paidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
       if (onboardingMode === "EXISTING_DEBT") {
-        if (!Number.isInteger(paidBefore) || paidBefore < 0) {
-          setToast({ message: "La última cuota pagada debe ser un número entero igual o mayor a cero.", type: "error" });
+        if (paidBeforeRaw === "") {
+          setToast({ message: "Indica cuál fue la última cuota contractual que ya pagaste.", type: "error" });
+          return false;
+        }
+        if (!Number.isInteger(paidBeforeForExisting) || (paidBeforeForExisting ?? 0) < 1) {
+          setToast({ message: "Si ya vienes pagando este crédito, la última cuota pagada debe ser un número entero mayor o igual a 1.", type: "error" });
           return false;
         }
         if (!Number.isInteger(bankTerm) || bankTerm <= 0) {
           setToast({ message: "Indica el total de cuotas del contrato para ubicar la próxima cuota.", type: "error" });
           return false;
         }
-        if (paidBefore >= bankTerm) {
+        if ((paidBeforeForExisting ?? 0) >= bankTerm) {
           setToast({ message: "Este flujo registra créditos activos. La última cuota pagada debe ser menor al total de cuotas.", type: "error" });
           return false;
         }
@@ -610,6 +776,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       }
       if (documentImportReady && documentImportExtraction?.fieldConflicts.length) {
         setToast({ message: "Hay datos contradictorios entre los documentos. Resuelve los conflictos antes de guardar.", type: "error" });
+        return false;
+      }
+      if (documentImportReady && documentImportCompleteness?.requiredIssues.length) {
+        setToast({ message: "Faltan datos obligatorios del expediente. Revisa el panel de completitud antes de guardar.", type: "error" });
         return false;
       }
       if (documentImportReady && ((!isPendingOnlyOfficialSchedule && documentImportReconciliation === "insufficient_data") || installments.some((row) => [row.expectedAmount, row.expectedPrincipal, row.expectedInterest, row.expectedInsurance, row.expectedFees].some((value) => value.trim() === "")))) {
@@ -678,6 +848,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
     setSubmitting(true);
     try {
+      let createResult: DebtCreateResult;
       if (debtKind === "bank_loan") {
         const payload = buildDebtCreateInputPayload({
           debtId,
@@ -718,8 +889,9 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           minimumPrincipalPayment,
         });
 
-        await createBankLoan({
+        createResult = await createBankLoan({
           ...payload,
+          onboardingMode,
           loanSubtype,
           contractNumber: contractNumber || null,
           amortizationMethod,
@@ -731,7 +903,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           gracePeriodType,
           gracePeriodInstallments: gracePeriodInstallments ? Number(gracePeriodInstallments) : null,
           balloonPaymentAmount: balloonPaymentAmount ? Number(balloonPaymentAmount) : null,
-           installmentsPaidBeforeTracking: onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0,
+           installmentsPaidBeforeTracking: onboardingMode === "EXISTING_DEBT" ? paidBeforeForExisting as number : 0,
            interestDayCountBasis,
            dueDateAdjustmentRule,
            installmentTotalMode,
@@ -806,10 +978,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           minimumPrincipalPayment,
         });
 
-        await createDebt(payload);
+        createResult = await createDebt(payload);
         setToast({ message: "Deuda registrada exitosamente.", type: "success" });
       }
-      onSaved();
+      await onSaved(createResult);
     } catch (err) {
       setToast({ message: translateDebtError(err), type: "error" });
     } finally {
@@ -832,6 +1004,23 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     if (!documentImportReady || !documentImportExtraction) return "";
     const status = reviewFieldStatus(documentImportExtraction, field);
     return status === "confirmed" ? "CONFIRMADO" : status === "review" ? "REVISAR" : "NO ENCONTRADO";
+  };
+  const selectBankLoanEntryPath = (path: BankLoanEntryPath) => {
+    setBankLoanEntryPath(path);
+    if (path === "reconstruction") {
+      setScheduleSource("estimated");
+      setInterestCalculationMode("tea_estimate");
+    } else {
+      setScheduleSource("contractual");
+      setInterestCalculationMode("contract_schedule");
+    }
+  };
+
+  const useDerivedOpeningBalance = () => {
+    if (!canOfferDerivedOpeningBalance || derivedOpeningBalance == null) return;
+    const derivedValue = String(derivedOpeningBalance);
+    setOpeningPrincipalBalance(derivedValue);
+    setOpeningBalanceSource("schedule_derived");
   };
 
   return (
@@ -917,11 +1106,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   setOnboardingMode("EXISTING_DEBT");
                   if (debtKind === "bank_loan") {
                     setBankBalanceInformation("unknown");
-                    const paidBefore = Number(installmentsPaidBeforeTracking || 0);
-                    if (Number.isInteger(paidBefore) && paidBefore >= 0) {
-                      const knownTotal = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : null;
-                      setInstallments((rows) => applyInitialBankLoanBaseline(rows, paidBefore, knownTotal));
-                    }
+                    const knownTotal = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : null;
+                    setInstallments((rows) => applyBankLoanBaselineForCurrentMode(rows, knownTotal, "EXISTING_DEBT", paidBeforeForExisting));
                   }
                 }}
                 className={`p-4 rounded-2xl border text-left transition-all ${
@@ -971,21 +1157,53 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
               <p className="text-sm font-black uppercase tracking-wide text-indigo-950">Cómo cargar el contrato</p>
               <p className="mt-1 text-xs text-indigo-900">Puedes importar documentos, reconstruir el cronograma desde los términos o ingresar las filas manualmente.</p>
               <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <button type="button" onClick={() => { setBankLoanEntryPath("external_ai"); setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border-2 border-indigo-400 bg-white p-3 text-left shadow-sm ring-2 ring-indigo-500/10 hover:border-indigo-600">
-                  <p className="text-sm font-black text-indigo-950">Analizar con IA externa</p>
+                <button
+                  type="button"
+                  onClick={() => selectBankLoanEntryPath("external_ai")}
+                  aria-pressed={bankLoanEntryPath === "external_ai"}
+                  className={`rounded-xl border-2 p-3 text-left shadow-sm transition ${bankLoanEntryPath === "external_ai" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20" : "border-slate-200 bg-white hover:border-indigo-400"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-black text-indigo-950">Analizar con IA externa</p>
+                    {bankLoanEntryPath === "external_ai" && <Check className="h-5 w-5 shrink-0 text-indigo-600" aria-hidden="true" />}
+                  </div>
                   <span className="mt-1 inline-block rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black uppercase text-white">Recomendado</span>
                   <p className="mt-1 text-[11px] text-slate-600">ChatGPT, Gemini, Claude u otra IA. No consume créditos de Caja Familiar.</p>
                 </button>
-                <button type="button" onClick={() => { setBankLoanEntryPath("integrated_ai"); setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
-                  <p className="text-sm font-black text-slate-900">Importar automáticamente con IA</p>
+                <button
+                  type="button"
+                  onClick={() => selectBankLoanEntryPath("integrated_ai")}
+                  aria-pressed={bankLoanEntryPath === "integrated_ai"}
+                  className={`rounded-xl border-2 p-3 text-left transition ${bankLoanEntryPath === "integrated_ai" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20" : "border-slate-200 bg-white hover:border-indigo-400"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-black text-slate-900">Importar automáticamente con IA</p>
+                    {bankLoanEntryPath === "integrated_ai" && <Check className="h-5 w-5 shrink-0 text-indigo-600" aria-hidden="true" />}
+                  </div>
                   <p className="mt-1 text-[11px] text-slate-600">Disponible cuando configures la API.</p>
                 </button>
-                <button type="button" onClick={() => { setBankLoanEntryPath("reconstruction"); setScheduleSource("estimated"); setInterestCalculationMode("tea_estimate"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
-                  <p className="text-sm font-black text-slate-900">Generar desde los datos del contrato</p>
+                <button
+                  type="button"
+                  onClick={() => selectBankLoanEntryPath("reconstruction")}
+                  aria-pressed={bankLoanEntryPath === "reconstruction"}
+                  className={`rounded-xl border-2 p-3 text-left transition ${bankLoanEntryPath === "reconstruction" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20" : "border-slate-200 bg-white hover:border-indigo-400"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-black text-slate-900">Generar desde los datos del contrato</p>
+                    {bankLoanEntryPath === "reconstruction" && <Check className="h-5 w-5 shrink-0 text-indigo-600" aria-hidden="true" />}
+                  </div>
                   <p className="mt-1 text-[11px] text-slate-600">Usa TEA, fechas y plazo; queda como estimación.</p>
                 </button>
-                <button type="button" onClick={() => { setBankLoanEntryPath("manual"); setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
-                  <p className="text-sm font-black text-slate-900">Ingresar manualmente</p>
+                <button
+                  type="button"
+                  onClick={() => selectBankLoanEntryPath("manual")}
+                  aria-pressed={bankLoanEntryPath === "manual"}
+                  className={`rounded-xl border-2 p-3 text-left transition ${bankLoanEntryPath === "manual" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20" : "border-slate-200 bg-white hover:border-indigo-400"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-black text-slate-900">Ingresar manualmente</p>
+                    {bankLoanEntryPath === "manual" && <Check className="h-5 w-5 shrink-0 text-indigo-600" aria-hidden="true" />}
+                  </div>
                   <p className="mt-1 text-[11px] text-slate-600">Escribe o pega las filas oficiales del banco.</p>
                 </button>
               </div>
@@ -1151,6 +1369,14 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                 <BankExternalAiImportPanel
                   onExtractionReady={(extraction, result) => applyDocumentExtraction(extraction, result, "external_ai")}
                   setToast={setToast}
+                  resetKey={documentImportResetVersion}
+                  completenessContext={{
+                    onboardingMode,
+                    installmentsPaidBeforeTracking: effectivePaidBefore,
+                    currentPrincipal: effectiveOpeningPrincipalBalance,
+                    creditorName,
+                    currencyCode,
+                  }}
                 />
               )}
               {debtKind === "bank_loan" && bankLoanEntryPath === "integrated_ai" && (
@@ -1427,11 +1653,26 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                         <label className="block text-xs font-bold text-slate-700">
                           {onboardingMode === "EXISTING_DEBT" && bankBalanceInformation !== "principal_balance" ? "Capital pendiente hoy (opcional si se puede calcular)" : "Saldo de capital pendiente hoy *"}
                         </label>
-                        <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 bg-white focus-within:border-blue-600">
-                          <span className="select-none pl-3 text-sm font-bold text-slate-500">{currencySymbol}</span>
-                          <input type="number" min="0" step="0.01" required={onboardingMode !== "EXISTING_DEBT" || bankBalanceInformation === "principal_balance" || !canDeriveOpeningBalance} value={openingBalanceSource === "schedule_derived" && derivedOpeningBalance != null ? String(derivedOpeningBalance) : openingPrincipalBalance} onChange={(e) => { setOpeningPrincipalBalance(e.target.value); setOpeningBalanceSource(e.target.value.trim() ? "user_principal" : "none"); }} placeholder="Ej. 7300" className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none" />
+                        <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <div className="relative flex min-w-0 flex-1 items-center rounded-xl border border-slate-300 bg-white focus-within:border-blue-600">
+                            <span className="select-none pl-3 text-sm font-bold text-slate-500">{currencySymbol}</span>
+                            <input type="number" min="0" step="0.01" required={onboardingMode !== "EXISTING_DEBT" || bankBalanceInformation === "principal_balance" || !canDeriveOpeningBalance} value={openingBalanceSource === "schedule_derived" && derivedOpeningBalance != null ? String(derivedOpeningBalance) : openingPrincipalBalance} onChange={(e) => { setOpeningPrincipalBalance(e.target.value); setOpeningBalanceSource(e.target.value.trim() ? "user_principal" : "none"); }} placeholder="Ej. 7300" className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none" />
+                          </div>
+                          {canOfferDerivedOpeningBalance && (
+                            <button
+                              type="button"
+                              onClick={useDerivedOpeningBalance}
+                              className="rounded-xl border border-amber-300 bg-white px-3 py-2.5 text-xs font-black uppercase tracking-wide text-amber-900 transition hover:bg-amber-100"
+                            >
+                              CALCULAR
+                            </button>
+                          )}
                         </div>
-                        <p className="mt-1 text-xs text-slate-600">{derivedOpeningBalance != null ? `Capital calculado con el contrato: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.` : "Este es el capital que todavía debes hoy, no el monto original."}</p>
+                        <p className="mt-1 text-xs text-slate-600">{derivedOpeningBalance != null
+                          ? openingBalanceSource === "schedule_derived"
+                            ? `Calculado con el cronograma: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.`
+                            : `Podemos calcularlo con tu cronograma: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.`
+                          : "Este es el capital que todavía debes hoy, no el monto original."}</p>
                       </div>
                       {onboardingMode === "EXISTING_DEBT" && (bankBalanceInformation === "schedule_financial_balance" || bankBalanceInformation === "total_remaining_payments") && (
                         <div>
@@ -1445,32 +1686,47 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                       )}
                       {onboardingMode === "EXISTING_DEBT" && (
                         <div>
-                          <label className="block text-xs font-bold text-slate-700">Última cuota contractual que ya pagaste</label>
+                          <label className="block text-xs font-bold text-slate-700">Última cuota contractual que ya pagaste *</label>
                           <input
                             type="number"
-                            min="0"
+                            min="1"
                             step="1"
                             aria-label="Última cuota contractual que ya pagaste"
+                            aria-describedby="last-paid-installment-help last-paid-installment-error"
+                            aria-invalid={paidBeforeInputMessage != null}
+                            required
                             value={installmentsPaidBeforeTracking}
                             onChange={(e) => {
                               const value = e.target.value;
                               setInstallmentsPaidBeforeTracking(value);
-                              const paidBefore = Number(value || 0);
-                              if (Number.isInteger(paidBefore) && paidBefore >= 0) {
+                              const rawValue = value.trim();
+                              const paidBefore = rawValue === "" ? null : Number(rawValue);
+                              if (Number.isInteger(paidBefore) && (paidBefore ?? 0) >= 1) {
                                 const knownTotal = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : null;
-                                setInstallments((rows) => applyInitialBankLoanBaseline(rows, paidBefore, knownTotal));
+                                setInstallments((rows) => applyBankLoanBaselineForCurrentMode(rows, knownTotal));
+                              } else if (rawValue === "") {
+                                setInstallments((rows) => rows.map((row) => ({ ...row, isPaidBeforeTracking: false })));
+                                if (openingBalanceSource === "schedule_derived") {
+                                  setOpeningPrincipalBalance("");
+                                  setOpeningBalanceSource("none");
+                                }
                               }
                             }}
-                            placeholder="0"
-                            className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-slate-900"
+                            placeholder="Ej. 5"
+                            className={`mt-1 w-full rounded-xl border bg-white px-3 py-2.5 text-slate-900 ${paidBeforeInputMessage ? "border-red-400" : "border-slate-300"}`}
                           />
-                          <p className="mt-1 text-xs text-slate-600">No crea pagos ni movimientos históricos; solo ubica la próxima cuota.</p>
+                          <p id="last-paid-installment-help" className="mt-1 text-xs text-slate-600">Es obligatorio porque seleccionaste «Ya lo vengo pagando». No crea pagos ni movimientos históricos; solo ubica la próxima cuota.</p>
+                          {paidBeforeInputMessage && <p id="last-paid-installment-error" role="alert" className="mt-1 text-xs font-semibold text-red-700">{paidBeforeInputMessage}</p>}
                         </div>
                       )}
                     </div>
                     {onboardingMode === "EXISTING_DEBT" && Number.isInteger(Number(plannedInstallmentCount)) && Number(plannedInstallmentCount) > 0 && (
                       <div className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-950">
-                        {(() => { const summary = bankLoanBaselineSummary(Number(plannedInstallmentCount), Number(installmentsPaidBeforeTracking || 0)); return <>Última pagada: {summary.paid} · Próxima: {summary.nextContractualNumber ?? "—"} de {summary.total} · Pendientes: {summary.pending}</>; })()}
+                        {paidBeforeForExisting == null
+                          ? "Indica la última cuota pagada para ubicar tu próxima cuota."
+                          : Number.isInteger(paidBeforeForExisting) && paidBeforeForExisting >= 1 && paidBeforeForExisting < Number(plannedInstallmentCount)
+                            ? (() => { const summary = bankLoanBaselineSummary(Number(plannedInstallmentCount), paidBeforeForExisting); return <>Última pagada: {summary.paid} · Próxima: {summary.nextContractualNumber ?? "—"} de {summary.total} · Pendientes: {summary.pending}</>; })()
+                            : "Indica una última cuota pagada válida para ubicar tu próxima cuota."}
                       </div>
                     )}
                   </div>
@@ -1623,7 +1879,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                         }`}
                       >
                         <p className="font-bold text-sm text-slate-900 mb-0.5">A) Tengo el cronograma del banco</p>
-                        <p className="text-xs text-slate-500">Pega las filas tabuladas del cronograma oficial del banco.</p>
+                        <p className="text-xs text-slate-500">{hasLoadedSchedule ? "El cronograma cargado aparece abajo; reemplázalo solo si es necesario." : "Pega las filas tabuladas del cronograma oficial del banco."}</p>
                       </button>
 
                       <button
@@ -1652,110 +1908,114 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                     </div>
                   )}
 
-                  {/* Option A: TSV Contractual Parser */}
-                  {scheduleSource === "contractual" && (
-                    <div className="rounded-xl bg-white p-4 border border-slate-200 space-y-3">
-                      <label className="block text-xs font-bold text-slate-800">
-                        Pegar filas del cronograma (Cuota, Fecha, Total, Capital, Interés, Seguro, Gastos)
-                      </label>
-                      <textarea
-                        rows={4}
-                        aria-label="Pegar filas del cronograma"
-                        value={tsvScheduleText}
-                        onChange={(e) => setTsvScheduleText(e.target.value)}
-                        placeholder={`Ejemplo:\n1\t2026-09-15\t850.00\t500.00\t250.00\t80.00\t20.00\n2\t2026-10-15\t850.00\t510.00\t240.00\t80.00\t20.00`}
-                        className="w-full rounded-xl border border-slate-300 p-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
-                      />
-                      <div className="flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const res = parseContractualScheduleText(tsvScheduleText);
-                            if (!res.valid) {
-                              setScheduleParseError(res.errors.join("; "));
-                            } else {
-                              setScheduleParseError(null);
-                              applyParsedSchedule(res.rows, res.installmentAmountMode, res.detectedFrequency);
-                            }
-                          }}
-                          className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 shadow"
-                        >
-                          Interpretar Cronograma
-                        </button>
-                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-800 hover:bg-blue-100">
-                          <Upload className="h-4 w-4" /> Importar Excel / CSV
-                          <input
-                            type="file"
-                            accept=".xlsx,.xls,.csv,.tsv,.txt,text/csv,text/tab-separated-values"
-                            className="sr-only"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) void handleScheduleFile(file);
-                              e.currentTarget.value = "";
-                            }}
-                          />
-                        </label>
-                        {installments.length > 0 && (
-                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-lg border border-emerald-200">
-                            {installments.length} cuotas contractuales cargadas ({installmentAmountMode === "fixed" ? "Cuota fija" : "Cuota variable"})
-                          </span>
-                        )}
-                      </div>
-                      {scheduleParseError && (
-                        <div className="rounded-xl bg-red-50 p-3 text-xs font-bold text-red-800 border border-red-200">
-                          {scheduleParseError}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {scheduleFileName && (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                      <p className="text-xs font-semibold text-slate-600">Archivo: {scheduleFileName}{scheduleFileHeaders.length > 0 ? ` · ${scheduleFileHeaders.length} columnas detectadas` : ""}</p>
-                      {(scheduleFileMissingColumns.length > 0 || scheduleFileAmbiguousColumns.length > 0 || Object.keys(scheduleFileMapping).length < 7) && scheduleFileHeaders.length > 0 && (
-                        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-2">
-                          <p className="text-xs font-bold text-blue-950">Revisa el mapeo de columnas antes de aceptar</p>
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                            {(Object.entries(DEBT_SCHEDULE_COLUMN_LABELS) as Array<[DebtScheduleColumn, string]>).map(([column, label]) => (
-                              <label key={column} className="text-[11px] font-bold text-blue-950">
-                                {label}
-                                <select
-                                  value={scheduleFileMapping[column] == null ? "" : String(scheduleFileMapping[column])}
-                                  onChange={(event) => handleScheduleFileMapping(column, event.target.value)}
-                                  className="mt-1 w-full rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-xs font-normal text-slate-800"
-                                >
-                                  <option value="">Seleccionar columna</option>
-                                  {scheduleFileHeaders.map((header, headerIndex) => <option key={`${headerIndex}-${header}`} value={headerIndex}>{header || `Columna ${headerIndex + 1}`}</option>)}
-                                </select>
-                              </label>
-                            ))}
+                  {/* Imported schedule state and explicit manual replacement */}
+                  {hasOperationalScheduleSource && (
+                    <>
+                      {hasLoadedSchedule && !scheduleManualEditOpen && (
+                        <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4" aria-live="polite" aria-labelledby="bank-loaded-schedule-title">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p id="bank-loaded-schedule-title" className="text-sm font-black uppercase tracking-wide text-emerald-950">{scheduleIsAutomatic ? "CRONOGRAMA CARGADO AUTOMÁTICAMENTE" : "CRONOGRAMA CARGADO"}</p>
+                              <p className="mt-1 text-xs font-bold text-emerald-900">{scheduleIsAutomatic ? `Encontramos e importamos ${installments.length} cuotas contractuales.` : `Tienes ${installments.length} cuotas contractuales cargadas.`}</p>
+                              <p className="mt-1 text-xs font-semibold text-emerald-800">{installments.length} cuotas contractuales cargadas</p>
+                              {scheduleCoverageText && <p className="mt-1 text-sm font-black text-emerald-950">{scheduleCoverageText}</p>}
+                              {scheduleProvenanceLabel && <p className="mt-2 inline-flex rounded-full border border-emerald-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-emerald-800">{scheduleProvenanceLabel}</p>}
+                            </div>
+                            <button type="button" onClick={openScheduleManualReplacement} className="rounded-xl border border-emerald-300 bg-white px-3 py-2 text-xs font-black text-emerald-900 hover:bg-emerald-100">EDITAR O REEMPLAZAR CRONOGRAMA</button>
                           </div>
+                          <p className="text-xs text-emerald-900">La fuente operacional es este cronograma cargado. El editor manual solo reemplaza estas filas después de una acción explícita.</p>
                         </div>
                       )}
-                      {scheduleFileMissingColumns.length > 0 && (
-                        <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
-                          Falta identificar: {scheduleFileMissingColumns.join(", ")}. Selecciona manualmente las columnas o usa el pegado tabulado.
-                        </p>
+
+                      {hasLoadedSchedule && !scheduleManualEditOpen && (
+                        <section aria-labelledby="bank-operational-schedule-title" className="space-y-3 rounded-xl border border-blue-200 bg-white p-4">
+                          <div>
+                            <p id="bank-operational-schedule-title" className="text-xs font-black uppercase tracking-wide text-blue-950">Cronograma operacional cargado</p>
+                            <p className="mt-1 text-xs text-slate-600">Esta es la tabla que se guardará al confirmar el registro.</p>
+                          </div>
+                          <BankSchedulePreview rows={schedulePreviewRows} showBalance ariaLabel="Cronograma operacional cargado" />
+                        </section>
                       )}
-                      {scheduleFileAmbiguousColumns.length > 0 && (
-                        <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
-                          Hay más de una coincidencia para: {scheduleFileAmbiguousColumns.join(", ")}. Confirma el campo correcto en el mapeo.
-                        </p>
-                      )}
-                      {scheduleParseError && (
-                        <div className="rounded-xl bg-red-50 p-3 text-xs font-bold text-red-800 border border-red-200">{scheduleParseError}</div>
-                      )}
-                      {installments.length > 0 && (
-                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                          <p className="px-3 py-2 text-xs font-bold text-emerald-800">Detectamos {installments.length} cuotas. Revisa esta vista previa:</p>
-                          <table className="min-w-full text-left text-xs">
-                            <thead className="bg-slate-50 font-bold text-slate-600"><tr>{["Cuota", "Fecha", "Total", "Capital", "Interés", "Seguro", "Gastos"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead>
-                            <tbody className="divide-y divide-slate-100">{installments.slice(0, 8).map((row) => <tr key={`${row.installmentNumber}-${row.dueDate}`}><td className="px-3 py-2">{row.contractualInstallmentNumber}</td><td className="px-3 py-2">{row.dueDate}</td><td className="px-3 py-2">{row.expectedAmount}</td><td className="px-3 py-2">{row.expectedPrincipal}</td><td className="px-3 py-2">{row.expectedInterest}</td><td className="px-3 py-2">{row.expectedInsurance}</td><td className="px-3 py-2">{row.expectedFees}</td></tr>)}</tbody>
-                          </table>
-                          {installments.length > 8 && <p className="px-3 py-2 text-xs text-slate-500">Mostrando 8 de {installments.length} cuotas.</p>}
+
+                      {scheduleEditorVisible && (
+                        <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-800" htmlFor="bank-manual-schedule-text">Pegar filas del cronograma (Cuota, Fecha, Total, Capital, Interés, Seguro, Gastos)</label>
+                            {hasLoadedSchedule && <p className="mt-1 text-xs font-semibold text-amber-800">Al interpretar estas filas reemplazarás el cronograma actualmente cargado.</p>}
+                          </div>
+                          <textarea
+                            id="bank-manual-schedule-text"
+                            rows={4}
+                            aria-label="Pegar filas del cronograma"
+                            value={tsvScheduleText}
+                            onChange={(e) => { setTsvScheduleText(e.target.value); setScheduleParseError(null); }}
+                            placeholder={`Ejemplo:\n1\t2026-09-15\t850.00\t500.00\t250.00\t80.00\t20.00\n2\t2026-10-15\t850.00\t510.00\t240.00\t80.00\t20.00`}
+                            className="w-full rounded-xl border border-slate-300 p-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                          />
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!tsvScheduleText.trim()) {
+                                  setScheduleParseError("No has ingresado filas para reemplazar el cronograma.");
+                                  return;
+                                }
+                                const res = parseContractualScheduleText(tsvScheduleText);
+                                if (!res.valid) {
+                                  setScheduleParseError(res.errors.join("; "));
+                                } else {
+                                  applyParsedSchedule(res.rows, res.installmentAmountMode, res.detectedFrequency, "manual");
+                                }
+                              }}
+                              className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow hover:bg-blue-700"
+                            >
+                              Interpretar Cronograma
+                            </button>
+                            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-800 hover:bg-blue-100">
+                              <Upload className="h-4 w-4" /> Importar Excel / CSV
+                              <input
+                                type="file"
+                                accept=".xlsx,.xls,.csv,.tsv,.txt,text/csv,text/tab-separated-values"
+                                className="sr-only"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) void handleScheduleFile(file);
+                                  e.currentTarget.value = "";
+                                }}
+                              />
+                            </label>
+                            {hasLoadedSchedule && <button type="button" onClick={cancelScheduleManualReplacement} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">CANCELAR REEMPLAZO</button>}
+                          </div>
+                          {!hasLoadedSchedule && <p className="text-[11px] text-slate-500">El cronograma interpretado quedará cargado aquí y podrás revisarlo antes de guardar.</p>}
+                          {scheduleParseError && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-800">{scheduleParseError}</div>}
                         </div>
                       )}
-                    </div>
+
+                      {scheduleEditorVisible && scheduleFileName && (
+                        <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                          <p className="text-xs font-semibold text-slate-600">Archivo: {scheduleFileName}{scheduleFileHeaders.length > 0 ? ` · ${scheduleFileHeaders.length} columnas detectadas` : ""}</p>
+                          {(scheduleFileMissingColumns.length > 0 || scheduleFileAmbiguousColumns.length > 0 || Object.keys(scheduleFileMapping).length < 7) && scheduleFileHeaders.length > 0 && (
+                            <div className="space-y-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                              <p className="text-xs font-bold text-blue-950">Revisa el mapeo de columnas antes de aceptar</p>
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                {(Object.entries(DEBT_SCHEDULE_COLUMN_LABELS) as Array<[DebtScheduleColumn, string]>).map(([column, label]) => (
+                                  <label key={column} className="text-[11px] font-bold text-blue-950">
+                                    {label}
+                                    <select value={scheduleFileMapping[column] == null ? "" : String(scheduleFileMapping[column])} onChange={(event) => handleScheduleFileMapping(column, event.target.value)} className="mt-1 w-full rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-xs font-normal text-slate-800">
+                                      <option value="">Seleccionar columna</option>
+                                      {scheduleFileHeaders.map((header, headerIndex) => <option key={`${headerIndex}-${header}`} value={headerIndex}>{header || `Columna ${headerIndex + 1}`}</option>)}
+                                    </select>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {scheduleFileMissingColumns.length > 0 && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">Falta identificar: {scheduleFileMissingColumns.join(", ")}. Selecciona manualmente las columnas o usa el pegado tabulado.</p>}
+                          {scheduleFileAmbiguousColumns.length > 0 && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">Hay más de una coincidencia para: {scheduleFileAmbiguousColumns.join(", ")}. Confirma el campo correcto en el mapeo.</p>}
+                          {scheduleParseError && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-800">{scheduleParseError}</div>}
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {firstPendingImportedDueDate && (
@@ -1781,7 +2041,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                                const hasValidPeriodicRate = Number.isFinite(periodicNum) && periodicNum > 0 && Boolean(periodicRateBasis);
                                const termsNum = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : Number.NaN;
                                const insuranceInputs = estimatedInsuranceInputs();
-                               const paidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
+                               const paidBefore = effectivePaidBefore;
 
                                if (!Number.isFinite(finAmt) || finAmt <= 0) throw new Error("El monto financiado debe ser mayor a cero.");
                                if (!hasValidTea && !hasValidPeriodicRate) throw new Error("Ingresa una TEA o una tasa periódica contractual válida.");
@@ -1815,7 +2075,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                                 installmentsPaidBeforeTracking: paidBefore,
                               });
 
-                              setInstallments(applyInitialBankLoanBaseline(est.rows.map((r) => ({
+                              setInstallments(applyBankLoanBaselineForCurrentMode(est.rows.map((r) => ({
                                 installmentNumber: r.installmentNumber,
                                 contractualInstallmentNumber: r.installmentNumber,
                                 isPaidBeforeTracking: false,
@@ -1826,7 +2086,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                                  expectedInsurance: r.expectedInsurance.toString(),
                                  expectedFees: r.expectedFees.toString(),
                                  reportedBalance: "",
-                              })), paidBefore, termsNum));
+                              })), termsNum));
                               setInstallmentAmountMode(est.installmentAmountMode);
                               setPlannedInstallmentAmount(est.financialInstallmentAmount.toString());
                               setPlannedInstallmentCount(est.rows.length.toString());
@@ -1842,10 +2102,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                               if (insuranceInputs.hasUnknownInsuranceCost || est.hasUnknownInsuranceDistribution) {
                                 warnings.push("El seguro total está registrado, pero no se incluyó en las cuotas porque no sabemos cómo lo distribuye el banco.");
                               }
-                              if (onboardingMode === "EXISTING_DEBT" && paidBefore > 0) {
+                              if (onboardingMode === "EXISTING_DEBT" && paidBefore != null && paidBefore > 0) {
                                 const theoretical = est.remainingPrincipalBalanceAfterPaidBeforeTracking;
                                 const actual = Number(openingPrincipalBalance);
-                                if (Number.isFinite(actual) && Math.abs(theoretical - actual) > 0.01) {
+                                if (theoretical != null && Number.isFinite(actual) && Math.abs(theoretical - actual) > 0.01) {
                                   warnings.push(`El saldo teórico del cronograma estimado es ${currencySymbol} ${theoretical.toFixed(2)}, pero el saldo actual informado es ${currencySymbol} ${actual.toFixed(2)}. Caja Familiar respetará el saldo actual informado por el banco.`);
                                 }
                               }
@@ -2583,15 +2843,15 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   <div><p className="text-xs text-slate-500">TEA</p><p className="font-bold">{teaPercent ? `${teaPercent}%` : "—"}</p></div>
                   <div><p className="text-xs text-slate-500">TCEA</p><p className="font-bold">{tceaPercent ? `${tceaPercent}%` : "—"}</p></div>
                    <div><p className="text-xs text-slate-500">Fuente del cronograma</p><p className="font-bold">{scheduleSource === "contractual" ? "Contractual" : scheduleSource === "reconstructed" ? "Reconstruida" : "Estimada"}</p></div>
-                  {onboardingMode === "EXISTING_DEBT" && <div><p className="text-xs text-slate-500">Situación actual</p><p className="font-bold">{(() => { const summary = bankLoanBaselineSummary(Number(plannedInstallmentCount || 0), Number(installmentsPaidBeforeTracking || 0)); return <>Última pagada: {summary.paid} · Próxima: {summary.nextContractualNumber ?? "—"} de {summary.total ?? "—"} · Pendientes: {summary.pending ?? "—"}</>; })()}</p></div>}
+                  {onboardingMode === "EXISTING_DEBT" && <div><p className="text-xs text-slate-500">Situación actual</p><p className="font-bold">{paidBeforeForExisting == null ? "Indica la última cuota pagada para ubicar tu próxima cuota." : (() => { const summary = bankLoanBaselineSummary(Number(plannedInstallmentCount || 0), paidBeforeForExisting); return <>Última pagada: {summary.paid} · Próxima: {summary.nextContractualNumber ?? "—"} de {summary.total ?? "—"} · Pendientes: {summary.pending ?? "—"}</>; })()}</p></div>}
                  </div>
-                 {documentImportReady && documentImportExtraction && (
+                  {documentImportReady && documentImportExtraction && (
                    <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 space-y-3">
                      <div>
                        <p className="text-sm font-black text-indigo-950">Esto encontramos en tus documentos</p>
                        <p className="mt-1 text-xs text-indigo-900">La confianza orienta la revisión, pero no reemplaza la comprobación matemática ni tu confirmación.</p>
-                       {documentImportSource === "external_ai" && <p className="mt-2 inline-flex rounded-full border border-indigo-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-indigo-800">Analizado con IA externa</p>}
-                       {documentImportSource === "integrated_ai" && <p className="mt-2 inline-flex rounded-full border border-slate-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-slate-700">Analizado con IA integrada</p>}
+                        {documentImportSource === "external_ai" && <p className="mt-2 inline-flex rounded-full border border-indigo-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-indigo-800">Importación desde IA externa</p>}
+                        {documentImportSource === "integrated_ai" && <p className="mt-2 inline-flex rounded-full border border-slate-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-slate-700">Importación desde IA integrada</p>}
                      </div>
                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
                        {["lenderName", "financedAmount", "teaPercent", "schedule", "reportedBalance"].map((field) => {
@@ -2605,9 +2865,17 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                          {documentImportWarnings.map((warning) => <p key={warning}>• {warning}</p>)}
                        </div>
                      )}
-                   </div>
-                 )}
-                 <div>
+                    </div>
+                  )}
+                  {documentImportReady && documentImportExtraction && documentImportValidation && documentImportCompleteness && (
+                    <BankDocumentReviewPanel
+                      extraction={documentImportExtraction}
+                      validation={documentImportValidation}
+                      completeness={documentImportCompleteness}
+                      sourceLabel={documentImportSource === "external_ai" ? "Analizado con IA externa" : "Analizado con IA integrada"}
+                    />
+                  )}
+                  <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Seguros</p>
                   {insurances.length === 0 ? <p className="mt-1 text-slate-600">Sin desgravamen ni seguros definidos.</p> : <ul className="mt-1 space-y-1 text-slate-700">{insurances.map((insurance, index) => <li key={index}>{insurance.label} · {insurance.pricingMode === "fixed_amount" ? insuranceBasisLabel(insurance.rateBasis) : insurance.pricingMode === "percent_outstanding_balance" ? "% sobre saldo pendiente" : insurance.pricingMode === "percent_original_principal" ? "% sobre principal original" : "Según cronograma / por confirmar"}{insurance.pricingMode === "fixed_amount" && insurance.rateBasis !== "per_installment" && insurance.fixedAmount ? ` · Seguro contractual total registrado: ${currencySymbol} ${Number(insurance.fixedAmount).toFixed(2)}` : ""} {insurance.provider ? `· ${insurance.provider}` : ""}</li>)}</ul>}
                 </div>

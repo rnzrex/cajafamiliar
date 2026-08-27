@@ -720,6 +720,7 @@ export async function createDebt(input: DebtCreateInput): Promise<DebtCreateResu
 
 export interface BankLoanCreateInput extends DebtCreateInput {
   loanSubtype: BankLoanSubtype;
+  onboardingMode?: "EXISTING_DEBT" | "NEW_DEBT";
   installmentsPaidBeforeTracking?: number;
   contractNumber?: string | null;
   amortizationMethod: AmortizationMethod;
@@ -753,6 +754,9 @@ export interface BankLoanCreateInput extends DebtCreateInput {
 
 export async function createBankLoan(input: BankLoanCreateInput): Promise<DebtCreateResult> {
   if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  if (input.onboardingMode === "EXISTING_DEBT" && (!Number.isInteger(input.installmentsPaidBeforeTracking) || (input.installmentsPaidBeforeTracking ?? 0) < 1)) {
+    throw new Error("Indica cuál fue la última cuota contractual que ya pagaste.");
+  }
   const rpcArgs = {
     ...toCreateDebtRpcArgs(input),
     p_profile: {
@@ -764,7 +768,7 @@ export async function createBankLoan(input: BankLoanCreateInput): Promise<DebtCr
       down_payment_amount: input.downPaymentAmount ?? null,
       financed_amount: input.financedAmount ?? null,
       term_installments: input.termInstallments ?? null,
-      installments_paid_before_tracking: input.installmentsPaidBeforeTracking ?? 0,
+      installments_paid_before_tracking: input.installmentsPaidBeforeTracking,
       interest_day_count_basis: input.interestDayCountBasis ?? null,
       due_date_adjustment_rule: input.dueDateAdjustmentRule ?? "unknown",
       installment_total_mode: input.installmentTotalMode ?? "unknown",

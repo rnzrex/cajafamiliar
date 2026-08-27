@@ -1,18 +1,30 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Clipboard, FileText, Sparkles, Trash2 } from "lucide-react";
 import type { BankDocumentExtraction } from "../utils/bankDocumentExtraction.js";
-import { buildBankExternalAiPrompt, normalizeBankExternalAiResponse } from "../utils/bankExternalAiImport.js";
+import { buildBankExternalAiPrompt, normalizeBankExternalAiResponse, type BankExternalAiImportResult } from "../utils/bankExternalAiImport.js";
 import type { BankFinancialValidationResult } from "../utils/bankDocumentFinancialValidation.js";
+import { evaluateBankDocumentCompleteness, type BankDocumentCompletenessContext } from "../utils/bankDocumentCompleteness.js";
+import { BankDocumentReviewPanel } from "./BankDocumentReviewPanel.js";
 
 interface BankExternalAiImportPanelProps {
   onExtractionReady: (extraction: BankDocumentExtraction, result: BankFinancialValidationResult) => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
+  completenessContext?: BankDocumentCompletenessContext;
+  resetKey?: number;
 }
 
-export function BankExternalAiImportPanel({ onExtractionReady, setToast }: BankExternalAiImportPanelProps) {
+export function BankExternalAiImportPanel({ onExtractionReady, setToast, completenessContext = {}, resetKey = 0 }: BankExternalAiImportPanelProps) {
   const [responseText, setResponseText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<BankExternalAiImportResult | null>(null);
   const prompt = useMemo(() => buildBankExternalAiPrompt(), []);
+
+  useEffect(() => {
+    if (resetKey === 0) return;
+    setResponseText("");
+    setMessage(null);
+    setImportResult(null);
+  }, [resetKey]);
 
   async function copyPrompt() {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
@@ -40,6 +52,7 @@ export function BankExternalAiImportPanel({ onExtractionReady, setToast }: BankE
       setToast({ message: result.message, type: "error" });
       return;
     }
+    setImportResult(result);
     onExtractionReady(result.extraction, result.validation);
     const status = result.validation.reconciliation?.status;
     const statusLabel = status === "exact" ? "validación matemática exacta" : status === "within_tolerance" ? "validación dentro de tolerancia" : status === "inconsistent" ? "REVISAR: la validación matemática es inconsistente" : "revisión pendiente por datos insuficientes";
@@ -51,6 +64,7 @@ export function BankExternalAiImportPanel({ onExtractionReady, setToast }: BankE
   function clear() {
     setResponseText("");
     setMessage(null);
+    setImportResult(null);
   }
 
   return (
@@ -89,7 +103,7 @@ export function BankExternalAiImportPanel({ onExtractionReady, setToast }: BankE
           id="external-ai-response"
           aria-label="Respuesta de la IA externa"
           value={responseText}
-          onChange={(event) => setResponseText(event.target.value)}
+          onChange={(event) => { setResponseText(event.target.value); setImportResult(null); }}
           rows={8}
           placeholder='{"schema":"CAJA_FAMILIAR_BANK_DOCUMENT_V1","extraction":{...}}'
           className="w-full rounded-xl border border-slate-300 bg-white p-3 font-mono text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
@@ -103,6 +117,16 @@ export function BankExternalAiImportPanel({ onExtractionReady, setToast }: BankE
         <p className="text-[11px] text-slate-500">La respuesta se valida y normaliza localmente. No se guarda automáticamente: primero debes revisar y confirmar.</p>
       </div>
       {message && <p role="status" className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-xs font-bold text-indigo-950">{message}</p>}
+      {importResult && (
+        <div className="mt-4">
+          <BankDocumentReviewPanel
+            extraction={importResult.extraction}
+            validation={importResult.validation}
+            completeness={evaluateBankDocumentCompleteness(importResult.extraction, importResult.validation, completenessContext)}
+            sourceLabel="Analizado con IA externa"
+          />
+        </div>
+      )}
     </section>
   );
 }
