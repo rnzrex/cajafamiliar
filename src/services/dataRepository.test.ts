@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DebtOperationUnavailableError, recordDebtPayment, toCashCountRow, toCreditCardCreditRpcArgs, toCreditCardFeeRpcArgs, toCreditCardReversalRpcArgs, toDebtPayoffRpcArgs, toDebtPaymentRpcArgs, toDebtPrepaymentRpcArgs, toDebtReversalRpcArgs, toFinancialAccountRow, toMovementRow } from "./dataRepository";
+import { DebtOperationUnavailableError, recordDebtPayment, toBankPrepaymentScheduleUpdateRpcArgs, toCashCountRow, toCreditCardCreditRpcArgs, toCreditCardFeeRpcArgs, toCreditCardReversalRpcArgs, toDebtPayoffRpcArgs, toDebtPaymentRpcArgs, toDebtPrepaymentRpcArgs, toDebtReversalRpcArgs, toFinancialAccountRow, toMovementRow } from "./dataRepository";
 
 vi.mock("./supabaseClient", () => ({
   householdId: "00000000-0000-4000-8000-000000000001",
@@ -151,6 +151,40 @@ describe("serializers de dataRepository", () => {
 
     it("no cae a local cuando Supabase no está configurado", async () => {
       await expect(recordDebtPayment(payment)).rejects.toBeInstanceOf(DebtOperationUnavailableError);
+    });
+
+    it("serializa el RPC oficial del cronograma posterior al prepago sin crear un evento nuevo", () => {
+      const args = toBankPrepaymentScheduleUpdateRpcArgs({
+        debtId: "debt-1",
+        prepaymentEventId: "event-prepayment-1",
+        effectiveDate: "2026-08-21",
+        scheduleInstallments: [{
+          installmentNumber: 1,
+          contractualInstallmentNumber: 7,
+          dueDate: "2026-09-20",
+          expectedAmount: 100,
+          expectedPrincipal: 80,
+          expectedInterest: 20,
+          expectedFees: 0,
+          expectedInsurance: 0,
+          reportedBalance: 3_294.39,
+        }],
+        scheduleNotes: "Cronograma entregado por el banco",
+      });
+
+      expect(args).toMatchObject({
+        p_debt_id: "debt-1",
+        p_prepayment_event_id: "event-prepayment-1",
+        p_effective_date: "2026-08-21",
+        p_schedule_notes: "Cronograma entregado por el banco",
+        p_schedule_installments: [{
+          installment_number: 1,
+          contractual_installment_number: 7,
+          reported_balance: 3294.39,
+        }],
+      });
+      expect(args).not.toHaveProperty("p_event_id");
+      expect(args).not.toHaveProperty("p_movement_id");
     });
 
     it("mapea toCreditCardFeeRpcArgs y toCreditCardReversalRpcArgs con nombres p_* requeridos por las RPCs", () => {

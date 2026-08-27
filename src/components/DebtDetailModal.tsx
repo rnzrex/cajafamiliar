@@ -38,6 +38,7 @@ import { calculateNextPayment } from "../utils/debtNextPayment";
 import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
 import { getAmortizationMethodLabel, getBankLoanSubtypeLabel } from "../utils/bankCreditFormHelper";
 import { resolveContractualDetailNextPayment } from "../utils/debtDetailNextPayment";
+import { getBankPrepaymentScheduleTarget } from "../utils/debtPlanning";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 
@@ -300,6 +301,11 @@ export function DebtDetailModal({
     && currentSchedule?.reason === "prepayment"
     && currentSchedule.scheduleSource === "estimated"
     && currentSchedule.isAuthoritative === false;
+  const bankPrepaymentScheduleTarget = getBankPrepaymentScheduleTarget({
+    debtId: debt.id,
+    debtEvents: allEventsForDebt,
+    scheduleVersions,
+  });
   const ledgerResult = buildDebtPaymentLedger(debt, allEventsForDebt);
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
@@ -860,7 +866,7 @@ export function DebtDetailModal({
                   <p className="text-xs font-black uppercase tracking-wider text-amber-800">CRONOGRAMA PENDIENTE DEL BANCO</p>
                   <p className="mt-1 text-sm font-semibold text-amber-950">Se registró un abono extraordinario, pero todavía no hay una versión posterior autoritativa. No se están inventando cuotas nuevas.</p>
                   {canWriteDebt && debt.debtKind === "bank_loan" && (
-                    <button type="button" onClick={() => onOpenOperation("schedule_update")} className="mt-3 rounded-xl bg-amber-200 px-4 py-2 text-sm font-bold text-amber-950 hover:bg-amber-300">
+                    <button type="button" disabled={!bankPrepaymentScheduleTarget} onClick={() => bankPrepaymentScheduleTarget && onOpenOperation("schedule_update", bankPrepaymentScheduleTarget.eventId)} className="mt-3 rounded-xl bg-amber-200 px-4 py-2 text-sm font-bold text-amber-950 hover:bg-amber-300 disabled:opacity-50">
                       Cargar cronograma oficial
                     </button>
                   )}
@@ -873,7 +879,7 @@ export function DebtDetailModal({
                   <p className="mt-1 text-sm font-semibold text-indigo-950">Esta proyección conserva el abono aplicado al principal, pero no es contractual ni sustituye el cronograma que entregue el banco.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <button type="button" onClick={() => setActiveTab("schedule")} className="rounded-xl bg-indigo-200 px-4 py-2 text-sm font-bold text-indigo-950 hover:bg-indigo-300">Ver simulación</button>
-                    {canWriteDebt && <button type="button" onClick={() => onOpenOperation("schedule_update")} className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-indigo-800 ring-1 ring-indigo-300 hover:bg-indigo-50">Cargar cronograma oficial</button>}
+                    {canWriteDebt && <button type="button" disabled={!bankPrepaymentScheduleTarget} onClick={() => bankPrepaymentScheduleTarget && onOpenOperation("schedule_update", bankPrepaymentScheduleTarget.eventId)} className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-indigo-800 ring-1 ring-indigo-300 hover:bg-indigo-50 disabled:opacity-50">Cargar cronograma oficial</button>}
                   </div>
                 </section>
               )}
@@ -1226,6 +1232,11 @@ export function DebtDetailModal({
                                   ? `${currencySymbol} ${inst.expectedAmount.toFixed(2)} (Principal: ${inst.expectedPrincipal ?? 0} | Interés: ${inst.expectedInterest ?? 0})`
                                   : "Por confirmar"}
                               </p>
+                              {currentSchedule?.scheduleSource === "estimated" && (
+                                <p className="mt-1 text-xs font-semibold text-indigo-700">
+                                  Saldo de capital estimado: {inst.reportedBalance == null ? "Por confirmar" : `${currencySymbol} ${inst.reportedBalance.toFixed(2)}`}
+                                </p>
+                              )}
                             </div>
                             <div className="text-right">
                               <p className="text-sm font-bold text-slate-900">

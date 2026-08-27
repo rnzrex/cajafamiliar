@@ -20,6 +20,8 @@ export interface BankPrepaymentSimulationInput {
   extraPrincipalPaid?: number;
   operationDate: string;
   originalPrincipal?: number | null;
+  /** Original contractual term used to preserve total-credit-even allocation. */
+  originalTermInstallments?: number | null;
   teaPercent?: number | null;
   periodicRatePercent?: number | null;
   periodicRateBasis?: PeriodicRateBasis | null;
@@ -29,6 +31,8 @@ export interface BankPrepaymentSimulationInput {
   amortizationMethod?: AmortizationMethod | null;
   currentSchedule: Array<Pick<DebtInstallment, "installmentNumber" | "contractualInstallmentNumber" | "dueDate" | "expectedAmount" | "expectedPrincipal" | "expectedInterest" | "expectedFees" | "expectedInsurance">>;
   insuranceTerms?: Array<Pick<DebtInsuranceTerms, "pricingMode" | "ratePercent" | "fixedAmount" | "rateBasis" | "isRequired">>;
+  /** Effective allocations on future rows make the bank's post-prepayment treatment ambiguous. */
+  hasAllocatedFutureInstallments?: boolean;
 }
 
 export interface BankPrepaymentSimulationRow {
@@ -67,6 +71,11 @@ export interface BankPrepaymentSimulationResult {
 }
 
 type FutureRow = BankPrepaymentSimulationInput["currentSchedule"][number];
+
+const UNKNOWN_INSURANCE_WARNING = "El seguro futuro depende del banco; no se inventó una fórmula.";
+const UNKNOWN_FEES_WARNING = "Las comisiones futuras dependen del banco y no tenemos una regla contractual suficiente para recalcularlas.";
+const MID_PERIOD_WARNING = "El prepago ocurrió entre vencimientos y no conocemos con certeza cómo el banco tratará el interés del período. Usa el nuevo cronograma del banco.";
+const FUTURE_ALLOCATION_WARNING = "Hay cuotas futuras adelantadas. Necesitamos confirmar cómo el banco las tratará junto con el prepago.";
 
 function round2(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
@@ -150,10 +159,18 @@ function insuranceForRow(
       amount += round2(input.originalPrincipal * term.ratePercent / 100);
     } else if (term.pricingMode === "fixed_amount" && term.fixedAmount != null && Number.isFinite(term.fixedAmount)) {
       if (term.rateBasis === "total_credit_upfront") {
-        if (index === 0) amount += round2(term.fixedAmount);
+        // The upfront contribution belongs to the original disbursement. A
+        // post-prepayment schedule must never charge it a second time.
+        amount += 0;
       } else if (term.rateBasis === "total_credit_even") {
-        const futureInstallmentCount = input.currentSchedule.filter((row) => row.dueDate > input.operationDate).length;
-        amount += round2(term.fixedAmount / Math.max(1, futureInstallmentCount));
+        const originalTerm = input.originalTermInstallments;
+        const originalTermValue = typeof originalTerm === "number" ? originalTerm : null;
+        const contractualNumber = futureRow.contractualInstallmentNumber ?? futureRow.installmentNumber;
+        if (originalTermValue == null || !Number.isInteger(originalTermValue) || originalTermValue <= 0 || !Number.isInteger(contractualNumber) || contractualNumber < 1 || contractualNumber > originalTermValue) {
+          known = false;
+        } else {
+          amount += distributeEvenInsurance(term.fixedAmount, originalTermValue)[contractualNumber - 1] ?? 0;
+        }
       } else if (term.rateBasis === "total_credit_unknown") {
         known = false;
       } else {
@@ -164,16 +181,20 @@ function insuranceForRow(
     }
   }
 
-  if (!known && !warnings.includes("El seguro futuro depende del banco; no se inventó una fórmula.")) {
-    warnings.push("El seguro futuro depende del banco; no se inventó una fórmula.");
+  if (!known && !warnings.includes(UNKNOWN_INSURANCE_WARNING)) {
+    warnings.push(UNKNOWN_INSURANCE_WARNING);
   }
   return { amount: round2(amount), known };
 }
 
-function feesForRow(futureRow: FutureRow, warnings: string[]): number {
-  if (futureRow.expectedFees != null && Number.isFinite(futureRow.expectedFees)) return round2(Math.max(0, futureRow.expectedFees));
+function feesForRow(futureRow: FutureRow, warnings: string[]): { amount: number; known: boolean } {
+  if (futureRow.expectedFees === 0) return { amount: 0, known: true };
+  if (futureRow.expectedFees != null && Number.isFinite(futureRow.expectedFees) && futureRow.expectedFees > 0) {
+    if (!warnings.includes(UNKNOWN_FEES_WARNING)) warnings.push(UNKNOWN_FEES_WARNING);
+    return { amount: 0, known: false };
+  }
   if (!warnings.includes("Hay gastos o comisiones futuras por confirmar.")) warnings.push("Hay gastos o comisiones futuras por confirmar.");
-  return 0;
+  return { amount: 0, known: false };
 }
 
 function totalMode(input: BankPrepaymentSimulationInput): BankInstallmentTotalMode | null {
@@ -204,11 +225,12 @@ function buildRows(
   paymentTarget: number,
   warnings: string[],
   preserveTerm: boolean,
-): { rows: BankPrepaymentSimulationRow[]; exhausted: boolean; insuranceKnown: boolean } {
+): { rows: BankPrepaymentSimulationRow[]; exhausted: boolean; insuranceKnown: boolean; feesKnown: boolean } {
   const mode = totalMode(input)!;
   let balance = round2(principalAfter);
   let previousDate = input.operationDate;
   let insuranceKnown = true;
+  let feesKnown = true;
   const rows: BankPrepaymentSimulationRow[] = [];
 
   for (let index = 0; index < futureRows.length; index += 1) {
@@ -220,7 +242,9 @@ function buildRows(
     const insuranceResult = insuranceForRow(input, balance, index, source, warnings);
     insuranceKnown = insuranceKnown && insuranceResult.known;
     const insurance = insuranceResult.amount;
-    const fees = feesForRow(source, warnings);
+    const feesResult = feesForRow(source, warnings);
+    feesKnown = feesKnown && feesResult.known;
+    const fees = feesResult.amount;
     const targetFinancial = mode === "financial_installment_plus_costs" ? paymentTarget : paymentTarget - insurance - fees;
     const targetPrincipal = round2(Math.max(0, targetFinancial - interest));
     const principal = preserveTerm || index === futureRows.length - 1
@@ -245,7 +269,7 @@ function buildRows(
     if (!preserveTerm && balance <= 0) break;
   }
 
-  return { rows, exhausted: balance <= 0.01, insuranceKnown };
+  return { rows, exhausted: balance <= 0.01, insuranceKnown, feesKnown };
 }
 
 function simulateReduceInstallment(
@@ -253,7 +277,7 @@ function simulateReduceInstallment(
   futureRows: FutureRow[],
   principalAfter: number,
   warnings: string[],
-): { rows: BankPrepaymentSimulationRow[]; paymentTarget: number; insuranceKnown: boolean } | null {
+): { rows: BankPrepaymentSimulationRow[]; paymentTarget: number; insuranceKnown: boolean; feesKnown: boolean } | null {
   const mode = totalMode(input)!;
   const maxKnownTotal = futureRows.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0);
   let low = 0;
@@ -270,7 +294,7 @@ function simulateReduceInstallment(
       if (rate == null) return Number.POSITIVE_INFINITY;
       const interest = round2(balance * rate);
       const insurance = insuranceForRow(input, balance, index, source, trialWarnings).amount;
-      const fees = feesForRow(source, trialWarnings);
+      const fees = feesForRow(source, trialWarnings).amount;
       const targetFinancial = mode === "financial_installment_plus_costs" ? candidate : candidate - insurance - fees;
       const principal = round2(Math.min(balance, Math.max(0, targetFinancial - interest)));
       balance = round2(Math.max(0, balance - principal));
@@ -288,7 +312,7 @@ function simulateReduceInstallment(
 
   const paymentTarget = round2(high);
   const built = buildRows(input, futureRows, principalAfter, paymentTarget, warnings, true);
-  return { rows: built.rows, paymentTarget, insuranceKnown: built.insuranceKnown };
+  return { rows: built.rows, paymentTarget, insuranceKnown: built.insuranceKnown, feesKnown: built.feesKnown };
 }
 
 function validateInput(input: BankPrepaymentSimulationInput): string[] {
@@ -296,6 +320,7 @@ function validateInput(input: BankPrepaymentSimulationInput): string[] {
   if (!Number.isFinite(input.principalBeforeOperation) || input.principalBeforeOperation <= 0) warnings.push("El principal anterior a la operación no es válido.");
   if (!parseIsoDate(input.operationDate)) warnings.push("La fecha de la operación no es válida.");
   if (input.amortizationMethod && input.amortizationMethod !== "fixed_installment") warnings.push("La modalidad de amortización no es compatible con esta simulación determinística.");
+  if (input.originalTermInstallments != null && (!Number.isInteger(input.originalTermInstallments) || input.originalTermInstallments <= 0)) warnings.push("El plazo contractual original no es válido para distribuir el seguro total.");
   if (totalMode(input) == null) warnings.push("Falta conocer cómo se define el total de la cuota.");
   if ((input.teaPercent == null || !Number.isFinite(input.teaPercent)) && (input.periodicRatePercent == null || !Number.isFinite(input.periodicRatePercent))) warnings.push("Falta una tasa contractual utilizable.");
   if (input.teaPercent != null && input.dayCountBasis == null && input.periodicRatePercent == null) warnings.push("Falta la base de conteo de días de la tasa contractual.");
@@ -316,6 +341,21 @@ export function simulateBankPrepayment(input: BankPrepaymentSimulationInput): Ba
     return emptyResult(effect, Array.from(new Set(initialWarnings)), principalBefore);
   }
 
+  const isStandalonePrepayment = (input.principalPaid ?? 0) <= 0.01 && (input.extraPrincipalPaid ?? 0) > 0.01;
+  const dates = [...input.currentSchedule]
+    .map((row) => row.dueDate)
+    .filter((date) => parseIsoDate(date) != null)
+    .sort();
+  const hasPreviousDueDate = dates.some((date) => date < input.operationDate);
+  const hasNextDueDate = dates.some((date) => date > input.operationDate);
+  const isDueDate = dates.includes(input.operationDate);
+  if (isStandalonePrepayment && !isDueDate && hasPreviousDueDate && hasNextDueDate) {
+    return emptyResult(effect, [MID_PERIOD_WARNING], principalBefore);
+  }
+  if (input.hasAllocatedFutureInstallments) {
+    return emptyResult(effect, [FUTURE_ALLOCATION_WARNING], principalBefore);
+  }
+
   const principalAfter = round2(Math.max(0, principalBefore - (input.principalPaid ?? 0) - (input.extraPrincipalPaid ?? 0)));
   if (!Number.isFinite(principalAfter) || principalAfter <= 0) {
     return emptyResult(effect, ["El principal posterior al prepago debe ser mayor que cero; para cancelar toda la deuda usa Liquidar deuda."], principalBefore);
@@ -333,6 +373,7 @@ export function simulateBankPrepayment(input: BankPrepaymentSimulationInput): Ba
   let rows: BankPrepaymentSimulationRow[] = [];
   let newRegularInstallment: number | null = null;
   let insuranceKnown = true;
+  let feesKnown = true;
 
   if (effect === "reduce_term") {
     if (oldRegularInstallment == null) {
@@ -345,6 +386,7 @@ export function simulateBankPrepayment(input: BankPrepaymentSimulationInput): Ba
     const built = buildRows(input, futureRows, principalAfter, paymentTarget, warnings, false);
     rows = built.rows;
     insuranceKnown = built.insuranceKnown;
+    feesKnown = built.feesKnown;
     newRegularInstallment = oldRegularInstallment;
     if (rows.length === 0 || !built.exhausted) {
       return emptyResult(effect, [...warnings, "La cuota contractual conocida no permite extinguir el principal con las fechas disponibles."], principalBefore);
@@ -356,6 +398,7 @@ export function simulateBankPrepayment(input: BankPrepaymentSimulationInput): Ba
     }
     rows = built.rows;
     insuranceKnown = built.insuranceKnown;
+    feesKnown = built.feesKnown;
     newRegularInstallment = round2(rows[0]?.total ?? built.paymentTarget);
   }
 
@@ -363,6 +406,7 @@ export function simulateBankPrepayment(input: BankPrepaymentSimulationInput): Ba
     ? round2(rows.reduce((sum, row) => sum + row.interest, 0))
     : null;
   if (!insuranceKnown) warnings.push("TOTAL ESTIMADO / SEGURO POR CONFIRMAR.");
+  if (!feesKnown && !warnings.includes(UNKNOWN_FEES_WARNING) && !warnings.includes("Hay gastos o comisiones futuras por confirmar.")) warnings.push(UNKNOWN_FEES_WARNING);
   const uniqueWarnings = Array.from(new Set(warnings));
   const canPersist = uniqueWarnings.length === 0;
 
@@ -386,4 +430,13 @@ export function simulateBankPrepayment(input: BankPrepaymentSimulationInput): Ba
     warnings: uniqueWarnings,
     canPersist,
   };
+}
+
+function distributeEvenInsurance(total: number, installments: number): number[] {
+  if (total <= 0 || installments <= 0) return Array.from({ length: Math.max(0, installments) }, () => 0);
+  const regularAmount = round2(total / installments);
+  const amounts = Array.from({ length: installments }, () => regularAmount);
+  const priorTotal = amounts.slice(0, -1).reduce((sum, amount) => sum + amount, 0);
+  amounts[installments - 1] = round2(total - priorTotal);
+  return amounts;
 }

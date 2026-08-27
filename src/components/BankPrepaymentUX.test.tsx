@@ -161,7 +161,7 @@ describe("bank prepayment UX", () => {
     await waitFor(() => expect(dataRepository.recordDebtPrepayment).toHaveBeenCalledWith(expect.objectContaining({
       prepaymentEffect: "reduce_term",
       scheduleSource: "estimated",
-      scheduleInstallments: [expect.objectContaining({ contractualInstallmentNumber: 1 })],
+      scheduleInstallments: [expect.objectContaining({ contractualInstallmentNumber: 1, reportedBalance: expect.any(Number) })],
     })));
   });
 

@@ -28,6 +28,7 @@ type ScheduleDraftRow = {
   expectedInterest: string;
   expectedFees: string;
   expectedInsurance: string;
+  reportedBalance: string;
 };
 
 function toScheduleDraftRow(installment: DebtInstallment): ScheduleDraftRow {
@@ -40,6 +41,7 @@ function toScheduleDraftRow(installment: DebtInstallment): ScheduleDraftRow {
     expectedInterest: installment.expectedInterest == null ? "" : String(installment.expectedInterest),
     expectedFees: installment.expectedFees == null ? "" : String(installment.expectedFees),
     expectedInsurance: installment.expectedInsurance == null ? "" : String(installment.expectedInsurance),
+    reportedBalance: installment.reportedBalance == null ? "" : String(installment.reportedBalance),
   };
 }
 
@@ -54,6 +56,7 @@ function toScheduleInstallmentInput(row: ScheduleDraftRow, index: number) {
     expectedInterest: numberOrNull(row.expectedInterest),
     expectedFees: numberOrNull(row.expectedFees),
     expectedInsurance: numberOrNull(row.expectedInsurance),
+    ...(row.reportedBalance.trim() !== "" ? { reportedBalance: numberOrNull(row.reportedBalance) } : {}),
   };
 }
 
@@ -64,6 +67,9 @@ function validateStrictScheduleDraft(rows: ScheduleDraftRow[], eventDate: string
     const row = rows[index];
     const values = [row.expectedAmount, row.expectedPrincipal, row.expectedInterest, row.expectedFees, row.expectedInsurance];
     const numbers = values.map(Number);
+    const contractualNumber = row.contractualInstallmentNumber;
+    const reportedBalance = row.reportedBalance.trim() === "" ? null : Number(row.reportedBalance);
+    const previousContractualNumber = index > 0 ? rows[index - 1].contractualInstallmentNumber : null;
     const components = numbers[1] + numbers[2] + numbers[3] + numbers[4];
     if (
       !row.dueDate ||
@@ -72,8 +78,12 @@ function validateStrictScheduleDraft(rows: ScheduleDraftRow[], eventDate: string
       numbers.some((value) => !Number.isFinite(value)) ||
       numbers[0] <= 0 ||
       numbers.slice(1).some((value) => value < 0) ||
+      (contractualNumber != null && (!Number.isInteger(contractualNumber) || contractualNumber <= 0)) ||
+      (reportedBalance != null && (!Number.isFinite(reportedBalance) || reportedBalance < 0)) ||
       Math.abs(components - numbers[0]) > 0.01 ||
-      (index > 0 && row.dueDate <= rows[index - 1].dueDate)
+      (index > 0 && row.dueDate <= rows[index - 1].dueDate) ||
+      (contractualNumber != null && previousContractualNumber != null && contractualNumber <= previousContractualNumber) ||
+      (contractualNumber != null && rows.slice(0, index).some((previous) => previous.contractualInstallmentNumber === contractualNumber))
     ) {
       return `La cuota #${index + 1} tiene importes o fecha inválidos.`;
     }
@@ -332,6 +342,7 @@ export function DebtOperationForm({
         expectedInterest: row.expectedInterest,
         expectedFees: row.expectedFees,
         expectedInsurance: row.expectedInsurance,
+        reportedBalance: row.reportedBalance,
       })),
     }),
     [bankLoanProfile, currentPrincipal, currentScheduleInstallments, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, eventDate, numExtraPrincipal, numPrincipal, operationType, simulationEffect],
@@ -347,13 +358,15 @@ export function DebtOperationForm({
     teaPercent: debt.teaPercent,
     periodicRatePercent: debt.periodicRatePercent,
     periodicRateBasis: debt.periodicRateBasis,
-    dayCountBasis: bankLoanProfile?.interestDayCountBasis,
-    installmentTotalMode: bankLoanProfile?.installmentTotalMode,
+      dayCountBasis: bankLoanProfile?.interestDayCountBasis,
+      originalTermInstallments: bankLoanProfile?.termInstallments,
+      installmentTotalMode: bankLoanProfile?.installmentTotalMode,
     dueDateAdjustmentRule: bankLoanProfile?.dueDateAdjustmentRule,
     amortizationMethod: bankLoanProfile?.amortizationMethod,
-    currentSchedule: currentScheduleInstallments,
-    insuranceTerms: debtInsuranceTerms,
-  }), [bankLoanProfile, currentPrincipal, currentScheduleInstallments, debt.originalPrincipal, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, eventDate, numExtraPrincipal, numPrincipal, operationType, simulationEffect]);
+      currentSchedule: currentScheduleInstallments,
+      insuranceTerms: debtInsuranceTerms,
+      hasAllocatedFutureInstallments: currentScheduleInstallments.some((installment) => installment.dueDate > eventDate && allocatedAmountForInstallment(installment.id, persistedAllocations, debtEvents) > 0.01),
+  }), [bankLoanProfile, currentPrincipal, currentScheduleInstallments, debt.originalPrincipal, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, debtEvents, eventDate, numExtraPrincipal, numPrincipal, operationType, persistedAllocations, simulationEffect]);
   const summary = debtEconomicSummary(
     numCash,
     operationType === "payoff" ? currentPrincipal : totalPrincipalAmount,
@@ -413,6 +426,7 @@ export function DebtOperationForm({
         expectedInterest: row.interest,
         expectedFees: row.fees,
         expectedInsurance: row.insurance,
+        reportedBalance: row.remainingPrincipalBalance,
       })) ?? [];
   const scheduleSourceForSave = hasSelectedSchedule ? "contractual" as const : effectiveSimulation ? "estimated" as const : null;
 
@@ -762,6 +776,8 @@ export function DebtOperationForm({
         debtEvents={debtEvents}
         installments={installments}
         scheduleVersions={scheduleVersions}
+        mode={targetEventId ? "prepayment_schedule" : "generic"}
+        prepaymentEventId={targetEventId ?? null}
         canWriteDebt={canWriteDebt}
         onSaved={onSaved}
         onCancel={onCancel}
@@ -872,6 +888,7 @@ export function DebtOperationForm({
                       <BankSchedulePreview
                         rows={effectiveSimulation.rows.map((row) => ({ contractualInstallmentNumber: row.contractualInstallmentNumber, dueDate: row.dueDate, principal: row.principal, interest: row.interest, insurance: row.insurance, fees: row.fees, total: row.total, reportedBalance: row.remainingPrincipalBalance }))}
                         compact
+                        balanceLabel="Saldo de capital estimado"
                         ariaLabel="Vista previa del cronograma estimado después del prepago"
                       />
                       {effectiveSimulation.warnings.length > 0 && <div className="space-y-1 rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-900">{effectiveSimulation.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
@@ -1096,19 +1113,21 @@ export function DebtOperationForm({
                   </div>
                   <button
                     type="button"
-                    onClick={() => setScheduleInstallments([...scheduleInstallments, { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "" }])}
+                    onClick={() => setScheduleInstallments([...scheduleInstallments, { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", reportedBalance: "" }])}
                     className="rounded-xl bg-indigo-100 px-3 py-1.5 text-sm font-bold text-indigo-800 hover:bg-indigo-200"
                   >
                     Agregar cuota posterior al abono
                   </button>
                   {scheduleInstallments.map((s, idx) => (
-                    <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl bg-white p-3 sm:grid-cols-3 lg:grid-cols-7">
-                      <span className="text-xs font-bold text-slate-600">Cuota #{idx + 1}</span>
+                    <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl bg-white p-3 sm:grid-cols-3 lg:grid-cols-9">
+                      <span className="text-xs font-bold text-slate-600">Cuota interna #{idx + 1}</span>
+                      <input aria-label={`Número contractual nueva cuota ${idx + 1}`} type="number" min="1" step="1" placeholder="N° contrato" value={s.contractualInstallmentNumber ?? ""} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].contractualInstallmentNumber = e.target.value.trim() === "" ? null : Number(e.target.value); setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Fecha nueva cuota ${idx + 1}`} type="date" value={s.dueDate} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].dueDate = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Total nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Total" value={s.expectedAmount} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedAmount = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Interés nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Comisiones nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Saldo capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo capital" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <div className="flex gap-2"><input aria-label={`Seguro nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" /><button type="button" onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))} className="text-xs font-bold text-red-600">Quitar</button></div>
                     </div>
                   ))}
@@ -1313,10 +1332,10 @@ export function DebtOperationForm({
                 </div>
                 <button
                   type="button"
-                  onClick={() =>
+                    onClick={() =>
                     setScheduleInstallments([
                       ...scheduleInstallments,
-                       { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "" },
+                       { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", reportedBalance: "" },
                     ])
                   }
                   className="rounded-xl bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 hover:bg-blue-100"
@@ -1324,13 +1343,15 @@ export function DebtOperationForm({
                   Agregar cuota al nuevo cronograma
                 </button>
                 {scheduleInstallments.map((s, idx) => (
-                  <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-3 lg:grid-cols-7">
-                    <div className="text-xs font-bold text-slate-600">Cuota #{idx + 1}</div>
+                  <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-3 lg:grid-cols-9">
+                    <div className="text-xs font-bold text-slate-600">Cuota interna #{idx + 1}</div>
+                    <input aria-label={`Número contractual nueva cuota ${idx + 1}`} type="number" min="1" step="1" placeholder="N° contrato" value={s.contractualInstallmentNumber ?? ""} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].contractualInstallmentNumber = e.target.value.trim() === "" ? null : Number(e.target.value); setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <input aria-label={`Fecha nueva cuota ${idx + 1}`} type="date" value={s.dueDate} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].dueDate = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <input aria-label={`Total nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Total" value={s.expectedAmount} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedAmount = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <input aria-label={`Capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <input aria-label={`Interés nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <input aria-label={`Comisiones nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                    <input aria-label={`Saldo capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo capital" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <div className="flex gap-2"><input aria-label={`Seguro nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" /><button type="button" onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))} className="text-sm font-bold text-red-600">Eliminar</button></div>
                   </div>
                 ))}
@@ -1357,7 +1378,7 @@ export function DebtOperationForm({
               onClick={() =>
                 setScheduleInstallments([
                   ...scheduleInstallments,
-                  { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "" },
+                  { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", reportedBalance: "" },
                 ])
               }
               className="rounded-xl bg-amber-100 px-3 py-1.5 text-sm font-bold text-amber-900 hover:bg-amber-200"
@@ -1365,13 +1386,15 @@ export function DebtOperationForm({
               Agregar cuota restaurada
             </button>
             {scheduleInstallments.map((s, idx) => (
-              <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl bg-white p-3 shadow-sm sm:grid-cols-3 lg:grid-cols-7">
-                <div className="text-xs font-bold text-slate-600">Cuota #{idx + 1}</div>
+              <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl bg-white p-3 shadow-sm sm:grid-cols-3 lg:grid-cols-9">
+                <div className="text-xs font-bold text-slate-600">Cuota interna #{idx + 1}</div>
+                <input aria-label={`Número contractual cuota restaurada ${idx + 1}`} type="number" min="1" step="1" placeholder="N° contrato" value={s.contractualInstallmentNumber ?? ""} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].contractualInstallmentNumber = e.target.value.trim() === "" ? null : Number(e.target.value); setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Fecha cuota restaurada ${idx + 1}`} type="date" value={s.dueDate} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].dueDate = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Total cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Total" value={s.expectedAmount} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedAmount = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Capital cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Interés cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Comisiones cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                <input aria-label={`Saldo capital cuota restaurada ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo capital" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <div className="flex justify-end">
                   <input aria-label={`Seguro cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                   <button

@@ -3,7 +3,7 @@ import React from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Debt, DebtInstallment, DebtScheduleVersion, FinancialAccount } from "../types.js";
+import type { Debt, DebtEvent, DebtInstallment, DebtScheduleVersion, FinancialAccount } from "../types.js";
 import * as dataRepository from "../services/dataRepository.js";
 import { DebtOperationForm } from "./DebtOperationForm.js";
 
@@ -15,6 +15,7 @@ vi.mock("../services/dataRepository", async () => {
     recordDebtPrepayment: vi.fn().mockResolvedValue({}),
     recordDebtInstallmentAdvance: vi.fn().mockResolvedValue({}),
     updateDebtContractualSchedule: vi.fn().mockResolvedValue({}),
+    updateBankPrepaymentSchedule: vi.fn().mockResolvedValue({}),
   };
 });
 
@@ -106,7 +107,10 @@ const installments: DebtInstallment[] = [
 function renderOperation(
   operationType: "payment" | "prepayment" | "installment_advance" | "schedule_update",
   paymentWithExtraPrincipal = false,
-  setToast = vi.fn()
+  setToast = vi.fn(),
+  targetEventId?: string,
+  customScheduleVersions: DebtScheduleVersion[] = [schedule],
+  customDebtEvents: DebtEvent[] = [],
 ) {
   return render(
     <DebtOperationForm
@@ -114,8 +118,9 @@ function renderOperation(
       operationType={operationType}
       paymentWithExtraPrincipal={paymentWithExtraPrincipal}
       installments={installments}
-      scheduleVersions={[schedule]}
-      debtEvents={[]}
+      scheduleVersions={customScheduleVersions}
+      debtEvents={customDebtEvents}
+      targetEventId={targetEventId}
       accounts={[account]}
       categories={[]}
       currentPrincipal={10000}
@@ -288,5 +293,65 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
         expect.objectContaining({ installmentNumber: 2, dueDate: installments[1].dueDate }),
       ],
     })));
+  });
+
+  it("routes an official post-prepayment schedule to the dedicated RPC", async () => {
+    const user = userEvent.setup();
+    const prepaymentEvent: DebtEvent = {
+      id: "prepayment-qapaq-1",
+      debtId: debt.id,
+      eventDate: "2026-08-20",
+      eventType: "principal_prepayment",
+      cashAmount: 500,
+      principalDelta: -500,
+      interestPaid: 0,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "movement-qapaq-1",
+      reversalOfEventId: null,
+      description: "Prepago",
+      registeredByUserId: "user-1",
+      createdAt: "2026-08-20T00:00:00Z",
+      prepaymentEffect: "pending_bank_schedule",
+    };
+    const estimatedSchedule: DebtScheduleVersion = {
+      ...schedule,
+      id: "schedule-qapaq-estimated",
+      versionNumber: 2,
+      effectiveDate: "2026-08-20",
+      reason: "prepayment",
+      scheduleSource: "estimated",
+      isAuthoritative: false,
+      triggerEventId: prepaymentEvent.id,
+    };
+    const estimatedInstallments = installments.map((row) => ({ ...row, scheduleVersionId: estimatedSchedule.id }));
+    render(
+      <DebtOperationForm
+        debt={debt}
+        operationType="schedule_update"
+        targetEventId={prepaymentEvent.id}
+        installments={estimatedInstallments}
+        scheduleVersions={[schedule, estimatedSchedule]}
+        debtEvents={[prepaymentEvent]}
+        accounts={[account]}
+        categories={[]}
+        currentPrincipal={9500}
+        persistedAllocations={[]}
+        onSaved={vi.fn().mockResolvedValue(undefined)}
+        onCancel={vi.fn()}
+        setToast={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: "Guardar cronograma oficial del prepago" }));
+
+    await waitFor(() => expect(dataRepository.updateBankPrepaymentSchedule).toHaveBeenCalledWith(expect.objectContaining({
+      debtId: debt.id,
+      prepaymentEventId: prepaymentEvent.id,
+      effectiveDate: prepaymentEvent.eventDate,
+    })));
+    expect(dataRepository.updateDebtContractualSchedule).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,7 @@ const alfinInput = {
   extraPrincipalPaid: 500,
   operationDate: "2026-11-10",
   originalPrincipal: 4100,
+  originalTermInstallments: 18,
   teaPercent: 68.4,
   dayCountBasis: "actual_days_360" as const,
   installmentTotalMode: "total_installment_including_costs" as const,
@@ -121,8 +122,8 @@ describe("bank prepayment simulation", () => {
       insuranceTerms: [{ pricingMode: "fixed_amount", ratePercent: null, fixedAmount: 120, rateBasis: "total_credit_even", isRequired: true }],
     });
     expect(even.status).toBe("calculated");
-    expect(even.rows[0]?.insurance).toBe(10);
-    expect(even.rows.at(-1)?.insurance).toBe(10);
+    expect(even.rows[0]?.insurance).toBe(6.67);
+    expect(even.rows.at(-1)?.insurance).toBe(6.61);
 
     const upfront = simulateBankPrepayment({
       ...alfinInput,
@@ -130,8 +131,62 @@ describe("bank prepayment simulation", () => {
       insuranceTerms: [{ pricingMode: "fixed_amount", ratePercent: null, fixedAmount: 120, rateBasis: "total_credit_upfront", isRequired: true }],
     });
     expect(upfront.status).toBe("calculated");
-    expect(upfront.rows[0]?.insurance).toBe(120);
-    expect(upfront.rows[1]?.insurance).toBe(0);
+    expect(upfront.rows.every((row) => row.insurance === 0)).toBe(true);
+  });
+
+  it("does not redistribute total-credit-even insurance after a prepayment", () => {
+    const result = simulateBankPrepayment({
+      ...alfinInput,
+      effect: "reduce_term",
+      insuranceTerms: [{ pricingMode: "fixed_amount", ratePercent: null, fixedAmount: 120, rateBasis: "total_credit_even", isRequired: true }],
+    });
+    expect(result.status).toBe("calculated");
+    expect(result.rows.map((row) => row.insurance)).toEqual(Array(10).fill(6.67));
+  });
+
+  it("keeps per-installment fixed insurance on every future row", () => {
+    const result = simulateBankPrepayment({
+      ...alfinInput,
+      effect: "reduce_term",
+      insuranceTerms: [{ pricingMode: "fixed_amount", ratePercent: null, fixedAmount: 7, rateBasis: "per_installment", isRequired: true }],
+    });
+    expect(result.status).toBe("calculated");
+    expect(result.rows.every((row) => row.insurance === 7)).toBe(true);
+  });
+
+  it("allows zero future fees but refuses positive unknown fees", () => {
+    const zeroFees = simulateBankPrepayment({ ...alfinInput, effect: "reduce_term" });
+    expect(zeroFees.status).toBe("calculated");
+
+    const positiveFees = simulateBankPrepayment({
+      ...alfinInput,
+      effect: "reduce_term",
+      currentSchedule: alfinSchedule.map((row) => ({ ...row, expectedFees: 3 })),
+    });
+    expect(positiveFees.status).toBe("calculated_with_warnings");
+    expect(positiveFees.canPersist).toBe(false);
+    expect(positiveFees.warnings).toContain("Las comisiones futuras dependen del banco y no tenemos una regla contractual suficiente para recalcularlas.");
+  });
+
+  it("blocks standalone mid-period prepayment and future allocations", () => {
+    const midPeriod = simulateBankPrepayment({
+      ...alfinInput,
+      effect: "reduce_term",
+      principalPaid: 0,
+      extraPrincipalPaid: 500,
+      operationDate: "2026-11-15",
+    });
+    expect(midPeriod.status).toBe("insufficient_data");
+    expect(midPeriod.canPersist).toBe(false);
+    expect(midPeriod.warnings).toContain("El prepago ocurrió entre vencimientos y no conocemos con certeza cómo el banco tratará el interés del período. Usa el nuevo cronograma del banco.");
+
+    const allocated = simulateBankPrepayment({
+      ...alfinInput,
+      effect: "reduce_term",
+      hasAllocatedFutureInstallments: true,
+    });
+    expect(allocated.status).toBe("insufficient_data");
+    expect(allocated.warnings).toContain("Hay cuotas futuras adelantadas. Necesitamos confirmar cómo el banco las tratará junto con el prepago.");
   });
 
   it("keeps financial-installment-plus-costs distinct from total-installment mode", () => {

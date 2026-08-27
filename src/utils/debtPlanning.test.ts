@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion } from "../types";
-import { buildDebtPlanningItems, summarizeDebtPlanningAlerts, summarizeDebtPlanningMonth } from "./debtPlanning";
+import { buildDebtPlanningItems, getBankPrepaymentScheduleTarget, summarizeDebtPlanningAlerts, summarizeDebtPlanningMonth } from "./debtPlanning";
 import { paymentStatus, paymentAlert } from "./calculations";
 
 
@@ -229,6 +229,52 @@ describe("buildDebtPlanningItems — schedule version handling", () => {
     expect(items[0].installmentId).toBe("i2");
     expect(items[0].scheduleVersionId).toBe("sv2");
     expect(items[0].pendingBankSchedule).toBe(false);
+  });
+});
+
+describe("getBankPrepaymentScheduleTarget", () => {
+  it("targets the estimated schedule trigger instead of guessing by date", () => {
+    const event = debtEvent({
+      id: "e_prepayment",
+      eventType: "principal_prepayment",
+      eventDate: "2026-08-20",
+      prepaymentEffect: "reduce_term",
+      createdAt: "2026-08-20T00:00:00Z",
+    });
+    const version = scheduleVersion({
+      id: "sv_estimated",
+      scheduleSource: "estimated",
+      reason: "prepayment",
+      triggerEventId: event.id,
+    });
+
+    expect(getBankPrepaymentScheduleTarget({ debtId: "d1", debtEvents: [event], scheduleVersions: [version] })).toEqual({
+      eventId: event.id,
+      source: "estimated",
+    });
+  });
+
+  it("targets the latest pending prepayment when no newer schedule exists", () => {
+    const first = debtEvent({
+      id: "e_first",
+      eventType: "principal_prepayment",
+      eventDate: "2026-08-20",
+      prepaymentEffect: "pending_bank_schedule",
+      createdAt: "2026-08-20T00:00:00Z",
+    });
+    const second = debtEvent({
+      id: "e_second",
+      eventType: "payment",
+      eventDate: "2026-08-21",
+      extraPrincipalAmount: 100,
+      prepaymentEffect: "pending_bank_schedule",
+      createdAt: "2026-08-21T00:00:00Z",
+    });
+
+    expect(getBankPrepaymentScheduleTarget({ debtId: "d1", debtEvents: [first, second], scheduleVersions: [scheduleVersion()] })).toEqual({
+      eventId: second.id,
+      source: "pending",
+    });
   });
 });
 

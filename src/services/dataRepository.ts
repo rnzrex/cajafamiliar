@@ -618,6 +618,14 @@ export interface DebtScheduleUpdateInput {
   scheduleNotes?: string | null;
 }
 
+export interface BankPrepaymentScheduleUpdateInput {
+  debtId: string;
+  prepaymentEventId: string;
+  effectiveDate: string;
+  scheduleInstallments: DebtScheduleInstallmentInput[];
+  scheduleNotes?: string | null;
+}
+
 export interface DebtScheduleUpdateResult {
   idempotentReplay: boolean;
   debt: Debt;
@@ -913,6 +921,17 @@ export function toDebtScheduleUpdateRpcArgs(input: DebtScheduleUpdateInput) {
   };
 }
 
+export function toBankPrepaymentScheduleUpdateRpcArgs(input: BankPrepaymentScheduleUpdateInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_prepayment_event_id: input.prepaymentEventId,
+    p_effective_date: input.effectiveDate,
+    p_schedule_installments: input.scheduleInstallments.map(toDebtScheduleInstallmentRow),
+    p_schedule_notes: input.scheduleNotes ?? null,
+  };
+}
+
 export function toDebtPrepaymentRpcArgs(input: DebtPrepaymentInput) {
   return {
     p_household_id: householdId,
@@ -1012,6 +1031,10 @@ export async function reverseDebtEvent(input: DebtReversalInput): Promise<DebtRe
 
 export async function updateDebtContractualSchedule(input: DebtScheduleUpdateInput): Promise<DebtScheduleUpdateResult> {
   return callDebtOperation("update_debt_contractual_schedule_v1", toDebtScheduleUpdateRpcArgs(input), fromDebtScheduleUpdateResult);
+}
+
+export async function updateBankPrepaymentSchedule(input: BankPrepaymentScheduleUpdateInput): Promise<DebtScheduleUpdateResult> {
+  return callDebtOperation("update_bank_prepayment_schedule_v1", toBankPrepaymentScheduleUpdateRpcArgs(input), fromDebtScheduleUpdateResult);
 }
 
 export class CreditCardOperationError extends Error {

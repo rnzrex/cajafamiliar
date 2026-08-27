@@ -100,6 +100,57 @@ function compareDebtEvents(a: DebtEvent, b: DebtEvent): number {
   return `${a.eventDate}|${a.createdAt}|${a.id}`.localeCompare(`${b.eventDate}|${b.createdAt}|${b.id}`);
 }
 
+export interface BankPrepaymentScheduleTarget {
+  eventId: string;
+  source: "estimated" | "pending";
+}
+
+function isPrepaymentEvent(event: DebtEvent): boolean {
+  return event.eventType === "principal_prepayment"
+    || (event.eventType === "payment" && (event.extraPrincipalAmount ?? 0) > 0);
+}
+
+/**
+ * Resolve the exact prepayment event that an official bank schedule must
+ * replace. This deliberately uses the schedule trigger and lifecycle ordering
+ * instead of guessing from dates, descriptions, or event names.
+ */
+export function getBankPrepaymentScheduleTarget({
+  debtId,
+  debtEvents,
+  scheduleVersions,
+}: {
+  debtId: string;
+  debtEvents: DebtEvent[];
+  scheduleVersions: DebtScheduleVersion[];
+}): BankPrepaymentScheduleTarget | null {
+  const effectiveEvents = effectiveDebtEvents(debtEvents, debtId);
+  const currentSchedule = currentDebtScheduleVersion(debtId, scheduleVersions);
+  const currentTrigger = currentSchedule?.triggerEventId
+    ? effectiveEvents.find((event) => event.id === currentSchedule.triggerEventId) ?? null
+    : null;
+  const latestPending = effectiveEvents
+    .filter((event) => isPrepaymentEvent(event) && event.prepaymentEffect === "pending_bank_schedule")
+    .sort(compareDebtEvents)
+    .at(-1) ?? null;
+
+  if (latestPending && (!currentTrigger || compareDebtEvents(currentTrigger, latestPending) < 0)) {
+    return { eventId: latestPending.id, source: "pending" };
+  }
+
+  if (
+    currentSchedule?.scheduleSource === "estimated"
+    && currentSchedule.reason === "prepayment"
+    && currentSchedule.triggerEventId
+    && currentTrigger
+    && isPrepaymentEvent(currentTrigger)
+  ) {
+    return { eventId: currentTrigger.id, source: "estimated" };
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Builder
 // ---------------------------------------------------------------------------
