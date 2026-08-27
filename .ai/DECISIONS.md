@@ -97,3 +97,10 @@ Date: 2026-08-26
 Status: active
 Decision: Real bank-document AI analysis must use the Gemini Paid Tier; the free tier is not permitted for documents containing PII or financial information, and this feature does not configure billing or a real API key.
 Reason: Preserve the privacy and operational boundary until the orchestrator explicitly configures a Preview-only paid-tier key.
+
+## D-015 - Permanent external AI import bridge
+
+Date: 2026-08-27
+Status: active
+Decision: Keep `Analizar con IA externa` as a permanent no-API bank-document path using the versioned `CAJA_FAMILIAR_BANK_DOCUMENT_V1` wrapper, local strict parsing/normalization, and the same V4/V5 financial validation and review gates; keep integrated Gemini available only when its server-side configuration is present.
+Reason: Let users analyze documents with a provider of their choice without consuming Caja Familiar AI credits, while preserving provider independence, PII/unknown-field filtering, mathematical validation, and explicit user confirmation before persistence.

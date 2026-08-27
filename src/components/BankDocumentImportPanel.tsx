@@ -1,17 +1,18 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, FileSearch, LoaderCircle, Sparkles, Upload, X } from "lucide-react";
 import type { BankDocumentExtraction } from "../utils/bankDocumentExtraction.js";
 import { normalizeBankDocumentExtraction } from "../utils/bankDocumentExtraction.js";
 import { mergeBankDocumentExtractions } from "../utils/bankDocumentExtraction.js";
-import { reconcileBankContractSchedule } from "../utils/bankContractReconciliation.js";
+import { financialValidation } from "../utils/bankDocumentFinancialValidation.js";
+import type { BankFinancialValidationResult } from "../utils/bankDocumentFinancialValidation.js";
 import { parseDebtScheduleFile } from "../utils/debtScheduleFileParser.js";
 import { uploadAndAnalyzeBankDocuments, type BankDocumentImportFile } from "../services/bankDocumentImport.js";
-import type { BankDocumentAnalyzeResult } from "../../api/bank-document/analyze.js";
+import { fetchBankDocumentCapabilities } from "../services/bankDocumentCapabilities.js";
 
 type ImportStage = "idle" | "uploading" | "analyzing" | "validating" | "ready" | "error";
 
 interface BankDocumentImportPanelProps {
-  onExtractionReady: (extraction: BankDocumentExtraction, result: Pick<BankDocumentAnalyzeResult, "reconciliation" | "reconstruction" | "reportedBalanceClassification" | "scheduleSource">) => void;
+  onExtractionReady: (extraction: BankDocumentExtraction, result: BankFinancialValidationResult) => void;
 }
 
 const ACCEPT = ".pdf,.xlsx,.xls,.csv,.tsv,.txt,.jpg,.jpeg,.png,.webp";
@@ -61,6 +62,15 @@ export function BankDocumentImportPanel({ onExtractionReady }: BankDocumentImpor
   const [files, setFiles] = useState<BankDocumentImportFile[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [resultSummary, setResultSummary] = useState<string | null>(null);
+  const [integratedAiAvailable, setIntegratedAiAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void fetchBankDocumentCapabilities().then((capabilities) => {
+      if (active) setIntegratedAiAvailable(capabilities.integratedAiAvailable);
+    });
+    return () => { active = false; };
+  }, []);
 
   async function handleFiles(selected: FileList | null) {
     if (!selected || selected.length === 0 || stage === "uploading" || stage === "analyzing") return;
@@ -116,19 +126,10 @@ export function BankDocumentImportPanel({ onExtractionReady }: BankDocumentImpor
         }));
         if (normalized.some((item) => !item.valid)) throw new Error("DOCUMENT_EXTRACTION_INVALID");
         const merged = mergeBankDocumentExtractions(normalized.map((item) => item.value));
-        const reconciliation = reconcileBankContractSchedule(merged.schedule, {
-          expectedInstallmentCount: merged.termInstallments,
-          reportedTotalPrincipal: merged.originalPrincipal ?? merged.financedAmount,
-          reportedTotalInterest: merged.totalInterest,
-          reportedTotalInsurance: merged.totalInsurance,
-          reportedTotalFees: merged.totalFees,
-          reportedTotalContractAmount: merged.totalContractAmount,
-          knownRegularPayment: merged.regularInstallmentAmount,
-          knownFinalPayment: merged.finalInstallmentAmount,
-        });
+        const validation = financialValidation(merged);
         setStage("ready");
         setResultSummary(`Cronograma estructurado leído localmente: ${merged.schedule.length} cuotas. No se consumió IA.`);
-        onExtractionReady(merged, { reconciliation, reconstruction: null, reportedBalanceClassification: null, scheduleSource: "contractual" });
+        onExtractionReady(merged, validation);
         return;
       }
 
@@ -178,10 +179,11 @@ export function BankDocumentImportPanel({ onExtractionReady }: BankDocumentImpor
         <div>
           <div className="flex items-center gap-2">
             <FileSearch className="h-5 w-5 text-indigo-700" aria-hidden="true" />
-            <h3 id="bank-document-import-title" className="text-sm font-black uppercase tracking-wide text-indigo-950">Importar contrato o cronograma</h3>
-            <span className="rounded-full bg-indigo-600 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-white">Recomendado</span>
+            <h3 id="bank-document-import-title" className="text-sm font-black uppercase tracking-wide text-indigo-950">Importar automáticamente con IA</h3>
           </div>
           <p className="mt-1 max-w-2xl text-xs text-indigo-900">Sube contrato.pdf, cronograma.xlsx, una foto o varios documentos juntos. Primero intentamos leer Excel/CSV sin IA; los PDF y fotos pasan por un análisis privado con revisión matemática.</p>
+          {integratedAiAvailable === false && <p className="mt-2 text-xs font-bold text-amber-800">IA integrada no configurada. Disponible cuando configures la API. Puedes analizar el documento con una IA externa mientras tanto.</p>}
+          {integratedAiAvailable === true && <p className="mt-2 text-xs font-bold text-emerald-800">IA integrada configurada para análisis automático.</p>}
         </div>
         <Sparkles className="hidden h-8 w-8 text-indigo-300 sm:block" aria-hidden="true" />
       </div>

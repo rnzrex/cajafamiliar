@@ -7,6 +7,7 @@ import { DebtForm } from "./DebtForm.js";
 import { BANK_LOAN_SUBTYPE_OPTIONS, AMORTIZATION_METHOD_OPTIONS } from "../utils/bankCreditFormHelper.js";
 import * as dataRepository from "../services/dataRepository.js";
 import { addMonthsClamped } from "../utils/debtEstimation.js";
+import { bankExternalAiPayloadText, BANK_EXTERNAL_AI_ALFIN_FIXTURE } from "../utils/bankExternalAiFixture.js";
 
 vi.mock("../services/dataRepository", async () => {
   const actual = await vi.importActual<typeof dataRepository>("../services/dataRepository.js");
@@ -23,7 +24,10 @@ vi.mock("../services/dataRepository", async () => {
 });
 
 describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
   function scheduleLines(start: number, end: number): string {
     return Array.from({ length: end - start + 1 }, (_, index) => {
@@ -179,5 +183,33 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
 
     expect(screen.queryByRole("button", { name: "Registrar deuda" })).toBeNull();
+  }, 15_000);
+
+  it("imports the anonymized 18-row fixture through external AI without calling a provider", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.fn().mockRejectedValue(new Error("network must not be needed for external import"));
+    vi.stubGlobal("fetch", fetchSpy);
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito externo" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+
+    expect(fetchSpy).not.toHaveBeenCalledWith("/api/bank-document/analyze", expect.anything());
+    expect(screen.getByText("Analizado con IA externa")).toBeTruthy();
+    expect(screen.getByText(/18 filas/)).toBeTruthy();
+    expect(screen.getByText("Contractual", { exact: true })).toBeTruthy();
+    expect(BANK_EXTERNAL_AI_ALFIN_FIXTURE.schedule).toHaveLength(18);
   }, 15_000);
 });

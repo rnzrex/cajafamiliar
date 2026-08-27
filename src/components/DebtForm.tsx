@@ -19,8 +19,10 @@ import { parseDebtScheduleFile, DEBT_SCHEDULE_COLUMN_LABELS, type DebtScheduleCo
 import { applyInitialBankLoanBaseline, bankLoanBaselineSummary, bankLoanScheduleConsistencyError } from "../utils/bankLoanBaseline";
 import { generateEstimatedDebtSchedule } from "../utils/debtEstimation";
 import { BankDocumentImportPanel } from "./BankDocumentImportPanel";
+import { BankExternalAiImportPanel } from "./BankExternalAiImportPanel";
 import type { BankDocumentExtraction } from "../utils/bankDocumentExtraction";
 import { reviewFieldStatus } from "../utils/bankDocumentExtraction";
+import type { BankFinancialValidationResult } from "../utils/bankDocumentFinancialValidation";
 import type { BankInterestDayCountBasis, BankDueDateAdjustmentRule, BankInstallmentTotalMode, BankReportedBalanceKind } from "../types";
 import { deriveCurrentPrincipalBalance } from "../utils/bankContractReconciliation";
 import { detectFrequencyFromDates } from "../utils/debtScheduleParser";
@@ -47,6 +49,8 @@ type BankBalanceInformation =
   | "unknown";
 
 type BankOpeningBalanceSource = "user_principal" | "schedule_derived" | "imported_principal" | "none";
+type BankLoanEntryPath = "external_ai" | "integrated_ai" | "reconstruction" | "manual";
+type BankDocumentImportSource = "external_ai" | "integrated_ai";
 
 const KIND_ICONS: Partial<Record<DebtKind, typeof Banknote>> = {
   bank_loan: Building2,
@@ -100,6 +104,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [reportedBalanceAmount, setReportedBalanceAmount] = useState("");
   const [bankBalanceInformation, setBankBalanceInformation] = useState<BankBalanceInformation>("unknown");
   const [documentImportReady, setDocumentImportReady] = useState(false);
+  const [documentImportSource, setDocumentImportSource] = useState<BankDocumentImportSource | null>(null);
   const [documentImportExtraction, setDocumentImportExtraction] = useState<BankDocumentExtraction | null>(null);
   const [documentImportWarnings, setDocumentImportWarnings] = useState<string[]>([]);
   const [documentImportReconciliation, setDocumentImportReconciliation] = useState<string | null>(null);
@@ -128,6 +133,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     totalContractSum: number;
   } | null>(null);
   const [estimatedScheduleSignature, setEstimatedScheduleSignature] = useState<string | null>(null);
+  const [bankLoanEntryPath, setBankLoanEntryPath] = useState<BankLoanEntryPath>("external_ai");
 
   const [insurances, setInsurances] = useState<Array<{
     insuranceType: DebtInsuranceType;
@@ -445,28 +451,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
   const applyDocumentExtraction = (
     extraction: BankDocumentExtraction,
-    result: {
-      reconciliation: { status: string; warnings: string[] } | null;
-      reconstruction: {
-        rows: Array<{
-          contractualInstallmentNumber: number;
-          dueDate: string;
-          principal: number;
-          interest: number;
-          insurance: number;
-          fees: number;
-          total: number;
-        }>;
-        inferredTerms: {
-          dayCountBasis: BankInterestDayCountBasis;
-          dueDateAdjustmentRule: BankDueDateAdjustmentRule;
-          installmentTotalMode: BankInstallmentTotalMode;
-        };
-        warnings: string[];
-      } | null;
-      scheduleSource: "contractual" | "reconstructed" | "estimated";
-      reportedBalanceClassification?: { kind: BankReportedBalanceKind } | null;
-    },
+    result: BankFinancialValidationResult,
+    source: BankDocumentImportSource = "integrated_ai",
   ) => {
     const scheduleRows = extraction.schedule.length > 0 ? extraction.schedule : (result.reconstruction?.rows ?? []);
     const inferred = result.reconstruction?.inferredTerms;
@@ -484,6 +470,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     }));
 
     setDocumentImportReady(true);
+    setDocumentImportSource(source);
     setDocumentImportExtraction(extraction);
     setDocumentImportReconciliation(result.reconciliation?.status ?? null);
     setDocumentImportWarnings([...new Set([
@@ -983,16 +970,21 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4">
               <p className="text-sm font-black uppercase tracking-wide text-indigo-950">Cómo cargar el contrato</p>
               <p className="mt-1 text-xs text-indigo-900">Puedes importar documentos, reconstruir el cronograma desde los términos o ingresar las filas manualmente.</p>
-              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <button type="button" onClick={() => { setScheduleSource("contractual"); setStep("details"); }} className="rounded-xl border border-indigo-300 bg-white p-3 text-left shadow-sm hover:border-indigo-500">
-                  <p className="text-sm font-black text-indigo-950">Importar contrato o cronograma</p>
-                  <p className="mt-1 text-[11px] text-slate-600">Recomendado · PDF, Excel, CSV o imágenes.</p>
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <button type="button" onClick={() => { setBankLoanEntryPath("external_ai"); setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border-2 border-indigo-400 bg-white p-3 text-left shadow-sm ring-2 ring-indigo-500/10 hover:border-indigo-600">
+                  <p className="text-sm font-black text-indigo-950">Analizar con IA externa</p>
+                  <span className="mt-1 inline-block rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black uppercase text-white">Recomendado</span>
+                  <p className="mt-1 text-[11px] text-slate-600">ChatGPT, Gemini, Claude u otra IA. No consume créditos de Caja Familiar.</p>
                 </button>
-                <button type="button" onClick={() => { setScheduleSource("estimated"); setInterestCalculationMode("tea_estimate"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
-                  <p className="text-sm font-black text-slate-900">Generar desde contrato</p>
+                <button type="button" onClick={() => { setBankLoanEntryPath("integrated_ai"); setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
+                  <p className="text-sm font-black text-slate-900">Importar automáticamente con IA</p>
+                  <p className="mt-1 text-[11px] text-slate-600">Disponible cuando configures la API.</p>
+                </button>
+                <button type="button" onClick={() => { setBankLoanEntryPath("reconstruction"); setScheduleSource("estimated"); setInterestCalculationMode("tea_estimate"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
+                  <p className="text-sm font-black text-slate-900">Generar desde los datos del contrato</p>
                   <p className="mt-1 text-[11px] text-slate-600">Usa TEA, fechas y plazo; queda como estimación.</p>
                 </button>
-                <button type="button" onClick={() => { setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
+                <button type="button" onClick={() => { setBankLoanEntryPath("manual"); setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
                   <p className="text-sm font-black text-slate-900">Ingresar manualmente</p>
                   <p className="mt-1 text-[11px] text-slate-600">Escribe o pega las filas oficiales del banco.</p>
                 </button>
@@ -1155,8 +1147,14 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           ) : (
             /* General & Bank Loan Debt Form */
             <div className="space-y-6">
-              {debtKind === "bank_loan" && (
-                <BankDocumentImportPanel onExtractionReady={applyDocumentExtraction} />
+              {debtKind === "bank_loan" && bankLoanEntryPath === "external_ai" && (
+                <BankExternalAiImportPanel
+                  onExtractionReady={(extraction, result) => applyDocumentExtraction(extraction, result, "external_ai")}
+                  setToast={setToast}
+                />
+              )}
+              {debtKind === "bank_loan" && bankLoanEntryPath === "integrated_ai" && (
+                <BankDocumentImportPanel onExtractionReady={(extraction, result) => applyDocumentExtraction(extraction, result, "integrated_ai")} />
               )}
               {debtKind === "bank_loan" && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50/50 p-5 space-y-4">
@@ -2592,6 +2590,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                      <div>
                        <p className="text-sm font-black text-indigo-950">Esto encontramos en tus documentos</p>
                        <p className="mt-1 text-xs text-indigo-900">La confianza orienta la revisión, pero no reemplaza la comprobación matemática ni tu confirmación.</p>
+                       {documentImportSource === "external_ai" && <p className="mt-2 inline-flex rounded-full border border-indigo-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-indigo-800">Analizado con IA externa</p>}
+                       {documentImportSource === "integrated_ai" && <p className="mt-2 inline-flex rounded-full border border-slate-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-slate-700">Analizado con IA integrada</p>}
                      </div>
                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
                        {["lenderName", "financedAmount", "teaPercent", "schedule", "reportedBalance"].map((field) => {

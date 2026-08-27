@@ -82,6 +82,14 @@ export interface ExtractionNormalizationResult {
 
 const MEDIA_TYPES = new Set<BankDocumentDescriptor["mediaType"]>(["pdf", "xlsx", "xls", "csv", "tsv", "txt", "jpg", "jpeg", "png", "webp"]);
 const SAFE_WARNINGS_LIMIT = 12;
+const PII_FIELD_ROOTS = new Set([
+  "ownername", "holdername", "dni", "documentnumber", "accountnumber", "cardnumber", "phone", "email", "address", "creditnumber", "loannumber", "password",
+]);
+
+function isSafeFieldKey(field: string): boolean {
+  const root = field.split(/[.[\]]/, 1)[0];
+  return !PII_FIELD_ROOTS.has(root.replace(/[_-]/g, "").toLowerCase());
+}
 
 function textOrNull(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -174,10 +182,10 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
   output.documents = rawDocuments.slice(0, 12).flatMap((entry, index) => {
     if (!entry || typeof entry !== "object") return [];
     const item = entry as Record<string, unknown>;
-    const fileName = textOrNull(item.fileName) ?? `documento-${index + 1}`;
-    const mediaType = normalizeMediaType(item.mediaType, fileName);
+    const reportedFileName = textOrNull(item.fileName) ?? `document-${index + 1}`;
+    const mediaType = normalizeMediaType(item.mediaType, reportedFileName);
     if (!mediaType) return [];
-    return [{ index: integerOrNull(item.index) ?? index, fileName, mediaType }];
+    return [{ index: integerOrNull(item.index) ?? index, fileName: `document-${index + 1}.${mediaType}`, mediaType }];
   });
 
   output.lenderName = textOrNull(source.lenderName);
@@ -252,12 +260,14 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
     : [];
   if (source.fieldEvidence && typeof source.fieldEvidence === "object") {
     for (const [field, value] of Object.entries(source.fieldEvidence as Record<string, unknown>).slice(0, 80)) {
+      if (!isSafeFieldKey(field)) continue;
       const evidence = safeEvidence(value);
       if (evidence.length > 0) output.fieldEvidence[field] = evidence;
     }
   }
   if (source.confidenceByField && typeof source.confidenceByField === "object") {
     for (const [field, value] of Object.entries(source.confidenceByField as Record<string, unknown>).slice(0, 80)) {
+      if (!isSafeFieldKey(field)) continue;
       const confidence = numberOrNull(value);
       if (confidence != null) output.confidenceByField[field] = Math.min(1, Math.max(0, confidence > 1 ? confidence / 100 : confidence));
     }
@@ -269,7 +279,7 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
       const item = entry as Record<string, unknown>;
       const field = textOrNull(item.field);
       const values = Array.isArray(item.values) ? item.values.flatMap((value) => typeof value === "number" || typeof value === "string" ? [value] : []) : [];
-      return field && values.length > 1 ? [{ field, values: values.slice(0, 6) }] : [];
+      return field && isSafeFieldKey(field) && values.length > 1 ? [{ field, values: values.slice(0, 6) }] : [];
     });
   }
   if (output.schedule.length === 0 && output.termInstallments == null && output.financedAmount == null && output.totalContractAmount == null) {

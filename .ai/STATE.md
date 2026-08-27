@@ -2,56 +2,61 @@
 
 ## Objective
 
-Close the final pre-Gemini audit blockers for BANK CONTRACT RECONSTRUCTION V4 + BANK DOCUMENT INTELLIGENCE V5 on `feat/bank-contract-reconstruction-v4-document-intelligence-v5`, then stop at the Gemini API integration gate. Do not merge, apply Supabase Production migrations, deploy Production manually, add secrets, or create Production/financial test data.
+Implement and publish the permanent no-API External AI Import Bridge for BANK V4/V5 on `feat/bank-contract-reconstruction-v4-document-intelligence-v5`, then stop for orchestrator audit. Keep integrated Gemini dormant until an explicit server-side `GEMINI_API_KEY` configuration gate; do not merge, change Production again, write Vercel env vars, call real AI providers, or create financial test data.
 
 ## Repository
 
 - Branch: `feat/bank-contract-reconstruction-v4-document-intelligence-v5`.
-- Baseline/published parent: `09b53be06bafff8a0a8d682fe2aab80a74ab144c`.
-- Current branch: final correctness checkpoint `2228d30bc1c73d1f46c136ba64edcc3a67baec90` is published cleanly to `origin`; a metadata-only state checkpoint may follow. No new migration file was created and the existing V4/V5 migration identity is unchanged.
-- Target PR: [#64](https://github.com/rnzrex/cajafamiliar/pull/64), DRAFT to `main`, title `BANK V4/V5 — reconstrucción contractual e importación inteligente de documentos`.
+- Baseline before this block: `b0ae19b6b85e634fc888c6f999724802402f17b8`.
+- Target PR: [#64](https://github.com/rnzrex/cajafamiliar/pull/64), expected to remain OPEN/DRAFT against `main`.
+- Migration `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` was already applied by the previous Production gate and is immutable. This block must not edit it or add a migration.
 
 ## Completed
 
-- Final correctness fixes in this checkpoint: original-principal insurance inference divides contractual total insurance by financed principal times term before applying per-row cent rounding; pending-only official schedules K..N validate their own structure without comparing partial aggregates to full-contract totals; the UI accepts them only with a valid current principal and preserves next contractual installment K.
-- Closed reconstruction/reconciliation gaps: actual/360 and actual/365 candidates, due-date adjustment, total semantics, insurance modes, evidence/conflict handling, strict null/insufficient-data behavior, and safe contractual-versus-estimated schedule provenance.
-- Closed Document Intelligence gaps: neutral provider aliases, PDF/image/XLS/XLSX/CSV/TSV/TXT handling, bounded workbook text conversion, private temporary Storage/File API lifecycle, no original filename/PII leakage at the provider boundary, explicit thinking/output-token controls, truncation guards, and one bounded repair pass.
-- Closed billing/config gaps: Gemini model/pricing registry, dynamic output allowance, Paid Tier decision recorded in `.ai/DECISIONS.md`, authoritative billable output tokens including thinking tokens, soft USD 0.05 and hard USD 0.10 guards, and additive `billable_output_tokens` persistence.
-- Closed onboarding gaps: imported null amounts remain missing, save is blocked for incomplete/conflicting/insufficient schedules, live schedule-derived opening principal is tracked separately from user/imported principal, and pledge fields remain isolated from bank-loan logic.
-- Kept `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` as the only V4/V5 migration; added the idempotent `billable_output_tokens` column guard for partially existing local/job tables and exact four-component Storage path policies.
+- Added permanent versioned protocol `CAJA_FAMILIAR_BANK_DOCUMENT_V1` with the official prompt, strict JSON/fenced-JSON parser, 1 MB limit, version validation, malformed/ambiguous rejection, and no executable/HTML parsing.
+- Added safe normalization through the existing `BankDocumentExtraction` domain: unknown properties are ignored, null remains null, document aliases are sanitized, and PII metadata fields are filtered before review or persistence.
+- Extracted pure shared `financialValidation` for integrated and external paths, preserving pending-only official schedule rules, V4 reconciliation, reconstruction, reported-balance classification, and schedule provenance.
+- Added `BankExternalAiImportPanel` with privacy warning, copy-prompt button/toast, paste textarea, local-only interpretation, explicit review messaging, and no automatic save or external navigation.
+- Added `/api/bank-document/capabilities`, returning only integrated-AI availability/provider/model and never exposing secrets. Integrated upload UI now reports the no-key dormant state while retaining the option.
+- Added the four bank paths in onboarding: external AI, integrated AI, reconstruction from contract terms, and manual entry. Existing structured XLS/XLSX/CSV/TSV/TXT deterministic import continues to use the shared validator.
+- Added an anonymized 18-row ALFIN fixture covering actual/360, due-date adjustment, insurance, exact totals, paidBefore=5 => current principal 3294.39, and contractual next installment 6.
+- Added focused bridge/capabilities/UI coverage and a `test:bank-external-ai-import` script.
 
 ## Validation
 
-- Focused Document Intelligence suite: PASS — 6 files / 26 tests.
-- Reconstruction suite: PASS — 1 file / 11 tests.
+- `npm run test:bank-external-ai-import`: PASS — 2 files / 17 tests.
+- `npm run test:bank-document-v5-local`: PASS — 6 files / 26 tests.
+- `npm run test:bank-reconstruction-v4`: PASS — 1 file / 11 tests.
+- `npx vitest run src/components/BankLoanFormUX.test.tsx --reporter=verbose --testTimeout=15000`: PASS — 1 file / 7 tests, including external fixture import without provider calls.
+- `npm test -- --testTimeout=15000`: PASS — 65 files / 953 tests.
+- `npm run test:bank-loan-v3:local`: PASS — local SQL smoke suite.
+- `npm run test:bank-v2-local`: PASS — local SQL smoke suite, including security/RLS checks.
+- `npm run test:debt2b2`: PASS — local SQL payment/replay/prepayment/concurrency checks.
 - `npm run typecheck:api`: PASS.
-- Full suite with `--testTimeout=15000`: PASS — 63 files / 935 tests. A default-timeout run had one known slow UI test timeout while reaching 930/931; the same suite passed with the repository's heavy UI test given 15 seconds.
-- `npm run build`: PASS — 2417 modules; only existing dynamic-import and large-chunk warnings.
-- `git diff --check`: PASS.
-- Local SQL checks rerun after this checkpoint: BANK V3 smoke PASS, BANK V2 smoke PASS, DEBT-2B.2 PASS, and DEBT-5F-A PASS; DEBT-5F-A applied all repository migrations including V4/V5. The initial standalone BANK V3 check was run against a stale/dirty local database before the supported DEBT-5F-A reset/apply sequence and failed on absent V3 columns; no Production state was involved.
-- Local Storage/RLS integration passed with own-user/own-household access and rejected cross-household, cross-user, and anonymous access; own job was visible, another user's job was hidden, and cleanup passed.
-- Local Auth was restored to `enabled = false`; temporary local Supabase containers were stopped. No Production data was created.
-- Published commit `2228d30bc1c73d1f46c136ba64edcc3a67baec90` normally without force; remote branch and PR #64 now point to that SHA. Automatic Preview `dpl_B5L2nzPeLMuD8fPJpdJ4jNR1YZyh` is READY for the same SHA.
+- `npm run build`: PASS — Vite build completed with only existing dynamic-import and large-chunk warnings.
+- `git diff --check`: PASS at last check.
+- `npm run test:debt5fa:local` and `npm run test:recon1a:local` were not run because their harnesses explicitly drop/recreate the local Docker public schema; the safety reviewer rejected that broad destructive reset. No workaround or destructive reset was attempted.
 
 ## Production / Remote
 
-- No linked/remote Supabase migration, SQL, data, Vercel env write, Gemini key, or manual Production deployment was executed.
-- Existing BANK V2/V3 Production migrations remain immutable.
-- GitHub CLI remains authenticated as `rnzrex` via keyring over HTTPS; the branch was pushed normally, never force-pushed.
-- PR #64 remains OPEN/DRAFT against `main`; Preview `https://cajafamiliar-q9xbkcmck-renzorex.vercel.app` is READY and targets the final pushed SHA.
+- Production migration status from the previous gate is unchanged: exactly `20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5` was applied with `npx supabase db push --linked`; no manual SQL, repair, `--include-all`, reset, or new migration in this block.
+- Previous read-only Production verification confirmed the requested V4/V5 columns, `bank_document_import_jobs`, and private `bank-document-imports` bucket. No new Production operation is authorized for this block.
+- No `GEMINI_API_KEY`, Vercel env write, real Gemini/OpenAI call, real document upload, financial test data, merge, or frontend Production deployment.
 
 ## Next Move
 
-1. Keep the branch at the published final correctness checkpoint; do not merge or apply Production.
-2. Report the final SHA, Preview deployment/status, validation, and untouched Production state.
-3. Stop for orchestrator review at the Gemini API integration gate; only the orchestrator may later configure a Preview-only Paid Tier key.
+1. Run all remaining regression/full validation and inspect the final diff.
+2. Commit the bridge and metadata, push normally without force, update PR #64 while preserving DRAFT, and verify the automatic Preview uses the pushed SHA.
+3. Report the exact SHA, PR/Preview, validation, protocol, and safety gates; then stop. Do not add Gemini secrets or merge.
 
 ## Relevant Files
 
-- `src/utils/bankContractReconstruction.ts` — V4 reconstruction engine.
-- `src/utils/bankContractReconciliation.ts` — reconciliation, balance classifier, and baseline derivation.
-- `src/utils/bankDocumentExtraction.ts` — allowlisted extraction schema, normalization, conflict merge, and review statuses.
-- `src/components/DebtForm.tsx` — onboarding import/review/save safeguards and balance provenance.
-- `api/bank-document/` and `api/_lib/bankDocument*.ts` — secure server pipeline, provider, cost guard, and cleanup.
-- `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` — additive V4/V5 persistence, Storage, RLS, and RPC changes.
-- `.ai/DECISIONS.md` — Paid Tier boundary decision for real bank documents.
+- `src/utils/bankExternalAiImport.ts` — versioned prompt, strict parser, and external normalization/validation bridge.
+- `src/utils/bankDocumentFinancialValidation.ts` — shared pure V4/V5 financial validation pipeline.
+- `src/components/BankExternalAiImportPanel.tsx` — external AI prompt/paste/review UX.
+- `src/components/DebtForm.tsx` — four bank entry paths, source badge, review/save integration.
+- `api/bank-document/capabilities.ts` — safe integrated-AI capability endpoint.
+- `src/services/bankDocumentCapabilities.ts` — safe client capability read with unavailable fallback.
+- `src/utils/bankDocumentExtraction.ts` — allowlisted normalization and PII metadata filtering.
+- `src/utils/bankExternalAiFixture.ts` and `src/utils/bankExternalAiImport.test.ts` — anonymized financial fixture and bridge tests.
+- `.ai/DECISIONS.md` — D-015 permanent external AI bridge decision.
