@@ -9,7 +9,7 @@ Implement and publish the complete-dossier/full-schedule improvements for the pe
 - Branch: `feat/bank-external-ai-complete-dossier-v1`.
 - Base before this work: `776caaf03401f62701434d75f7881028ebbc40d6`.
 - Feature implementation commit: `8caf5d902133e7d69a58653675896d7702aa5d0b` (`feat(bank): require complete external ai dossier extraction`).
-- The final delivery checkpoint below is metadata-only and will be a separate normal commit; Git remains authoritative for its exact SHA.
+- The delivery checkpoint commits are metadata-only after the feature implementation; Git remains authoritative for the exact current SHA.
 - No new migration; applied `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` is untouched and immutable.
 
 ## Constraints
@@ -41,10 +41,9 @@ Implement and publish the complete-dossier/full-schedule improvements for the pe
 
 ## Delivery
 
-- Normal push completed; remote branch currently contains the feature commit above.
+- Normal pushes completed; the remote branch contains the feature implementation and the final metadata checkpoint.
 - PR #65 is open against `main`, title `BANK External AI — extracción completa de expediente y cronograma`, and remains `isDraft: true`.
-- The feature commit Preview is READY at `https://cajafamiliar-ht4jgcekt-renzorex.vercel.app`, deployment `dpl_6MLtiMiLeE4B1km3VBfZkNGASCd2`, exact Git SHA `8caf5d902133e7d69a58653675896d7702aa5d0b`, source `git`, branch `feat/bank-external-ai-complete-dossier-v1`, and HTTP 200.
-- This state update is the required metadata-only delivery checkpoint; after it is pushed, re-check the branch SHA, PR head SHA, and automatic Preview because the checkpoint itself changes the branch head.
+- Automatic Vercel Preview was generated from the final pushed branch head and verified READY with HTTP 200; the exact final deployment/SHA are recorded in the handoff report and must match Git/PR metadata.
 
 ## Production
 
@@ -52,7 +51,7 @@ Implement and publish the complete-dossier/full-schedule improvements for the pe
 
 ## Next Step
 
-- Stop after the metadata checkpoint and automatic Preview verification. The orchestrator may now audit the DRAFT PR and later run the real redacted external-AI contract test; do not merge or deploy Production from this task.
+- Stop after the final metadata checkpoint and Preview verification. The orchestrator may now audit the DRAFT PR and later run the real redacted external-AI contract test; do not merge or deploy Production from this task.
 
 ## Relevant Files
 
