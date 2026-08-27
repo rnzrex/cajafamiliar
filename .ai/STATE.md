@@ -8,7 +8,7 @@ Close the final pre-Gemini audit blockers for BANK CONTRACT RECONSTRUCTION V4 + 
 
 - Branch: `feat/bank-contract-reconstruction-v4-document-intelligence-v5`.
 - Baseline/published parent: `09b53be06bafff8a0a8d682fe2aab80a74ab144c`.
-- Current branch: this checkpoint is based on the clean published audit commit `ddb448a90726deba234d501152cc347bc893b4b3`; verify the final checkpoint SHA with `git rev-parse HEAD`. No new migration file was created and the existing V4/V5 migration identity is unchanged.
+- Current branch: final correctness checkpoint `2228d30bc1c73d1f46c136ba64edcc3a67baec90` is published cleanly to `origin`; a metadata-only state checkpoint may follow. No new migration file was created and the existing V4/V5 migration identity is unchanged.
 - Target PR: [#64](https://github.com/rnzrex/cajafamiliar/pull/64), DRAFT to `main`, title `BANK V4/V5 — reconstrucción contractual e importación inteligente de documentos`.
 
 ## Completed
@@ -31,17 +31,18 @@ Close the final pre-Gemini audit blockers for BANK CONTRACT RECONSTRUCTION V4 + 
 - Local SQL checks rerun after this checkpoint: BANK V3 smoke PASS, BANK V2 smoke PASS, DEBT-2B.2 PASS, and DEBT-5F-A PASS; DEBT-5F-A applied all repository migrations including V4/V5. The initial standalone BANK V3 check was run against a stale/dirty local database before the supported DEBT-5F-A reset/apply sequence and failed on absent V3 columns; no Production state was involved.
 - Local Storage/RLS integration passed with own-user/own-household access and rejected cross-household, cross-user, and anonymous access; own job was visible, another user's job was hidden, and cleanup passed.
 - Local Auth was restored to `enabled = false`; temporary local Supabase containers were stopped. No Production data was created.
+- Published commit `2228d30bc1c73d1f46c136ba64edcc3a67baec90` normally without force; remote branch and PR #64 now point to that SHA. Automatic Preview `dpl_B5L2nzPeLMuD8fPJpdJ4jNR1YZyh` is READY for the same SHA.
 
 ## Production / Remote
 
 - No linked/remote Supabase migration, SQL, data, Vercel env write, Gemini key, or manual Production deployment was executed.
 - Existing BANK V2/V3 Production migrations remain immutable.
-- GitHub CLI remains authenticated as `rnzrex` via keyring over HTTPS; the same branch will be pushed normally, never force-pushed.
-- PR #64 must remain DRAFT. The prior Preview for `09b53be06bafff8a0a8d682fe2aab80a74ab144c` was READY; after the audit-fix push, verify a new automatic Preview against the final pushed SHA.
+- GitHub CLI remains authenticated as `rnzrex` via keyring over HTTPS; the branch was pushed normally, never force-pushed.
+- PR #64 remains OPEN/DRAFT against `main`; Preview `https://cajafamiliar-q9xbkcmck-renzorex.vercel.app` is READY and targets the final pushed SHA.
 
 ## Next Move
 
-1. Commit and push the current final correctness checkpoint to the same branch normally, verify remote SHA and PR #64 draft status, and wait for the automatic Vercel Preview.
+1. Keep the branch at the published final correctness checkpoint; do not merge or apply Production.
 2. Report the final SHA, Preview deployment/status, validation, and untouched Production state.
 3. Stop for orchestrator review at the Gemini API integration gate; only the orchestrator may later configure a Preview-only Paid Tier key.
 
