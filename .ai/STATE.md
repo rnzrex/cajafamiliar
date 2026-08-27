@@ -9,7 +9,7 @@ Fix the imported-schedule state and Section 5 UX for the permanent `Analizar con
 - Branch: `feat/bank-external-ai-complete-dossier-v1`.
 - Base before this work: `776caaf03401f62701434d75f7881028ebbc40d6`.
 - Feature implementation commit: `8caf5d902133e7d69a58653675896d7702aa5d0b` (`feat(bank): require complete external ai dossier extraction`).
-- Current work started from the clean branch head `9aeae64c5fed78ac6c91b92c4e7845b63778ac4a`; the Section 5 fix is currently uncommitted and Git remains authoritative for the exact current SHA.
+- Current fix commit: `2514ba30dd614cab9a03012a6a1335669341107d` (`fix(bank): surface imported schedule in contract section`), pushed normally to origin; Git remains authoritative for the exact current SHA.
 - No new migration; applied `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` is untouched and immutable.
 
 ## Constraints
@@ -41,14 +41,14 @@ Fix the imported-schedule state and Section 5 UX for the permanent `Analizar con
 - BANK V3 local SQL, BANK V2 local SQL, and DEBT-2B.2 local SQL: PASS after Docker-local approval; no Production access used.
 - `npm run typecheck:api`: PASS.
 - `npm run build`: PASS; only existing dynamic-import and large-chunk warnings.
-- `git diff --check`: PASS before metadata checkpoint.
+- `git diff --check`: PASS.
 - Destructive local reset harnesses `test:debt5fa:local` and `test:recon1a:local` were not run, per safety constraints.
 
 ## Delivery
 
-- Feature fix commit and normal push are still pending; no force push is permitted.
+- Feature fix commit `2514ba30dd614cab9a03012a6a1335669341107d` is pushed normally; no force push was used.
 - PR #65 is open against `main`, title `BANK External AI — extracción completa de expediente y cronograma`, and remains `isDraft: true`.
-- Automatic Vercel Preview was generated from the final pushed branch head and verified READY with HTTP 200; the exact final deployment/SHA are recorded in the handoff report and must match Git/PR metadata.
+- Automatic Vercel Preview `dpl_Fh5kwLebjbXMVdfzYepssAd6FjVx` (`https://cajafamiliar-6vbwc5umh-renzorex.vercel.app`) was generated from the final pushed branch head, verified READY with HTTP 200, and reports exact SHA `2514ba30dd614cab9a03012a6a1335669341107d`.
 
 ## Production
 
@@ -56,7 +56,7 @@ Fix the imported-schedule state and Section 5 UX for the permanent `Analizar con
 
 ## Next Step
 
-- Next command: commit the Section 5 fix, push normally, verify PR #65 remains DRAFT, then verify the automatic Preview matches the new SHA. The orchestrator may then audit the DRAFT PR and later run the real redacted external-AI contract test; do not merge or deploy Production from this task.
+- Stop after this delivery checkpoint. The orchestrator may audit the DRAFT PR and later run the real redacted external-AI contract test; do not merge or deploy Production from this task.
 
 ## Relevant Files
 
