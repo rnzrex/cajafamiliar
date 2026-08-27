@@ -12,7 +12,8 @@ describe("bank document security boundaries", () => {
     expect(isOwnedBankDocumentPath("h1/u1/i1/contrato-abc.pdf", "h1", "u1", "i1")).toBe(true);
     expect(isOwnedBankDocumentPath("h1/u2/i1/contrato.pdf", "h1", "u1", "i1")).toBe(false);
     expect(isOwnedBankDocumentPath("https://example.com/contrato.pdf", "h1", "u1", "i1")).toBe(false);
-    expect(safeStorageFileName("../../DNI persona.pdf", "0-ab12")).toBe("DNI-persona-0-ab12.pdf");
+    expect(safeStorageFileName("../../DNI persona.pdf", "0-ab12")).toBe("document-0-ab12.pdf");
+    expect(safeStorageFileName("Credito-Juan-DNI-123.pdf", "opaque")).not.toContain("Credito");
   });
 
   it("parses bearer auth without exposing arbitrary headers", () => {

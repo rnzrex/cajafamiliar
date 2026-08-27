@@ -65,12 +65,36 @@ describe("bank document analyze endpoint orchestration", () => {
     expect(fake.updates.some((update) => update.status === "review")).toBe(true);
   });
 
+  it("does not label an inconsistent imported schedule as contractual", async () => {
+    const path = `${householdId}/${userId}/${importId}/contrato.pdf`;
+    const fake = fakeAdmin(new Uint8Array([1]), path);
+    const provider = new FakeBankDocumentProvider({
+      ...emptyExtraction,
+      totalInsurance: 999.99,
+      schedule: [{ contractualInstallmentNumber: 1, dueDate: "2026-06-10", principal: 80, interest: 10, insurance: 5, fees: 5, total: 100, reportedBalance: null }],
+    });
+
+    const result = await analyzeBankDocumentRequest({
+      body: { importId, householdId, storagePaths: [path] },
+      admin: fake.admin,
+      userId,
+      provider,
+    });
+
+    expect(result.reconciliation?.status).toBe("inconsistent");
+    expect(result.scheduleSource).toBe("estimated");
+    expect(fake.removed).toEqual([[path]]);
+  });
+
   it("blocks a hard-budget overage before fake provider analyze and still cleans up", async () => {
     vi.stubEnv("BANK_DOCUMENT_AI_SOFT_BUDGET_USD", "0.05");
     vi.stubEnv("BANK_DOCUMENT_AI_HARD_BUDGET_USD", "0.10");
     vi.stubEnv("BANK_DOCUMENT_AI_INPUT_COST_USD_PER_1M", "1");
     vi.stubEnv("BANK_DOCUMENT_AI_OUTPUT_COST_USD_PER_1M", "1");
-    vi.stubEnv("BANK_DOCUMENT_AI_THINKING_COST_USD_PER_1M", "1");
+    vi.stubEnv("BANK_DOCUMENT_AI_MAX_OUTPUT_TOKENS", "2048");
+    vi.stubEnv("BANK_DOCUMENT_AI_MAX_SCHEDULE_INSTALLMENTS", "2");
+    vi.stubEnv("BANK_DOCUMENT_AI_OUTPUT_BASE_TOKENS", "256");
+    vi.stubEnv("BANK_DOCUMENT_AI_OUTPUT_TOKENS_PER_INSTALLMENT", "1");
     const path = `${householdId}/${userId}/${importId}/contrato.pdf`;
     const fake = fakeAdmin(new Uint8Array(128), path);
     const provider = new FakeBankDocumentProvider(emptyExtraction, 200_000);
@@ -91,7 +115,10 @@ describe("bank document analyze endpoint orchestration", () => {
     vi.stubEnv("BANK_DOCUMENT_AI_HARD_BUDGET_USD", "0.10");
     vi.stubEnv("BANK_DOCUMENT_AI_INPUT_COST_USD_PER_1M", "1");
     vi.stubEnv("BANK_DOCUMENT_AI_OUTPUT_COST_USD_PER_1M", "1");
-    vi.stubEnv("BANK_DOCUMENT_AI_THINKING_COST_USD_PER_1M", "1");
+    vi.stubEnv("BANK_DOCUMENT_AI_MAX_OUTPUT_TOKENS", "2048");
+    vi.stubEnv("BANK_DOCUMENT_AI_MAX_SCHEDULE_INSTALLMENTS", "2");
+    vi.stubEnv("BANK_DOCUMENT_AI_OUTPUT_BASE_TOKENS", "256");
+    vi.stubEnv("BANK_DOCUMENT_AI_OUTPUT_TOKENS_PER_INSTALLMENT", "1");
     const path = `${householdId}/${userId}/${importId}/contrato.pdf`;
     const fake = fakeAdmin(new Uint8Array(128), path);
     const provider = new FakeBankDocumentProvider({

@@ -90,3 +90,10 @@ Date: 2026-08-26
 Status: active
 Decision: Store uploads only in the private `bank-document-imports` bucket during analysis, keep operating metadata without raw documents/OCR, and delete objects in success and error paths.
 Reason: Contract scans and photographs may contain sensitive financial or personal information.
+
+## D-014 - Paid-tier boundary for real bank documents
+
+Date: 2026-08-26
+Status: active
+Decision: Real bank-document AI analysis must use the Gemini Paid Tier; the free tier is not permitted for documents containing PII or financial information, and this feature does not configure billing or a real API key.
+Reason: Preserve the privacy and operational boundary until the orchestrator explicitly configures a Preview-only paid-tier key.

@@ -26,7 +26,11 @@ export interface BankReconciliationControls {
 }
 
 export interface BankReconciliationOptions {
+  exactTolerance?: number;
+  allowedAggregateTolerance?: number;
+  /** @deprecated Use allowedAggregateTolerance. */
   rowTolerance?: number;
+  /** @deprecated Use allowedAggregateTolerance. */
   aggregateTolerance?: number;
 }
 
@@ -72,8 +76,8 @@ export function reconcileBankContractSchedule(
   controls: BankReconciliationControls = {},
   options: BankReconciliationOptions = {},
 ): BankContractReconciliationResult {
-  const rowTolerance = options.rowTolerance ?? 0.01;
-  const aggregateTolerance = options.aggregateTolerance ?? 0.05;
+  const exactTolerance = options.exactTolerance ?? options.rowTolerance ?? 0.01;
+  const allowedAggregateTolerance = options.allowedAggregateTolerance ?? options.aggregateTolerance ?? 0.05;
   if (rows.length === 0) {
     return {
       status: "insufficient_data",
@@ -157,21 +161,27 @@ export function reconcileBankContractSchedule(
 
   const checkedDifferences = Object.entries(aggregateDifferences)
     .filter((entry): entry is [string, number] => typeof entry[1] === "number");
-  const violations = checkedDifferences.filter(([key, value]) => Math.abs(value) > (key === "dateOrder" || key === "rowArithmetic" ? rowTolerance : aggregateTolerance)).length;
+  const structuralInvalid = dateOrder > 0 || rowArithmetic > exactTolerance;
+  const outsideAllowedTolerance = checkedDifferences.some(([key, value]) =>
+    key !== "dateOrder" && key !== "rowArithmetic" && Math.abs(value) > allowedAggregateTolerance,
+  );
+  const withinToleranceDifference = checkedDifferences.some(([key, value]) =>
+    key !== "dateOrder" && key !== "rowArithmetic" && Math.abs(value) > exactTolerance,
+  );
   if (!completeRows) warnings.push("Faltan importes en una o más filas; la reconciliación es incompleta.");
-  if (rowArithmetic > rowTolerance) warnings.push("Una o más cuotas no suman capital, interés, seguro y gastos.");
+  if (rowArithmetic > exactTolerance) warnings.push("Una o más cuotas no suman capital, interés, seguro y gastos.");
   if (dateOrder > 0) warnings.push("El orden de cuotas o fechas no es continuo.");
-  if (regularPaymentDifference != null && regularPaymentDifference > aggregateTolerance) warnings.push("La cuota regular no coincide con el control informado.");
+  if (regularPaymentDifference != null && regularPaymentDifference > allowedAggregateTolerance) warnings.push("La cuota regular no coincide con el control informado.");
 
   const hasControls = Object.values(controls).some((value) => value != null);
   const score = checkedDifferences.length === 0
-    ? (completeRows && dateOrder === 0 && rowArithmetic <= rowTolerance ? 1 : 0)
-    : round2(Math.max(0, 1 - checkedDifferences.reduce((sum, [, value]) => sum + Math.min(1, Math.abs(value) / Math.max(aggregateTolerance, 0.01)), 0) / checkedDifferences.length));
+    ? (completeRows && hasControls && !structuralInvalid ? 1 : 0)
+    : round2(Math.max(0, 1 - checkedDifferences.reduce((sum, [, value]) => sum + Math.min(1, Math.abs(value) / Math.max(allowedAggregateTolerance, 0.01)), 0) / checkedDifferences.length));
 
   let status: BankReconciliationStatus;
-  if (!hasControls && !completeRows) status = "insufficient_data";
-  else if (!completeRows || violations > 0) status = "inconsistent";
-  else if (checkedDifferences.some(([key, value]) => Math.abs(value) > (key === "dateOrder" || key === "rowArithmetic" ? rowTolerance : aggregateTolerance)) || dateOrder > 0 || rowArithmetic > rowTolerance) status = "within_tolerance";
+  if (!hasControls || !completeRows) status = "insufficient_data";
+  else if (structuralInvalid || outsideAllowedTolerance) status = "inconsistent";
+  else if (withinToleranceDifference) status = "within_tolerance";
   else status = "exact";
 
   return { status, score, differences: aggregateDifferences, warnings };
@@ -231,8 +241,11 @@ export function deriveCurrentPrincipalBalance(
 ): number {
   if (!Number.isFinite(originalPrincipal) || originalPrincipal < 0) throw new Error("El principal original debe ser válido.");
   if (!Number.isInteger(lastPaidContractualInstallment) || lastPaidContractualInstallment < 0) throw new Error("La última cuota pagada debe ser un entero no negativo.");
+  if (rows.slice(0, lastPaidContractualInstallment).some((row) => row.principal == null || !Number.isFinite(row.principal))) {
+    throw new Error("INSUFFICIENT_PRINCIPAL_DATA");
+  }
   const principalPaid = rows
     .slice(0, lastPaidContractualInstallment)
-    .reduce((sum, row) => sum + (Number.isFinite(row.principal) ? Number(row.principal) : 0), 0);
+    .reduce((sum, row) => sum + Number(row.principal), 0);
   return round2(Math.max(0, originalPrincipal - principalPaid));
 }

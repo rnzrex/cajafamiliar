@@ -49,4 +49,23 @@ describe("bank document extraction V5", () => {
     expect(reconciliation.status).toBe("inconsistent");
     expect(reconciliation.differences.insurance).toBe(-985.64);
   });
+
+  it("preserves unknown monetary fields as null and flags same-length schedule conflicts", () => {
+    const left = normalizeBankDocumentExtraction({ ...base, schedule: [{ ...base.schedule[0], principal: null }] }).value;
+    const right = normalizeBankDocumentExtraction({ ...base, documents: [{ index: 1, fileName: "anexo.pdf", mediaType: "pdf" }], schedule: [{ ...base.schedule[0], total: 348.67 }] }).value;
+    expect(left.schedule[0].principal).toBeNull();
+    const merged = mergeBankDocumentExtractions([left, right]);
+    expect(merged.fieldConflicts).toContainEqual({ field: "schedule[0].total", values: [347.67, 348.67] });
+    expect(reviewFieldStatus(merged, "schedule")).toBe("review");
+  });
+
+  it("keeps evidence bounded and explicit without raw OCR", () => {
+    const result = normalizeBankDocumentExtraction({
+      ...base,
+      evidence: [{ sourceDocumentIndex: 0, pageNumber: 2, columnOrHeader: "Capital", shortEvidenceLabel: "Fila 1" }],
+      rawOcr: "DNI 12345678",
+    });
+    expect(result.value.evidence).toEqual([{ sourceDocumentIndex: 0, pageNumber: 2, columnOrHeader: "Capital", shortEvidenceLabel: "Fila 1" }]);
+    expect(result.value).not.toHaveProperty("rawOcr");
+  });
 });

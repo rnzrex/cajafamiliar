@@ -22,6 +22,7 @@ export interface BankDocumentScheduleExtractionRow {
   fees: number | null;
   total: number | null;
   reportedBalance: number | null;
+  evidence?: BankExtractionEvidence[];
 }
 
 export interface BankReportedBalanceExtraction {
@@ -60,6 +61,9 @@ export interface BankDocumentExtraction {
   ordinaryDueDay: number | null;
   regularInstallmentAmount: number | null;
   finalInstallmentAmount: number | null;
+  dayCountBasis?: "actual_days_360" | "actual_days_365" | null;
+  dueDateAdjustmentRule?: "none" | "sunday_to_monday" | "weekend_to_next_business_day" | "contractual_dates" | "unknown" | null;
+  installmentTotalMode?: "financial_installment_plus_costs" | "total_installment_including_costs" | "unknown" | null;
   reportedBalance: BankReportedBalanceExtraction;
   insuranceTerms: BankInsuranceExtraction[];
   schedule: BankDocumentScheduleExtractionRow[];
@@ -67,6 +71,7 @@ export interface BankDocumentExtraction {
   fieldEvidence: Record<string, BankExtractionEvidence[]>;
   confidenceByField: Record<string, number>;
   fieldConflicts: Array<{ field: string; values: Array<string | number> }>;
+  evidence?: BankExtractionEvidence[];
 }
 
 export interface ExtractionNormalizationResult {
@@ -146,6 +151,9 @@ function emptyExtraction(): BankDocumentExtraction {
     ordinaryDueDay: null,
     regularInstallmentAmount: null,
     finalInstallmentAmount: null,
+    dayCountBasis: null,
+    dueDateAdjustmentRule: null,
+    installmentTotalMode: null,
     reportedBalance: { amount: null, label: null, inferredKind: null, confidence: null },
     insuranceTerms: [],
     schedule: [],
@@ -153,6 +161,7 @@ function emptyExtraction(): BankDocumentExtraction {
     fieldEvidence: {},
     confidenceByField: {},
     fieldConflicts: [],
+    evidence: [],
   };
 }
 
@@ -188,6 +197,9 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
   output.ordinaryDueDay = integerOrNull(source.ordinaryDueDay);
   output.regularInstallmentAmount = numberOrNull(source.regularInstallmentAmount);
   output.finalInstallmentAmount = numberOrNull(source.finalInstallmentAmount);
+  output.dayCountBasis = source.dayCountBasis === "actual_days_360" || source.dayCountBasis === "actual_days_365" ? source.dayCountBasis : null;
+  output.dueDateAdjustmentRule = source.dueDateAdjustmentRule === "none" || source.dueDateAdjustmentRule === "sunday_to_monday" || source.dueDateAdjustmentRule === "weekend_to_next_business_day" || source.dueDateAdjustmentRule === "contractual_dates" || source.dueDateAdjustmentRule === "unknown" ? source.dueDateAdjustmentRule : null;
+  output.installmentTotalMode = source.installmentTotalMode === "financial_installment_plus_costs" || source.installmentTotalMode === "total_installment_including_costs" || source.installmentTotalMode === "unknown" ? source.installmentTotalMode : null;
 
   if (source.reportedBalance && typeof source.reportedBalance === "object") {
     const reported = source.reportedBalance as Record<string, unknown>;
@@ -231,6 +243,7 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
       fees: numberOrNull(item.fees),
       total: numberOrNull(item.total),
       reportedBalance: numberOrNull(item.reportedBalance),
+      evidence: safeEvidence(item.evidence),
     }];
   }) : [];
 
@@ -249,6 +262,7 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
       if (confidence != null) output.confidenceByField[field] = Math.min(1, Math.max(0, confidence > 1 ? confidence / 100 : confidence));
     }
   }
+  output.evidence = safeEvidence(source.evidence);
   if (Array.isArray(source.fieldConflicts)) {
     output.fieldConflicts = source.fieldConflicts.slice(0, 30).flatMap((entry) => {
       if (!entry || typeof entry !== "object") return [];
@@ -274,8 +288,9 @@ export function mergeBankDocumentExtractions(extractions: BankDocumentExtraction
   const normalized = extractions.length > 0 ? extractions : [emptyExtraction()];
   const merged = emptyExtraction();
   merged.documents = normalized.flatMap((item) => item.documents).filter((item, index, all) => all.findIndex((candidate) => candidate.index === item.index && candidate.fileName === item.fileName) === index);
-  const scalarFields: Array<keyof Pick<BankDocumentExtraction, "lenderName" | "currencyCode" | "contractDate" | "firstDueDate" | "contractNumber" | "financedAmount" | "originalPrincipal" | "totalContractAmount" | "totalInterest" | "totalInsurance" | "totalFees" | "teaPercent" | "tceaPercent" | "termInstallments" | "ordinaryDueDay" | "regularInstallmentAmount" | "finalInstallmentAmount">> = [
-    "lenderName", "currencyCode", "contractDate", "firstDueDate", "contractNumber", "financedAmount", "originalPrincipal", "totalContractAmount", "totalInterest", "totalInsurance", "totalFees", "teaPercent", "tceaPercent", "termInstallments", "ordinaryDueDay", "regularInstallmentAmount", "finalInstallmentAmount",
+  merged.fieldConflicts = normalized.flatMap((item) => item.fieldConflicts).slice(0, 30);
+  const scalarFields: Array<keyof Pick<BankDocumentExtraction, "lenderName" | "currencyCode" | "contractDate" | "firstDueDate" | "contractNumber" | "financedAmount" | "originalPrincipal" | "totalContractAmount" | "totalInterest" | "totalInsurance" | "totalFees" | "teaPercent" | "tceaPercent" | "termInstallments" | "ordinaryDueDay" | "regularInstallmentAmount" | "finalInstallmentAmount" | "dayCountBasis" | "dueDateAdjustmentRule" | "installmentTotalMode">> = [
+    "lenderName", "currencyCode", "contractDate", "firstDueDate", "contractNumber", "financedAmount", "originalPrincipal", "totalContractAmount", "totalInterest", "totalInsurance", "totalFees", "teaPercent", "tceaPercent", "termInstallments", "ordinaryDueDay", "regularInstallmentAmount", "finalInstallmentAmount", "dayCountBasis", "dueDateAdjustmentRule", "installmentTotalMode",
   ];
   for (const field of scalarFields) {
     const values = normalized.map((item) => item[field]).filter((value) => value != null);
@@ -304,7 +319,28 @@ export function mergeBankDocumentExtractions(extractions: BankDocumentExtraction
   merged.insuranceTerms = normalized.flatMap((item) => item.insuranceTerms).slice(0, 12);
   const schedules = normalized.map((item) => item.schedule).filter((rows) => rows.length > 0).sort((left, right) => right.length - left.length);
   merged.schedule = schedules[0] ?? [];
-  if (schedules.length > 1 && schedules.some((rows) => rows.length !== merged.schedule.length)) merged.extractionWarnings.push("Los documentos contienen cronogramas de distinto tamaño; se requiere revisión.");
+  if (schedules.length > 1) {
+    for (const schedule of schedules.slice(1)) {
+      if (schedule.length !== merged.schedule.length) {
+        merged.fieldConflicts.push({ field: "schedule.length", values: [merged.schedule.length, schedule.length] });
+        merged.extractionWarnings.push("Los documentos contienen cronogramas de distinto tamaño; se requiere revisión.");
+        continue;
+      }
+      for (let index = 0; index < merged.schedule.length; index++) {
+        const left = merged.schedule[index];
+        const right = schedule[index];
+        for (const field of ["contractualInstallmentNumber", "dueDate", "principal", "interest", "insurance", "fees", "total", "reportedBalance"] as const) {
+          const leftValue = left[field];
+          const rightValue = right[field];
+          if (leftValue != null && rightValue != null && !sameScalar(leftValue, rightValue)) {
+            merged.fieldConflicts.push({ field: `schedule[${index}].${field}`, values: [leftValue, rightValue] });
+            merged.extractionWarnings.push(`Encontramos una diferencia en la cuota ${left.contractualInstallmentNumber}; revisa los cronogramas.`);
+          }
+        }
+      }
+    }
+  }
+  merged.evidence = normalized.flatMap((item) => item.evidence ?? []).slice(0, 24);
   merged.extractionWarnings = [...new Set(normalized.flatMap((item) => item.extractionWarnings).concat(merged.extractionWarnings))].slice(0, SAFE_WARNINGS_LIMIT);
   return merged;
 }
@@ -312,7 +348,7 @@ export function mergeBankDocumentExtractions(extractions: BankDocumentExtraction
 export type BankReviewFieldStatus = "confirmed" | "review" | "not_found";
 
 export function reviewFieldStatus(extraction: BankDocumentExtraction, field: string): BankReviewFieldStatus {
-  if (extraction.fieldConflicts.some((conflict) => conflict.field === field || conflict.field.startsWith(`${field}.`))) return "review";
+  if (extraction.fieldConflicts.some((conflict) => conflict.field === field || conflict.field.startsWith(`${field}.`) || conflict.field.startsWith(`${field}[`))) return "review";
   const value = field.split(".").reduce<unknown>((current, key) => current && typeof current === "object" ? (current as Record<string, unknown>)[key] : null, extraction);
   if (value == null || value === "" || (Array.isArray(value) && value.length === 0)) return "not_found";
   return "confirmed";

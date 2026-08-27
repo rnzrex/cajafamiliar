@@ -259,3 +259,42 @@ export function summarizeScheduleFile(result: Pick<DebtScheduleFileParseResult, 
     frequency: detectFrequencyFromDates(dates),
   };
 }
+
+/**
+ * Converts an XLS/XLSX workbook to bounded, row-addressable text for the AI
+ * fallback. The deterministic schedule parser remains the first path; this
+ * representation preserves sheet names, headers, and source row positions
+ * without sending the original workbook bytes inline.
+ */
+export function workbookToBoundedText(
+  data: ArrayBuffer | Uint8Array,
+  options: { maxSheets?: number; maxRowsPerSheet?: number; maxColumns?: number; maxCharacters?: number } = {},
+): string | null {
+  const maxSheets = options.maxSheets ?? 12;
+  const maxRowsPerSheet = options.maxRowsPerSheet ?? 600;
+  const maxColumns = options.maxColumns ?? 32;
+  const maxCharacters = options.maxCharacters ?? 4_000_000;
+  try {
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    const isZipWorkbook = bytes[0] === 0x50 && bytes[1] === 0x4b;
+    const isLegacyWorkbook = bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0;
+    if (!isZipWorkbook && !isLegacyWorkbook) return null;
+    const workbook = XLSX.read(bytes, { type: "array", cellDates: true });
+    const lines: string[] = [];
+    let characters = 0;
+    for (const [sheetIndex, sheetName] of workbook.SheetNames.slice(0, maxSheets).entries()) {
+      lines.push(`[sheetIndex=${sheetIndex}][sheetName=${sheetName}]`);
+      const matrix = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[sheetName], { header: 1, defval: "", raw: true });
+      for (let rowIndex = 0; rowIndex < Math.min(matrix.length, maxRowsPerSheet); rowIndex++) {
+        const row = matrix[rowIndex].slice(0, maxColumns).map((cell) => cellText(cell).replace(/[\t\r\n]+/g, " ").slice(0, 240));
+        const line = `row=${rowIndex + 1}\t${row.join("\t")}`;
+        characters += line.length + 1;
+        if (characters > maxCharacters) return lines.join("\n");
+        lines.push(line);
+      }
+    }
+    return lines.length > 0 ? lines.join("\n") : null;
+  } catch {
+    return null;
+  }
+}

@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fileExtension, isAllowedBankDocument, parseJsonBody } from "../_lib/bankDocumentSecurity.js";
 import { assertHouseholdMembership, assertImportPathOwnership, authenticateBankDocumentRequest, BANK_DOCUMENT_BUCKET, cleanupBankDocumentObjects, createBankDocumentAdmin, readBankDocumentServerEnvironment, responseError } from "../_lib/bankDocumentServer.js";
-import { decideBankDocumentBudget, estimateBankDocumentCost, readBankDocumentCostConfig, usageMetadata, type BankDocumentTokenUsage } from "../_lib/bankDocumentCost.js";
+import { decideBankDocumentBudget, estimateBankDocumentCost, outputAllowanceForSchedule, readBankDocumentCostConfig, type BankDocumentTokenUsage } from "../_lib/bankDocumentCost.js";
 import { BankDocumentAIProvider, FakeBankDocumentProvider, GeminiBankDocumentProvider, type BankDocumentAIInputDocument, type BankDocumentAIRequest } from "../_lib/bankDocumentAi.js";
 import { classifyReportedBalance, reconcileBankContractSchedule } from "../../src/utils/bankContractReconciliation.js";
 import { reconstructBankContractSchedule, scheduleSourceForReconstruction } from "../../src/utils/bankContractReconstruction.js";
@@ -33,7 +33,7 @@ export interface BankDocumentAnalyzeResult {
   reconstruction: ReturnType<typeof reconstructBankContractSchedule> | null;
   reportedBalanceClassification: ReturnType<typeof classifyReportedBalance> | null;
   scheduleSource: "contractual" | "reconstructed" | "estimated";
-  usage: { inputTokens: number; outputTokens: number; thinkingTokens: number; estimatedCostUsd: number };
+  usage: { inputTokens: number; outputTokens: number; billableOutputTokens: number; thinkingTokens: number; estimatedCostUsd: number };
 }
 
 function parseBody(body: unknown): AnalyzeBody | null {
@@ -71,7 +71,8 @@ async function downloadDocuments(admin: SupabaseClient, paths: string[]): Promis
     if (error || !data) throw new Error("DOCUMENT_DOWNLOAD_FAILED");
     const bytes = new Uint8Array(await data.arrayBuffer());
     if (!isAllowedBankDocument(path, mediaType, bytes.byteLength)) throw new Error("INVALID_DOCUMENT_INPUT");
-    documents.push({ fileName: path.split("/").at(-1) ?? "documento", mediaType, bytes });
+    const index = documents.length;
+    documents.push({ fileName: `document-${index + 1}.${fileExtension(path)}`, mediaType, bytes });
   }
   return documents;
 }
@@ -100,7 +101,7 @@ export function structuredExtraction(documents: BankDocumentAIInputDocument[]): 
       reportedBalance: row.reportedBalance ?? null,
     }));
     return normalizeBankDocumentExtraction({
-      documents: [{ index: item!.index, fileName: item!.document.fileName, mediaType: fileExtension(item!.document.fileName) }],
+      documents: [{ index: item!.index, fileName: `document-${item!.index + 1}.${fileExtension(item!.document.fileName)}`, mediaType: fileExtension(item!.document.fileName) }],
       firstDueDate: rows[0]?.dueDate ?? null,
       termInstallments: rows.at(-1)?.contractualInstallmentNumber ?? rows.length,
       regularInstallmentAmount: rows[0]?.total ?? null,
@@ -137,16 +138,20 @@ function financialValidation(extraction: BankDocumentExtraction) {
       knownRegularPayment: extraction.regularInstallmentAmount,
       knownFinalPayment: extraction.finalInstallmentAmount,
     });
-    return { reconciliation, reconstruction: null, reportedBalanceClassification: null, scheduleSource: "contractual" as const };
+    const scheduleSource = reconciliation.status === "exact" || reconciliation.status === "within_tolerance"
+      ? "contractual" as const
+      : "estimated" as const;
+    return { reconciliation, reconstruction: null, reportedBalanceClassification: null, scheduleSource };
   }
-  if (extraction.contractDate && extraction.financedAmount != null && extraction.teaPercent != null && extraction.termInstallments != null && extraction.regularInstallmentAmount != null) {
+  const originalPrincipal = extraction.financedAmount ?? extraction.originalPrincipal;
+  if (extraction.contractDate && originalPrincipal != null && extraction.teaPercent != null && extraction.termInstallments != null && (extraction.regularInstallmentAmount != null || extraction.totalContractAmount != null)) {
     const firstDueDate = extraction.firstDueDate;
     if (firstDueDate) {
       const reconstruction = reconstructBankContractSchedule({
         originDate: extraction.contractDate,
         firstDueDate,
         ordinaryDueDay: extraction.ordinaryDueDay,
-        financedAmount: extraction.financedAmount,
+        financedAmount: originalPrincipal,
         teaPercent: extraction.teaPercent,
         termInstallments: extraction.termInstallments,
         regularInstallmentAmount: extraction.regularInstallmentAmount,
@@ -154,12 +159,15 @@ function financialValidation(extraction: BankDocumentExtraction) {
         totalContractAmount: extraction.totalContractAmount,
         totalInterest: extraction.totalInterest,
         totalInsurance: extraction.totalInsurance,
-        installmentTotalMode: "total_installment_including_costs",
+        installmentTotalMode: extraction.installmentTotalMode ?? "unknown",
+        dayCountBasis: extraction.dayCountBasis,
+        dueDateAdjustmentRule: extraction.dueDateAdjustmentRule,
+        insuranceTerms: extraction.insuranceTerms,
       });
       const reconciliation = reconcileBankContractSchedule(reconstruction.rows, {
-        originalPrincipal: extraction.financedAmount,
+        originalPrincipal,
         expectedInstallmentCount: extraction.termInstallments,
-        reportedTotalPrincipal: extraction.financedAmount,
+        reportedTotalPrincipal: originalPrincipal,
         reportedTotalInterest: extraction.totalInterest,
         reportedTotalInsurance: extraction.totalInsurance,
         reportedTotalContractAmount: extraction.totalContractAmount,
@@ -185,7 +193,7 @@ function financialValidation(extraction: BankDocumentExtraction) {
   return { reconciliation: null, reconstruction: null, reportedBalanceClassification: null, scheduleSource: "estimated" as const };
 }
 
-function providerForEnvironment(environment: ReturnType<typeof readBankDocumentServerEnvironment>): BankDocumentAIProvider {
+function providerForEnvironment(environment: ReturnType<typeof readBankDocumentServerEnvironment>, config: ReturnType<typeof readBankDocumentCostConfig>): BankDocumentAIProvider {
   if (environment.providerMode === "fake") {
     return new FakeBankDocumentProvider({
       documents: [], lenderName: null, currencyCode: "PEN", contractDate: null, firstDueDate: null, contractNumber: null,
@@ -196,7 +204,7 @@ function providerForEnvironment(environment: ReturnType<typeof readBankDocumentS
     });
   }
   if (!environment.geminiApiKey) throw new Error("AI_NOT_CONFIGURED");
-  return new GeminiBankDocumentProvider({ apiKey: environment.geminiApiKey, model: environment.model });
+  return new GeminiBankDocumentProvider({ apiKey: environment.geminiApiKey, config });
 }
 
 export async function analyzeBankDocumentRequest(params: {
@@ -224,12 +232,13 @@ export async function analyzeBankDocumentRequest(params: {
     if (localExtraction) {
       extraction = localExtraction;
     } else {
-      const provider = params.provider ?? providerForEnvironment(params.environment ?? readBankDocumentServerEnvironment());
+      const provider = params.provider ?? providerForEnvironment(params.environment ?? readBankDocumentServerEnvironment(), config);
       const request: BankDocumentAIRequest = { documents };
       const tokenEstimate = await provider.countTokens(request);
-      const budget = decideBankDocumentBudget({ inputTokens: tokenEstimate.inputTokens, outputTokens: config.maxOutputTokens, thinkingTokens: 512 }, config);
+      const outputTokenAllowance = outputAllowanceForSchedule(config);
+      const budget = decideBankDocumentBudget({ inputTokens: tokenEstimate.inputTokens, outputTokens: outputTokenAllowance, billableOutputTokens: outputTokenAllowance, thinkingTokens: 0 }, config, 0, outputTokenAllowance);
       if (!budget.allowed) throw new Error("DOCUMENT_AI_COST_LIMIT");
-      const firstPass = await provider.analyze(request);
+      const firstPass = await provider.analyze({ ...request, outputTokenAllowance: budget.maxOutputTokens });
       usage = firstPass.usage;
       const normalizedFirst = normalizeBankDocumentExtraction(firstPass.extraction);
       if (!normalizedFirst.valid) throw new Error("DOCUMENT_EXTRACTION_INVALID");
@@ -238,19 +247,24 @@ export async function analyzeBankDocumentRequest(params: {
       if (validation.reconciliation?.status === "inconsistent") {
         const repairRequest: BankDocumentAIRequest = {
           documents: [],
+          expectedScheduleInstallments: extraction.termInstallments,
           repairContext: { previousExtraction: extraction, reconciliationErrors: validation.reconciliation.warnings },
         };
         const repairTokenEstimate = await provider.countTokens(repairRequest);
-        const repairBudget = decideBankDocumentBudget({ inputTokens: repairTokenEstimate.inputTokens, outputTokens: config.maxOutputTokens, thinkingTokens: 512 }, config, estimateBankDocumentCost(usage, config).totalCostUsd);
+        const repairOutputAllowance = outputAllowanceForSchedule(config, extraction.termInstallments ?? extraction.schedule.length);
+        const repairBudget = decideBankDocumentBudget({ inputTokens: repairTokenEstimate.inputTokens, outputTokens: repairOutputAllowance, billableOutputTokens: repairOutputAllowance, thinkingTokens: 0 }, config, estimateBankDocumentCost(usage, config).totalCostUsd, repairOutputAllowance);
         if (repairBudget.allowed) {
-          const repaired = await provider.analyze(repairRequest);
+          const repaired = await provider.analyze({ ...repairRequest, outputTokenAllowance: repairBudget.maxOutputTokens });
           usage = {
             inputTokens: usage.inputTokens + repaired.usage.inputTokens,
             outputTokens: usage.outputTokens + repaired.usage.outputTokens,
+            billableOutputTokens: (usage.billableOutputTokens ?? usage.outputTokens) + (repaired.usage.billableOutputTokens ?? repaired.usage.outputTokens),
             thinkingTokens: (usage.thinkingTokens ?? 0) + (repaired.usage.thinkingTokens ?? 0),
           };
           const normalizedRepair = normalizeBankDocumentExtraction(repaired.extraction);
-          if (normalizedRepair.valid) extraction = normalizedRepair.value;
+          if (normalizedRepair.valid) {
+            extraction = normalizedRepair.value;
+          }
         }
       }
     }
@@ -262,6 +276,7 @@ export async function analyzeBankDocumentRequest(params: {
       estimated_cost_usd: estimate.totalCostUsd,
       input_tokens: usage.inputTokens,
       output_tokens: usage.outputTokens,
+      billable_output_tokens: usage.billableOutputTokens ?? usage.outputTokens,
       thinking_tokens: usage.thinkingTokens ?? 0,
       completed_at: new Date().toISOString(),
     }).eq("id", body.importId).eq("household_id", body.householdId);
@@ -273,7 +288,7 @@ export async function analyzeBankDocumentRequest(params: {
       reconstruction: validation.reconstruction,
       reportedBalanceClassification: validation.reportedBalanceClassification,
       scheduleSource: validation.scheduleSource,
-      usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, thinkingTokens: usage.thinkingTokens ?? 0, estimatedCostUsd: estimate.totalCostUsd },
+      usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, billableOutputTokens: usage.billableOutputTokens ?? usage.outputTokens, thinkingTokens: usage.thinkingTokens ?? 0, estimatedCostUsd: estimate.totalCostUsd },
     };
   } catch (error) {
     const config = readBankDocumentCostConfig();
@@ -284,6 +299,7 @@ export async function analyzeBankDocumentRequest(params: {
       estimated_cost_usd: estimate.totalCostUsd,
       input_tokens: usage.inputTokens,
       output_tokens: usage.outputTokens,
+      billable_output_tokens: usage.billableOutputTokens ?? usage.outputTokens,
       thinking_tokens: usage.thinkingTokens ?? 0,
       error_code: error instanceof Error ? error.message : "DOCUMENT_AI_FAILED",
     }).eq("id", body.importId).eq("household_id", body.householdId);

@@ -33,13 +33,9 @@ export function isAllowedBankDocument(fileName: string, mediaType: string, size:
 
 export function safeStorageFileName(fileName: string, randomPart: string): string {
   const extension = fileExtension(fileName);
-  const safeBase = fileName
-    .replace(/\.[^.]+$/, "")
-    .normalize("NFKD")
-    .replace(/[^a-zA-Z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60) || "documento";
-  return `${safeBase}-${randomPart}.${extension}`;
+  // The original filename may contain PII. Keep only the allow-listed
+  // extension and an opaque request-scoped suffix in the persisted path.
+  return `document-${randomPart}.${extension}`;
 }
 
 export function isOwnedBankDocumentPath(path: string, householdId: string, userId: string, importId: string): boolean {

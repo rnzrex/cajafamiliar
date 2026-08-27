@@ -76,8 +76,9 @@ export function responseError(error: unknown): { status: number; body: { ok: fal
   const code = error instanceof Error ? error.message : "DOCUMENT_AI_FAILED";
   if (code === "AUTH_REQUIRED") return { status: 401, body: { ok: false, error: code } };
   if (code === "HOUSEHOLD_ACCESS_DENIED" || code === "DOCUMENT_PATH_ACCESS_DENIED") return { status: 403, body: { ok: false, error: code } };
-  if (code === "INVALID_DOCUMENT_INPUT" || code === "DOCUMENT_EXTRACTION_INVALID") return { status: 400, body: { ok: false, error: code } };
+  if (code === "INVALID_DOCUMENT_INPUT" || code === "DOCUMENT_EXTRACTION_INVALID" || code === "DOCUMENT_WORKBOOK_TEXT_FALLBACK_FAILED") return { status: 400, body: { ok: false, error: code } };
+  if (code === "DOCUMENT_AI_OUTPUT_TRUNCATED") return { status: 422, body: { ok: false, error: code, message: "La respuesta del análisis quedó truncada. Divide el expediente o revisa el cronograma manualmente." } };
   if (code === "DOCUMENT_AI_COST_LIMIT") return { status: 413, body: { ok: false, error: code, message: "El documento es demasiado grande para analizarlo dentro del límite de costo configurado. Reduce páginas o divide el expediente." } };
-  if (code === "AI_NOT_CONFIGURED") return { status: 503, body: { ok: false, error: code, message: "El análisis inteligente aún no está configurado." } };
+  if (code === "AI_NOT_CONFIGURED" || code === "BANK_DOCUMENT_AI_PRICING_UNKNOWN" || code === "BANK_DOCUMENT_AI_THINKING_LEVEL_INVALID") return { status: 503, body: { ok: false, error: code, message: "El análisis inteligente aún no está configurado con una tarifa y modelo seguros." } };
   return { status: 500, body: { ok: false, error: "DOCUMENT_AI_FAILED" } };
 }

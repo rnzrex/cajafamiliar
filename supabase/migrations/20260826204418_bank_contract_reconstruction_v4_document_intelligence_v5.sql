@@ -76,6 +76,7 @@ create policy "bank_document_imports_insert_member"
   to authenticated
   with check (
     bucket_id = 'bank-document-imports'
+    and pg_catalog.array_length(pg_catalog.string_to_array(name, '/'), 1) = 4
     and split_part(name, '/', 2) = (select auth.uid())::text
     and exists (
       select 1
@@ -95,6 +96,7 @@ create policy "bank_document_imports_select_member"
   to authenticated
   using (
     bucket_id = 'bank-document-imports'
+    and pg_catalog.array_length(pg_catalog.string_to_array(name, '/'), 1) = 4
     and split_part(name, '/', 2) = (select auth.uid())::text
     and exists (
       select 1
@@ -124,12 +126,16 @@ create table if not exists public.bank_document_import_jobs (
   actual_cost_usd numeric null,
   input_tokens integer null,
   output_tokens integer null,
+  billable_output_tokens integer null,
   thinking_tokens integer null,
   error_code text null,
   created_at timestamptz not null default now(),
   completed_at timestamptz null,
   expires_at timestamptz not null default (now() + interval '1 day')
 );
+
+alter table public.bank_document_import_jobs
+  add column if not exists billable_output_tokens integer null;
 
 alter table public.bank_document_import_jobs
   drop constraint if exists bank_document_import_jobs_status_check,
@@ -143,7 +149,10 @@ alter table public.bank_document_import_jobs
     check (estimated_cost_usd >= 0),
   drop constraint if exists bank_document_import_jobs_actual_cost_check,
   add constraint bank_document_import_jobs_actual_cost_check
-    check (actual_cost_usd is null or actual_cost_usd >= 0);
+    check (actual_cost_usd is null or actual_cost_usd >= 0),
+  drop constraint if exists bank_document_import_jobs_billable_output_tokens_check,
+  add constraint bank_document_import_jobs_billable_output_tokens_check
+    check (billable_output_tokens is null or billable_output_tokens >= 0);
 
 alter table public.bank_document_import_jobs
   drop constraint if exists bank_document_import_jobs_household_fkey,
@@ -166,12 +175,7 @@ create policy "bank_document_import_jobs_select_member"
   for select
   to authenticated
   using (
-    exists (
-      select 1
-        from public.household_members as hm
-       where hm.household_id = bank_document_import_jobs.household_id
-         and hm.user_id = (select auth.uid())
-    )
+    bank_document_import_jobs.created_by_user_id = (select auth.uid())
   );
 
 -- ============================================================
