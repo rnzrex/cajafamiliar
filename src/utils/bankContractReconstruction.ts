@@ -264,7 +264,7 @@ function insuranceCandidates(input: BankContractReconstructionInput, basis: Bank
   if (explicitMode && explicitMode !== "ambiguous") {
     return [{
       mode: explicitMode,
-      ratePercent: input.insuranceRatePercent ?? (explicitMode === "percent_outstanding_balance" ? inferOutstandingRate(input, basis, rule) : explicitMode === "percent_original_principal" && input.totalInsurance != null ? round2(input.totalInsurance / input.financedAmount * 100) : null),
+      ratePercent: input.insuranceRatePercent ?? (explicitMode === "percent_outstanding_balance" ? inferOutstandingRate(input, basis, rule) : explicitMode === "percent_original_principal" && input.totalInsurance != null ? round2(input.totalInsurance / (input.financedAmount * input.termInstallments) * 100) : null),
       fixedInsurancePerInstallment: input.fixedInsurancePerInstallment ?? null,
       fixedInsuranceTotalEven: input.fixedInsuranceTotalEven ?? null,
       fixedInsuranceTotalUpfront: input.fixedInsuranceTotalUpfront ?? null,
@@ -279,7 +279,7 @@ function insuranceCandidates(input: BankContractReconstructionInput, basis: Bank
   const total = input.totalInsurance;
   return [
     { mode: "percent_outstanding_balance", ratePercent: inferOutstandingRate(input, basis, rule), fixedInsurancePerInstallment: null, fixedInsuranceTotalEven: null, fixedInsuranceTotalUpfront: null },
-    { mode: "percent_original_principal", ratePercent: round2(total / input.financedAmount * 100), fixedInsurancePerInstallment: null, fixedInsuranceTotalEven: null, fixedInsuranceTotalUpfront: null },
+    { mode: "percent_original_principal", ratePercent: round2(total / (input.financedAmount * input.termInstallments) * 100), fixedInsurancePerInstallment: null, fixedInsuranceTotalEven: null, fixedInsuranceTotalUpfront: null },
     { mode: "fixed_per_installment", ratePercent: null, fixedInsurancePerInstallment: total / input.termInstallments, fixedInsuranceTotalEven: null, fixedInsuranceTotalUpfront: null },
     { mode: "fixed_total_even", ratePercent: null, fixedInsurancePerInstallment: null, fixedInsuranceTotalEven: total, fixedInsuranceTotalUpfront: null },
     { mode: "fixed_total_upfront", ratePercent: null, fixedInsurancePerInstallment: null, fixedInsuranceTotalEven: null, fixedInsuranceTotalUpfront: total },

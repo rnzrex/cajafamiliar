@@ -190,6 +190,16 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     : null;
   const balanceOriginal = Number(financedAmount || originalPrincipal);
   const balancePaidBefore = Number(installmentsPaidBeforeTracking || 0);
+  const isPendingOnlyOfficialSchedule = documentImportReady
+    && scheduleSource === "contractual"
+    && onboardingMode === "EXISTING_DEBT"
+    && Number.isInteger(balancePaidBefore)
+    && balancePaidBefore >= 0
+    && installments[0]?.contractualInstallmentNumber === balancePaidBefore + 1
+    && installments[0].contractualInstallmentNumber > 1
+    && Number.isInteger(Number(plannedInstallmentCount))
+    && Number(plannedInstallmentCount) > 0
+    && installments.at(-1)?.contractualInstallmentNumber === Number(plannedInstallmentCount);
   const hasKnownAmount = (value: string): boolean => value.trim() !== "" && Number.isFinite(Number(value));
   const canDeriveOpeningBalance = debtKind === "bank_loan"
     && onboardingMode === "EXISTING_DEBT"
@@ -615,7 +625,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         setToast({ message: "Hay datos contradictorios entre los documentos. Resuelve los conflictos antes de guardar.", type: "error" });
         return false;
       }
-      if (documentImportReady && (documentImportReconciliation === "insufficient_data" || installments.some((row) => [row.expectedAmount, row.expectedPrincipal, row.expectedInterest, row.expectedInsurance, row.expectedFees].some((value) => value.trim() === "")))) {
+      if (documentImportReady && ((!isPendingOnlyOfficialSchedule && documentImportReconciliation === "insufficient_data") || installments.some((row) => [row.expectedAmount, row.expectedPrincipal, row.expectedInterest, row.expectedInsurance, row.expectedFees].some((value) => value.trim() === "")))) {
         setToast({ message: "Faltan importes en una o más cuotas. Revisa el cronograma antes de guardar.", type: "error" });
         return false;
       }

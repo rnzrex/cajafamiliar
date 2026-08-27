@@ -126,4 +126,58 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
     expect((originalFirstDueDate as HTMLInputElement).value).toBe("2026-01-15");
   }, 15_000);
+
+  it("accepts pending-only official rows when current principal is supplied", async () => {
+    const user = userEvent.setup();
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito existente" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco V3" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 10000"), { target: { value: "10000" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 18"), { target: { value: "18" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 7300"), { target: { value: "7000" } });
+    fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/Pegar filas del cronograma/), { target: { value: scheduleLines(6, 18) } });
+    await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+
+    expect(screen.getByRole("button", { name: "Registrar deuda" })).toBeTruthy();
+    expect(screen.getByText(/Próxima: 6 de 18/)).toBeTruthy();
+    expect(screen.getByText("Contractual", { exact: true })).toBeTruthy();
+  }, 15_000);
+
+  it("blocks pending-only official rows when current principal is unavailable", async () => {
+    const user = userEvent.setup();
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito existente" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco V3" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 10000"), { target: { value: "10000" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 18"), { target: { value: "18" } });
+    fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/Pegar filas del cronograma/), { target: { value: scheduleLines(6, 18) } });
+    await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).required).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+
+    expect(screen.queryByRole("button", { name: "Registrar deuda" })).toBeNull();
+  }, 15_000);
 });

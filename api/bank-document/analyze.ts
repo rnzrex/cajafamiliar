@@ -117,9 +117,19 @@ export function structuredExtraction(documents: BankDocumentAIInputDocument[]): 
   return merged;
 }
 
-function financialValidation(extraction: BankDocumentExtraction) {
+function isPendingOnlyOfficialSchedule(extraction: BankDocumentExtraction): boolean {
+  const firstContractualNumber = extraction.schedule[0]?.contractualInstallmentNumber;
+  const lastContractualNumber = extraction.schedule.at(-1)?.contractualInstallmentNumber;
+  return extraction.schedule.length > 0
+    && extraction.termInstallments != null
+    && firstContractualNumber != null
+    && firstContractualNumber > 1
+    && lastContractualNumber === extraction.termInstallments;
+}
+
+export function financialValidation(extraction: BankDocumentExtraction) {
   if (extraction.schedule.length > 0) {
-    const reconciliation = reconcileBankContractSchedule(extraction.schedule.map((row) => ({
+    const rows = extraction.schedule.map((row) => ({
       contractualInstallmentNumber: row.contractualInstallmentNumber,
       dueDate: row.dueDate,
       principal: row.principal,
@@ -128,16 +138,24 @@ function financialValidation(extraction: BankDocumentExtraction) {
       fees: row.fees,
       total: row.total,
       reportedBalance: row.reportedBalance,
-    })), {
-      expectedInstallmentCount: extraction.termInstallments,
-      reportedTotalPrincipal: extraction.originalPrincipal ?? extraction.financedAmount,
-      reportedTotalInterest: extraction.totalInterest,
-      reportedTotalInsurance: extraction.totalInsurance,
-      reportedTotalFees: extraction.totalFees,
-      reportedTotalContractAmount: extraction.totalContractAmount,
-      knownRegularPayment: extraction.regularInstallmentAmount,
-      knownFinalPayment: extraction.finalInstallmentAmount,
-    });
+    }));
+    const pendingOnlyOfficial = isPendingOnlyOfficialSchedule(extraction);
+    const reconciliation = reconcileBankContractSchedule(rows, pendingOnlyOfficial
+      ? {
+          // A pending-only official import must validate its own structure and
+          // endpoint, but must not compare rows K..N with contract totals 1..N.
+          expectedInstallmentCount: extraction.termInstallments,
+        }
+      : {
+          expectedInstallmentCount: extraction.termInstallments,
+          reportedTotalPrincipal: extraction.originalPrincipal ?? extraction.financedAmount,
+          reportedTotalInterest: extraction.totalInterest,
+          reportedTotalInsurance: extraction.totalInsurance,
+          reportedTotalFees: extraction.totalFees,
+          reportedTotalContractAmount: extraction.totalContractAmount,
+          knownRegularPayment: extraction.regularInstallmentAmount,
+          knownFinalPayment: extraction.finalInstallmentAmount,
+        });
     const scheduleSource = reconciliation.status === "exact" || reconciliation.status === "within_tolerance"
       ? "contractual" as const
       : "estimated" as const;

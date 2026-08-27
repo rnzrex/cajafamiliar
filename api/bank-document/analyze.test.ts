@@ -86,6 +86,49 @@ describe("bank document analyze endpoint orchestration", () => {
     expect(fake.removed).toEqual([[path]]);
   });
 
+  it("validates a pending-only official schedule without reconciling it to full-contract totals", async () => {
+    const path = `${householdId}/${userId}/${importId}/cronograma.pdf`;
+    const fake = fakeAdmin(new Uint8Array([1]), path);
+    const provider = new FakeBankDocumentProvider({
+      ...emptyExtraction,
+      financedAmount: 4_100,
+      originalPrincipal: 4_100,
+      termInstallments: 18,
+      totalContractAmount: 6_258.20,
+      totalInterest: 2_003.41,
+      totalInsurance: 154.79,
+      schedule: Array.from({ length: 13 }, (_, index) => {
+        const contractualInstallmentNumber = index + 6;
+        return {
+          contractualInstallmentNumber,
+          dueDate: new Date(Date.UTC(2026, 5 + index, 10)).toISOString().slice(0, 10),
+          principal: 100,
+          interest: 10,
+          insurance: 2,
+          fees: 1,
+          total: 113,
+          reportedBalance: null,
+        };
+      }),
+    });
+
+    const result = await analyzeBankDocumentRequest({
+      body: { importId, householdId, storagePaths: [path] },
+      admin: fake.admin,
+      userId,
+      provider,
+    });
+
+    expect(result.reconciliation?.status).toBe("exact");
+    expect(result.reconciliation?.differences.principal).toBeNull();
+    expect(result.reconciliation?.differences.interest).toBeNull();
+    expect(result.reconciliation?.differences.total).toBeNull();
+    expect(result.scheduleSource).toBe("contractual");
+    expect(result.extraction.schedule[0]?.contractualInstallmentNumber).toBe(6);
+    expect(result.extraction.schedule.at(-1)?.contractualInstallmentNumber).toBe(18);
+    expect(fake.removed).toEqual([[path]]);
+  });
+
   it("blocks a hard-budget overage before fake provider analyze and still cleans up", async () => {
     vi.stubEnv("BANK_DOCUMENT_AI_SOFT_BUDGET_USD", "0.05");
     vi.stubEnv("BANK_DOCUMENT_AI_HARD_BUDGET_USD", "0.10");

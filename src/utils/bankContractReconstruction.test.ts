@@ -168,6 +168,39 @@ describe("bank contract reconstruction V4", () => {
     expect(result.inferredTerms.insuranceRatePercent).toBeCloseTo(0.35, 2);
   });
 
+  it("infers original-principal insurance from the contractual total and reproduces every row", () => {
+    const source = reconstructBankContractSchedule({
+      originDate: "2026-01-01",
+      firstDueDate: "2026-02-01",
+      financedAmount: 10_000,
+      teaPercent: 24,
+      termInstallments: 12,
+      regularInstallmentAmount: 1_000,
+      insuranceInferenceMode: "percent_original_principal" as const,
+      insuranceRatePercent: 0.35,
+    });
+    const result = reconstructBankContractSchedule({
+      originDate: "2026-01-01",
+      firstDueDate: "2026-02-01",
+      financedAmount: 10_000,
+      teaPercent: 24,
+      termInstallments: 12,
+      regularInstallmentAmount: 1_000,
+      totalInsurance: source.totalInsurance,
+      observedRows: source.rows,
+    });
+
+    expect(result.inferredTerms.insuranceMode).toBe("percent_original_principal");
+    expect(result.inferredTerms.insuranceRatePercent).toBe(0.35);
+    expect(result.rows.every((row) => row.insurance === 35)).toBe(true);
+    expect(result.totalInsurance).toBe(420);
+    expect(reconcileBankContractSchedule(result.rows, {
+      originalPrincipal: 10_000,
+      expectedInstallmentCount: 12,
+      reportedTotalInsurance: 420,
+    }).status).toBe("exact");
+  });
+
   it("does not invent an insurance formula from a total alone", () => {
     const result = reconstructBankContractSchedule({
       originDate: "2026-01-01",
