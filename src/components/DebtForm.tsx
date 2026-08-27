@@ -21,6 +21,7 @@ import { generateEstimatedDebtSchedule } from "../utils/debtEstimation";
 import { BankDocumentImportPanel } from "./BankDocumentImportPanel";
 import { BankExternalAiImportPanel } from "./BankExternalAiImportPanel";
 import { BankDocumentReviewPanel } from "./BankDocumentReviewPanel";
+import { BankSchedulePreview, type BankSchedulePreviewRow } from "./BankSchedulePreview";
 import type { BankDocumentExtraction } from "../utils/bankDocumentExtraction";
 import { reviewFieldStatus } from "../utils/bankDocumentExtraction";
 import type { BankFinancialValidationResult } from "../utils/bankDocumentFinancialValidation";
@@ -53,6 +54,7 @@ type BankBalanceInformation =
 type BankOpeningBalanceSource = "user_principal" | "schedule_derived" | "imported_principal" | "none";
 type BankLoanEntryPath = "external_ai" | "integrated_ai" | "reconstruction" | "manual";
 type BankDocumentImportSource = "external_ai" | "integrated_ai";
+type BankScheduleEntryProvenance = "external_ai" | "integrated_ai" | "spreadsheet" | "manual" | null;
 
 const KIND_ICONS: Partial<Record<DebtKind, typeof Banknote>> = {
   bank_loan: Building2,
@@ -111,6 +113,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [documentImportValidation, setDocumentImportValidation] = useState<BankFinancialValidationResult | null>(null);
   const [documentImportWarnings, setDocumentImportWarnings] = useState<string[]>([]);
   const [documentImportReconciliation, setDocumentImportReconciliation] = useState<string | null>(null);
+  const [documentImportResetVersion, setDocumentImportResetVersion] = useState(0);
   const [assetPrice, setAssetPrice] = useState("");
   const [downPaymentAmount, setDownPaymentAmount] = useState("");
   const [financedAmount, setFinancedAmount] = useState("");
@@ -137,6 +140,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   } | null>(null);
   const [estimatedScheduleSignature, setEstimatedScheduleSignature] = useState<string | null>(null);
   const [bankLoanEntryPath, setBankLoanEntryPath] = useState<BankLoanEntryPath>("external_ai");
+  const [scheduleEntryProvenance, setScheduleEntryProvenance] = useState<BankScheduleEntryProvenance>(null);
+  const [scheduleManualEditOpen, setScheduleManualEditOpen] = useState(false);
 
   const [insurances, setInsurances] = useState<Array<{
     insuranceType: DebtInsuranceType;
@@ -244,6 +249,59 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       })
       : null
     : null;
+  const hasLoadedSchedule = installments.length > 0;
+  const hasOperationalScheduleSource = scheduleSource === "contractual" || scheduleSource === "reconstructed";
+  const scheduleExpectedInstallments = Number.isInteger(Number(plannedInstallmentCount)) && Number(plannedInstallmentCount) > 0 ? Number(plannedInstallmentCount) : null;
+  const scheduleFirstContractualInstallment = installments[0]?.contractualInstallmentNumber ?? null;
+  const scheduleLastContractualInstallment = installments.at(-1)?.contractualInstallmentNumber ?? null;
+  const schedulePaidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
+  const schedulePendingOnly = scheduleExpectedInstallments != null
+    && onboardingMode === "EXISTING_DEBT"
+    && Number.isInteger(schedulePaidBefore)
+    && schedulePaidBefore > 0
+    && scheduleFirstContractualInstallment === schedulePaidBefore + 1
+    && scheduleLastContractualInstallment === scheduleExpectedInstallments;
+  const scheduleIsFull = scheduleExpectedInstallments != null
+    && installments.length === scheduleExpectedInstallments
+    && scheduleFirstContractualInstallment === 1
+    && scheduleLastContractualInstallment === scheduleExpectedInstallments;
+  const scheduleCoverageText = !hasLoadedSchedule
+    ? null
+    : schedulePendingOnly
+      ? `Cuotas pendientes ${scheduleFirstContractualInstallment} a ${scheduleLastContractualInstallment}`
+      : scheduleExpectedInstallments == null
+        ? `${installments.length} cuotas detectadas`
+        : scheduleIsFull
+          ? `${installments.length} de ${scheduleExpectedInstallments} cuotas`
+          : `${installments.length} de ${scheduleExpectedInstallments} cuotas — revisar`;
+  const scheduleIsAutomatic = scheduleEntryProvenance === "external_ai" || scheduleEntryProvenance === "integrated_ai";
+  const scheduleProvenanceLabel = scheduleEntryProvenance === "external_ai"
+    ? "Importado desde IA externa"
+    : scheduleEntryProvenance === "integrated_ai"
+      ? "Importado con IA integrada"
+      : scheduleEntryProvenance === "spreadsheet"
+        ? "Importado desde Excel/CSV"
+        : scheduleEntryProvenance === "manual"
+          ? "Ingresado manualmente"
+          : null;
+  const schedulePreviewRows: BankSchedulePreviewRow[] = installments.map((row) => {
+    const amountOrNull = (value: string): number | null => {
+      if (!value.trim()) return null;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    return {
+      contractualInstallmentNumber: row.contractualInstallmentNumber,
+      dueDate: row.dueDate,
+      principal: amountOrNull(row.expectedPrincipal),
+      interest: amountOrNull(row.expectedInterest),
+      insurance: amountOrNull(row.expectedInsurance),
+      fees: amountOrNull(row.expectedFees),
+      total: amountOrNull(row.expectedAmount),
+      reportedBalance: amountOrNull(row.reportedBalance),
+    };
+  });
+  const scheduleEditorVisible = !hasLoadedSchedule || scheduleManualEditOpen;
 
   const insuranceLabel = (type: DebtInsuranceType): string => {
     if (type === "credit_life") return "Seguro de desgravamen";
@@ -362,8 +420,19 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setCollaterals([...collaterals, { description: "", pledgedValue: "", estimatedValue: "", redemptionDeadline: "" }]);
   };
 
+  const clearDocumentImportState = () => {
+    setDocumentImportReady(false);
+    setDocumentImportSource(null);
+    setDocumentImportExtraction(null);
+    setDocumentImportValidation(null);
+    setDocumentImportWarnings([]);
+    setDocumentImportReconciliation(null);
+    setDocumentImportResetVersion((version) => version + 1);
+  };
+
   const resetBankScheduleDraft = () => {
     setInstallments([]);
+    setTsvScheduleText("");
     setPlannedInstallmentCount("");
     setPlannedInstallmentAmount("");
     setFirstDueDate("");
@@ -380,6 +449,9 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setScheduleEstimationWarning(null);
     setEstimatedTotals(null);
     setEstimatedScheduleSignature(null);
+    setScheduleEntryProvenance(null);
+    setScheduleManualEditOpen(false);
+    clearDocumentImportState();
   };
 
   const applyParsedSchedule = (rows: Array<{
@@ -392,7 +464,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     expectedInsurance: number;
     expectedFees: number;
     reportedBalance?: number | null;
-  }>, amountMode: DebtInstallmentAmountMode, detectedFrequency: DebtPaymentFrequency) => {
+  }>, amountMode: DebtInstallmentAmountMode, detectedFrequency: DebtPaymentFrequency, provenance: Exclude<BankScheduleEntryProvenance, null> = "manual") => {
     const normalizedRows = rows.map((row, index) => ({
       installmentNumber: index + 1,
       contractualInstallmentNumber: row.contractualInstallmentNumber ?? row.installmentNumber,
@@ -410,6 +482,11 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setInstallments(applyInitialBankLoanBaseline(normalizedRows, paidBefore, knownTotal));
     setInstallmentAmountMode(amountMode);
     setPaymentFrequency(detectedFrequency);
+    setScheduleEntryProvenance(provenance);
+    setScheduleManualEditOpen(false);
+    setScheduleParseError(null);
+    setTsvScheduleText("");
+    if (provenance === "manual" || provenance === "spreadsheet") clearDocumentImportState();
     if (normalizedRows.length > 0) {
       const firstContractualNumber = normalizedRows[0].contractualInstallmentNumber;
       const lastContractualNumber = normalizedRows.at(-1)?.contractualInstallmentNumber;
@@ -435,11 +512,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       setScheduleFileAmbiguousColumns(result.ambiguousColumns.map((column) => DEBT_SCHEDULE_COLUMN_LABELS[column]));
       if (!result.valid) {
         setScheduleParseError(result.errors.join("; "));
-        setInstallments([]);
         return;
       }
       setScheduleParseError(null);
-      applyParsedSchedule(result.rows, result.installmentAmountMode, result.detectedFrequency);
+      applyParsedSchedule(result.rows, result.installmentAmountMode, result.detectedFrequency, "spreadsheet");
     } catch {
       setScheduleParseError("No pudimos leer el archivo seleccionado.");
     }
@@ -460,7 +536,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       return;
     }
     setScheduleParseError(null);
-    applyParsedSchedule(result.rows, result.installmentAmountMode, result.detectedFrequency);
+    applyParsedSchedule(result.rows, result.installmentAmountMode, result.detectedFrequency, "spreadsheet");
   };
 
   const applyDocumentExtraction = (
@@ -483,6 +559,16 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       reportedBalance: "reportedBalance" in row && row.reportedBalance != null ? String(row.reportedBalance) : "",
     }));
 
+    setTsvScheduleText("");
+    setScheduleParseError(null);
+    setScheduleManualEditOpen(false);
+    setScheduleFileName(null);
+    setScheduleFileData(null);
+    setScheduleFileHeaders([]);
+    setScheduleFileMapping({});
+    setScheduleFileMissingColumns([]);
+    setScheduleFileAmbiguousColumns([]);
+    setScheduleEntryProvenance(importedRows.length > 0 ? source : null);
     setDocumentImportReady(true);
     setDocumentImportSource(source);
     setDocumentImportExtraction(extraction);
@@ -561,6 +647,30 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         notes: "Importado para confirmación; verificar contra el contrato.",
       })));
     }
+  };
+
+  const openScheduleManualReplacement = () => {
+    setScheduleManualEditOpen(true);
+    setScheduleParseError(null);
+    setTsvScheduleText("");
+    setScheduleFileName(null);
+    setScheduleFileData(null);
+    setScheduleFileHeaders([]);
+    setScheduleFileMapping({});
+    setScheduleFileMissingColumns([]);
+    setScheduleFileAmbiguousColumns([]);
+  };
+
+  const cancelScheduleManualReplacement = () => {
+    setScheduleManualEditOpen(false);
+    setScheduleParseError(null);
+    setTsvScheduleText("");
+    setScheduleFileName(null);
+    setScheduleFileData(null);
+    setScheduleFileHeaders([]);
+    setScheduleFileMapping({});
+    setScheduleFileMissingColumns([]);
+    setScheduleFileAmbiguousColumns([]);
   };
 
   const validateDetails = (): boolean => {
@@ -1170,6 +1280,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                 <BankExternalAiImportPanel
                   onExtractionReady={(extraction, result) => applyDocumentExtraction(extraction, result, "external_ai")}
                   setToast={setToast}
+                  resetKey={documentImportResetVersion}
                   completenessContext={{
                     onboardingMode,
                     installmentsPaidBeforeTracking: onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0,
@@ -1649,7 +1760,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                         }`}
                       >
                         <p className="font-bold text-sm text-slate-900 mb-0.5">A) Tengo el cronograma del banco</p>
-                        <p className="text-xs text-slate-500">Pega las filas tabuladas del cronograma oficial del banco.</p>
+                        <p className="text-xs text-slate-500">{hasLoadedSchedule ? "El cronograma cargado aparece abajo; reemplázalo solo si es necesario." : "Pega las filas tabuladas del cronograma oficial del banco."}</p>
                       </button>
 
                       <button
@@ -1678,110 +1789,114 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                     </div>
                   )}
 
-                  {/* Option A: TSV Contractual Parser */}
-                  {scheduleSource === "contractual" && (
-                    <div className="rounded-xl bg-white p-4 border border-slate-200 space-y-3">
-                      <label className="block text-xs font-bold text-slate-800">
-                        Pegar filas del cronograma (Cuota, Fecha, Total, Capital, Interés, Seguro, Gastos)
-                      </label>
-                      <textarea
-                        rows={4}
-                        aria-label="Pegar filas del cronograma"
-                        value={tsvScheduleText}
-                        onChange={(e) => setTsvScheduleText(e.target.value)}
-                        placeholder={`Ejemplo:\n1\t2026-09-15\t850.00\t500.00\t250.00\t80.00\t20.00\n2\t2026-10-15\t850.00\t510.00\t240.00\t80.00\t20.00`}
-                        className="w-full rounded-xl border border-slate-300 p-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
-                      />
-                      <div className="flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const res = parseContractualScheduleText(tsvScheduleText);
-                            if (!res.valid) {
-                              setScheduleParseError(res.errors.join("; "));
-                            } else {
-                              setScheduleParseError(null);
-                              applyParsedSchedule(res.rows, res.installmentAmountMode, res.detectedFrequency);
-                            }
-                          }}
-                          className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 shadow"
-                        >
-                          Interpretar Cronograma
-                        </button>
-                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-800 hover:bg-blue-100">
-                          <Upload className="h-4 w-4" /> Importar Excel / CSV
-                          <input
-                            type="file"
-                            accept=".xlsx,.xls,.csv,.tsv,.txt,text/csv,text/tab-separated-values"
-                            className="sr-only"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) void handleScheduleFile(file);
-                              e.currentTarget.value = "";
-                            }}
-                          />
-                        </label>
-                        {installments.length > 0 && (
-                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-lg border border-emerald-200">
-                            {installments.length} cuotas contractuales cargadas ({installmentAmountMode === "fixed" ? "Cuota fija" : "Cuota variable"})
-                          </span>
-                        )}
-                      </div>
-                      {scheduleParseError && (
-                        <div className="rounded-xl bg-red-50 p-3 text-xs font-bold text-red-800 border border-red-200">
-                          {scheduleParseError}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {scheduleFileName && (
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                      <p className="text-xs font-semibold text-slate-600">Archivo: {scheduleFileName}{scheduleFileHeaders.length > 0 ? ` · ${scheduleFileHeaders.length} columnas detectadas` : ""}</p>
-                      {(scheduleFileMissingColumns.length > 0 || scheduleFileAmbiguousColumns.length > 0 || Object.keys(scheduleFileMapping).length < 7) && scheduleFileHeaders.length > 0 && (
-                        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 space-y-2">
-                          <p className="text-xs font-bold text-blue-950">Revisa el mapeo de columnas antes de aceptar</p>
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                            {(Object.entries(DEBT_SCHEDULE_COLUMN_LABELS) as Array<[DebtScheduleColumn, string]>).map(([column, label]) => (
-                              <label key={column} className="text-[11px] font-bold text-blue-950">
-                                {label}
-                                <select
-                                  value={scheduleFileMapping[column] == null ? "" : String(scheduleFileMapping[column])}
-                                  onChange={(event) => handleScheduleFileMapping(column, event.target.value)}
-                                  className="mt-1 w-full rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-xs font-normal text-slate-800"
-                                >
-                                  <option value="">Seleccionar columna</option>
-                                  {scheduleFileHeaders.map((header, headerIndex) => <option key={`${headerIndex}-${header}`} value={headerIndex}>{header || `Columna ${headerIndex + 1}`}</option>)}
-                                </select>
-                              </label>
-                            ))}
+                  {/* Imported schedule state and explicit manual replacement */}
+                  {hasOperationalScheduleSource && (
+                    <>
+                      {hasLoadedSchedule && !scheduleManualEditOpen && (
+                        <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50 p-4" aria-live="polite" aria-labelledby="bank-loaded-schedule-title">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p id="bank-loaded-schedule-title" className="text-sm font-black uppercase tracking-wide text-emerald-950">{scheduleIsAutomatic ? "CRONOGRAMA CARGADO AUTOMÁTICAMENTE" : "CRONOGRAMA CARGADO"}</p>
+                              <p className="mt-1 text-xs font-bold text-emerald-900">{scheduleIsAutomatic ? `Encontramos e importamos ${installments.length} cuotas contractuales.` : `Tienes ${installments.length} cuotas contractuales cargadas.`}</p>
+                              <p className="mt-1 text-xs font-semibold text-emerald-800">{installments.length} cuotas contractuales cargadas</p>
+                              {scheduleCoverageText && <p className="mt-1 text-sm font-black text-emerald-950">{scheduleCoverageText}</p>}
+                              {scheduleProvenanceLabel && <p className="mt-2 inline-flex rounded-full border border-emerald-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-emerald-800">{scheduleProvenanceLabel}</p>}
+                            </div>
+                            <button type="button" onClick={openScheduleManualReplacement} className="rounded-xl border border-emerald-300 bg-white px-3 py-2 text-xs font-black text-emerald-900 hover:bg-emerald-100">EDITAR O REEMPLAZAR CRONOGRAMA</button>
                           </div>
+                          <p className="text-xs text-emerald-900">La fuente operacional es este cronograma cargado. El editor manual solo reemplaza estas filas después de una acción explícita.</p>
                         </div>
                       )}
-                      {scheduleFileMissingColumns.length > 0 && (
-                        <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
-                          Falta identificar: {scheduleFileMissingColumns.join(", ")}. Selecciona manualmente las columnas o usa el pegado tabulado.
-                        </p>
+
+                      {hasLoadedSchedule && !scheduleManualEditOpen && (
+                        <section aria-labelledby="bank-operational-schedule-title" className="space-y-3 rounded-xl border border-blue-200 bg-white p-4">
+                          <div>
+                            <p id="bank-operational-schedule-title" className="text-xs font-black uppercase tracking-wide text-blue-950">Cronograma operacional cargado</p>
+                            <p className="mt-1 text-xs text-slate-600">Esta es la tabla que se guardará al confirmar el registro.</p>
+                          </div>
+                          <BankSchedulePreview rows={schedulePreviewRows} showBalance ariaLabel="Cronograma operacional cargado" />
+                        </section>
                       )}
-                      {scheduleFileAmbiguousColumns.length > 0 && (
-                        <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">
-                          Hay más de una coincidencia para: {scheduleFileAmbiguousColumns.join(", ")}. Confirma el campo correcto en el mapeo.
-                        </p>
-                      )}
-                      {scheduleParseError && (
-                        <div className="rounded-xl bg-red-50 p-3 text-xs font-bold text-red-800 border border-red-200">{scheduleParseError}</div>
-                      )}
-                      {installments.length > 0 && (
-                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                          <p className="px-3 py-2 text-xs font-bold text-emerald-800">Detectamos {installments.length} cuotas. Revisa esta vista previa:</p>
-                          <table className="min-w-full text-left text-xs">
-                            <thead className="bg-slate-50 font-bold text-slate-600"><tr>{["Cuota", "Fecha", "Total", "Capital", "Interés", "Seguro", "Gastos"].map((label) => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead>
-                            <tbody className="divide-y divide-slate-100">{installments.slice(0, 8).map((row) => <tr key={`${row.installmentNumber}-${row.dueDate}`}><td className="px-3 py-2">{row.contractualInstallmentNumber}</td><td className="px-3 py-2">{row.dueDate}</td><td className="px-3 py-2">{row.expectedAmount}</td><td className="px-3 py-2">{row.expectedPrincipal}</td><td className="px-3 py-2">{row.expectedInterest}</td><td className="px-3 py-2">{row.expectedInsurance}</td><td className="px-3 py-2">{row.expectedFees}</td></tr>)}</tbody>
-                          </table>
-                          {installments.length > 8 && <p className="px-3 py-2 text-xs text-slate-500">Mostrando 8 de {installments.length} cuotas.</p>}
+
+                      {scheduleEditorVisible && (
+                        <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-4">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-800" htmlFor="bank-manual-schedule-text">Pegar filas del cronograma (Cuota, Fecha, Total, Capital, Interés, Seguro, Gastos)</label>
+                            {hasLoadedSchedule && <p className="mt-1 text-xs font-semibold text-amber-800">Al interpretar estas filas reemplazarás el cronograma actualmente cargado.</p>}
+                          </div>
+                          <textarea
+                            id="bank-manual-schedule-text"
+                            rows={4}
+                            aria-label="Pegar filas del cronograma"
+                            value={tsvScheduleText}
+                            onChange={(e) => { setTsvScheduleText(e.target.value); setScheduleParseError(null); }}
+                            placeholder={`Ejemplo:\n1\t2026-09-15\t850.00\t500.00\t250.00\t80.00\t20.00\n2\t2026-10-15\t850.00\t510.00\t240.00\t80.00\t20.00`}
+                            className="w-full rounded-xl border border-slate-300 p-3 font-mono text-xs text-slate-900 focus:border-blue-600 focus:outline-none"
+                          />
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (!tsvScheduleText.trim()) {
+                                  setScheduleParseError("No has ingresado filas para reemplazar el cronograma.");
+                                  return;
+                                }
+                                const res = parseContractualScheduleText(tsvScheduleText);
+                                if (!res.valid) {
+                                  setScheduleParseError(res.errors.join("; "));
+                                } else {
+                                  applyParsedSchedule(res.rows, res.installmentAmountMode, res.detectedFrequency, "manual");
+                                }
+                              }}
+                              className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow hover:bg-blue-700"
+                            >
+                              Interpretar Cronograma
+                            </button>
+                            <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-800 hover:bg-blue-100">
+                              <Upload className="h-4 w-4" /> Importar Excel / CSV
+                              <input
+                                type="file"
+                                accept=".xlsx,.xls,.csv,.tsv,.txt,text/csv,text/tab-separated-values"
+                                className="sr-only"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) void handleScheduleFile(file);
+                                  e.currentTarget.value = "";
+                                }}
+                              />
+                            </label>
+                            {hasLoadedSchedule && <button type="button" onClick={cancelScheduleManualReplacement} className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">CANCELAR REEMPLAZO</button>}
+                          </div>
+                          {!hasLoadedSchedule && <p className="text-[11px] text-slate-500">El cronograma interpretado quedará cargado aquí y podrás revisarlo antes de guardar.</p>}
+                          {scheduleParseError && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-800">{scheduleParseError}</div>}
                         </div>
                       )}
-                    </div>
+
+                      {scheduleEditorVisible && scheduleFileName && (
+                        <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                          <p className="text-xs font-semibold text-slate-600">Archivo: {scheduleFileName}{scheduleFileHeaders.length > 0 ? ` · ${scheduleFileHeaders.length} columnas detectadas` : ""}</p>
+                          {(scheduleFileMissingColumns.length > 0 || scheduleFileAmbiguousColumns.length > 0 || Object.keys(scheduleFileMapping).length < 7) && scheduleFileHeaders.length > 0 && (
+                            <div className="space-y-2 rounded-xl border border-blue-200 bg-blue-50 p-3">
+                              <p className="text-xs font-bold text-blue-950">Revisa el mapeo de columnas antes de aceptar</p>
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                                {(Object.entries(DEBT_SCHEDULE_COLUMN_LABELS) as Array<[DebtScheduleColumn, string]>).map(([column, label]) => (
+                                  <label key={column} className="text-[11px] font-bold text-blue-950">
+                                    {label}
+                                    <select value={scheduleFileMapping[column] == null ? "" : String(scheduleFileMapping[column])} onChange={(event) => handleScheduleFileMapping(column, event.target.value)} className="mt-1 w-full rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-xs font-normal text-slate-800">
+                                      <option value="">Seleccionar columna</option>
+                                      {scheduleFileHeaders.map((header, headerIndex) => <option key={`${headerIndex}-${header}`} value={headerIndex}>{header || `Columna ${headerIndex + 1}`}</option>)}
+                                    </select>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {scheduleFileMissingColumns.length > 0 && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">Falta identificar: {scheduleFileMissingColumns.join(", ")}. Selecciona manualmente las columnas o usa el pegado tabulado.</p>}
+                          {scheduleFileAmbiguousColumns.length > 0 && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">Hay más de una coincidencia para: {scheduleFileAmbiguousColumns.join(", ")}. Confirma el campo correcto en el mapeo.</p>}
+                          {scheduleParseError && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-800">{scheduleParseError}</div>}
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {firstPendingImportedDueDate && (

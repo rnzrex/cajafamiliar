@@ -111,3 +111,10 @@ Date: 2026-08-27
 Status: active
 Decision: Treat every externally analyzed attachment as one credit dossier, require the external prompt to inspect all pages and transcribe every located contractual schedule row, preserve unreadable cells as null, and evaluate completeness locally with full/partial/pending-only/not-found coverage before save.
 Reason: A term, regular payment, or first due date is not proof that the contractual schedule was received; users need an auditable distinction between complete data, required blockers, review items, and optional omissions without adding provider calls or changing the V1 bridge schema.
+
+## D-017 - Imported installments are the Section 5 operational SSOT
+
+Date: 2026-08-27
+Status: active
+Decision: Render the loaded bank schedule from `installments` with a shared responsive preview; keep the textarea, spreadsheet controls, and parser as an explicit replacement editor, and track external AI, integrated AI, spreadsheet, and manual provenance separately from financial `scheduleSource`.
+Reason: The external import already normalized real rows into `installments`; using the empty textarea as Section 5 state caused a false missing-schedule message and risked deleting valid imported rows during incidental edits.

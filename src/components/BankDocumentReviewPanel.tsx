@@ -1,7 +1,8 @@
-import type { BankDocumentExtraction, BankDocumentScheduleExtractionRow } from "../utils/bankDocumentExtraction.js";
+import type { BankDocumentExtraction } from "../utils/bankDocumentExtraction.js";
 import { reviewFieldStatus } from "../utils/bankDocumentExtraction.js";
 import type { BankFinancialValidationResult } from "../utils/bankDocumentFinancialValidation.js";
 import type { BankDocumentCompletenessIssue, BankDocumentCompletenessResult } from "../utils/bankDocumentCompleteness.js";
+import { BankSchedulePreview } from "./BankSchedulePreview.js";
 
 interface BankDocumentReviewPanelProps {
   extraction: BankDocumentExtraction;
@@ -12,10 +13,6 @@ interface BankDocumentReviewPanelProps {
 
 function amount(value: number | null | undefined): string {
   return value == null || !Number.isFinite(value) ? "—" : value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
-function rowAmount(value: number | null): string {
-  return value == null ? "—" : amount(value);
 }
 
 function issueList(issues: BankDocumentCompletenessIssue[], tone: "required" | "review" | "optional") {
@@ -66,19 +63,6 @@ function FieldBadge({ label, field, extraction }: { label: string; field: string
   return <span className={`rounded-lg border px-2 py-1.5 text-[11px] font-black ${className}`}>{label}: {status === "CONFIRMADO" ? status : labelMap[status]}</span>;
 }
 
-function ScheduleDetail({ row }: { row: BankDocumentScheduleExtractionRow }) {
-  return (
-    <div className="grid grid-cols-2 gap-2 border-t border-slate-200 pt-2 text-xs text-slate-700 sm:grid-cols-4">
-      <span>Capital: <strong>{rowAmount(row.principal)}</strong></span>
-      <span>Interés: <strong>{rowAmount(row.interest)}</strong></span>
-      <span>Seguro: <strong>{rowAmount(row.insurance)}</strong></span>
-      <span>Gastos: <strong>{rowAmount(row.fees)}</strong></span>
-      <span>Saldo: <strong>{rowAmount(row.reportedBalance)}</strong></span>
-      <span className="sm:col-span-3">Total: <strong>{rowAmount(row.total)}</strong></span>
-    </div>
-  );
-}
-
 export function BankDocumentReviewPanel({ extraction, validation, completeness, sourceLabel }: BankDocumentReviewPanelProps) {
   const coverage = coverageCopy(completeness);
   const reconciliationStatus = validation.reconciliation?.status;
@@ -125,28 +109,7 @@ export function BankDocumentReviewPanel({ extraction, validation, completeness, 
             <p id="bank-document-schedule-preview-title" className="text-xs font-black uppercase tracking-wide text-slate-700">Cronograma importado</p>
             <p className="mt-1 text-xs font-bold text-indigo-800">{extraction.schedule.length} cuotas detectadas e importadas</p>
           </div>
-          <div className="space-y-2 lg:hidden" aria-label="Vista previa del cronograma importado">
-            {extraction.schedule.map((row) => (
-              <details key={`${row.contractualInstallmentNumber}-${row.dueDate}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <summary className="grid cursor-pointer grid-cols-3 gap-2 text-xs font-black text-slate-800">
-                  <span>N° {row.contractualInstallmentNumber}</span>
-                  <span>Vence {row.dueDate}</span>
-                  <span>Total {rowAmount(row.total)}</span>
-                </summary>
-                <div className="mt-2"><ScheduleDetail row={row} /></div>
-              </details>
-            ))}
-          </div>
-          <div className="hidden overflow-x-auto rounded-xl border border-slate-200 lg:block">
-            <table className="min-w-full text-left text-xs" aria-label="Vista previa del cronograma importado">
-              <thead className="bg-slate-100 text-[10px] font-black uppercase tracking-wide text-slate-600">
-                <tr><th className="px-3 py-2">N°</th><th className="px-3 py-2">Fecha</th><th className="px-3 py-2">Capital</th><th className="px-3 py-2">Interés</th><th className="px-3 py-2">Seguro</th><th className="px-3 py-2">Gastos</th><th className="px-3 py-2">Total</th><th className="px-3 py-2">Saldo</th></tr>
-              </thead>
-              <tbody>
-                {extraction.schedule.map((row) => <tr key={`${row.contractualInstallmentNumber}-${row.dueDate}`} className="border-t border-slate-100"><td className="px-3 py-2 font-bold">{row.contractualInstallmentNumber}</td><td className="px-3 py-2">{row.dueDate}</td><td className="px-3 py-2">{rowAmount(row.principal)}</td><td className="px-3 py-2">{rowAmount(row.interest)}</td><td className="px-3 py-2">{rowAmount(row.insurance)}</td><td className="px-3 py-2">{rowAmount(row.fees)}</td><td className="px-3 py-2 font-bold">{rowAmount(row.total)}</td><td className="px-3 py-2">{rowAmount(row.reportedBalance)}</td></tr>)}
-              </tbody>
-            </table>
-          </div>
+          <BankSchedulePreview rows={extraction.schedule} compact showBalance ariaLabel="Vista previa del cronograma importado" />
         </section>
       )}
 

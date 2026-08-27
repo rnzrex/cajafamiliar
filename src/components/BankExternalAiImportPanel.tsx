@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Clipboard, FileText, Sparkles, Trash2 } from "lucide-react";
 import type { BankDocumentExtraction } from "../utils/bankDocumentExtraction.js";
 import { buildBankExternalAiPrompt, normalizeBankExternalAiResponse, type BankExternalAiImportResult } from "../utils/bankExternalAiImport.js";
@@ -10,13 +10,21 @@ interface BankExternalAiImportPanelProps {
   onExtractionReady: (extraction: BankDocumentExtraction, result: BankFinancialValidationResult) => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
   completenessContext?: BankDocumentCompletenessContext;
+  resetKey?: number;
 }
 
-export function BankExternalAiImportPanel({ onExtractionReady, setToast, completenessContext = {} }: BankExternalAiImportPanelProps) {
+export function BankExternalAiImportPanel({ onExtractionReady, setToast, completenessContext = {}, resetKey = 0 }: BankExternalAiImportPanelProps) {
   const [responseText, setResponseText] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<BankExternalAiImportResult | null>(null);
   const prompt = useMemo(() => buildBankExternalAiPrompt(), []);
+
+  useEffect(() => {
+    if (resetKey === 0) return;
+    setResponseText("");
+    setMessage(null);
+    setImportResult(null);
+  }, [resetKey]);
 
   async function copyPrompt() {
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {

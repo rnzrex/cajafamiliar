@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DebtForm } from "./DebtForm.js";
@@ -126,7 +126,8 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.queryByRole("alert")).toBeNull();
 
     fireEvent.change(originalFirstDueDate, { target: { value: "" } });
-    fireEvent.change(scheduleText, { target: { value: scheduleLines(1, 18) } });
+    await user.click(screen.getByRole("button", { name: "EDITAR O REEMPLAZAR CRONOGRAMA" }));
+    fireEvent.change(screen.getByLabelText(/Pegar filas del cronograma/), { target: { value: scheduleLines(1, 18) } });
     await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
     expect((originalFirstDueDate as HTMLInputElement).value).toBe("2026-01-15");
   }, 15_000);
@@ -205,9 +206,19 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
     fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
     await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
-    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
 
     expect(fetchSpy).not.toHaveBeenCalledWith("/api/bank-document/analyze", expect.anything());
+    expect(screen.getByText("CRONOGRAMA CARGADO AUTOMÁTICAMENTE")).toBeTruthy();
+    expect(screen.getByText("18 cuotas contractuales cargadas")).toBeTruthy();
+    expect(screen.getByText("18 de 18 cuotas")).toBeTruthy();
+    expect(screen.queryByLabelText("Pegar filas del cronograma")).toBeNull();
+    expect(screen.queryByText("No se encontraron filas válidas en el cronograma.")).toBeNull();
+    expect(screen.getAllByText("2026-06-10").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("2027-11-10").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("138.91").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("331.92").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+
     expect(screen.getByText("Analizado con IA externa")).toBeTruthy();
     expect(screen.getByText("Resultado del análisis")).toBeTruthy();
     expect(screen.getByText("CRONOGRAMA COMPLETO")).toBeTruthy();
@@ -218,6 +229,103 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.getByText(/S\/\s*3,294\.39/)).toBeTruthy();
     expect(screen.getByText(/Próxima: 6 de 18/)).toBeTruthy();
     expect(BANK_EXTERNAL_AI_ALFIN_FIXTURE.schedule).toHaveLength(18);
+  }, 15_000);
+
+  it("keeps an imported schedule while opening, cancelling, or submitting an empty replacement", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
+    const withReportedBalance = {
+      ...BANK_EXTERNAL_AI_ALFIN_FIXTURE,
+      schedule: BANK_EXTERNAL_AI_ALFIN_FIXTURE.schedule.map((row, index) => index === 0 ? { ...row, reportedBalance: 3961.09 } : row),
+    };
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito externo" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText(withReportedBalance) } });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+
+    expect(screen.queryByLabelText("Pegar filas del cronograma")).toBeNull();
+    expect(screen.getAllByText("3,961.09").length).toBeGreaterThan(0);
+    await user.click(screen.getByRole("button", { name: "EDITAR O REEMPLAZAR CRONOGRAMA" }));
+    expect(screen.getByLabelText("Pegar filas del cronograma")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
+    expect(screen.getByText("No has ingresado filas para reemplazar el cronograma.")).toBeTruthy();
+
+    const scheduleFileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(scheduleFileInput, { target: { files: [new File(["not a schedule"], "broken.csv", { type: "text/csv" })] } });
+    await waitFor(() => expect(screen.getAllByText("No pudimos identificar la fila de encabezados del cronograma.").length).toBeGreaterThan(0));
+    await user.click(screen.getByRole("button", { name: "CANCELAR REEMPLAZO" }));
+    expect(screen.queryByLabelText("Pegar filas del cronograma")).toBeNull();
+    expect(screen.getByText("18 cuotas contractuales cargadas")).toBeTruthy();
+    expect(screen.getAllByText("3,961.09").length).toBeGreaterThan(0);
+  }, 15_000);
+
+  it("replaces an imported schedule only after valid manual input and labels its provenance", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito reemplazable" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+    await user.click(screen.getByRole("button", { name: "EDITAR O REEMPLAZAR CRONOGRAMA" }));
+    fireEvent.change(screen.getByLabelText("Pegar filas del cronograma"), { target: { value: scheduleLines(1, 18) } });
+    await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
+
+    expect(screen.getByText("Ingresado manualmente")).toBeTruthy();
+    expect(screen.getByText("18 de 18 cuotas")).toBeTruthy();
+    expect(screen.getAllByText("2026-01-15").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Analizado con IA externa")).toBeNull();
+  }, 15_000);
+
+  it("saves the imported operational rows instead of reading the hidden textarea", async () => {
+    const user = userEvent.setup();
+    vi.clearAllMocks();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito guardable" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+    await user.click(screen.getByRole("button", { name: "Registrar deuda" }));
+
+    await waitFor(() => expect(dataRepository.createBankLoan).toHaveBeenCalled());
+    const savedInput = vi.mocked(dataRepository.createBankLoan).mock.calls.at(-1)?.[0];
+    expect(savedInput?.installments).toHaveLength(18);
+    expect(savedInput?.installments[0]?.dueDate).toBe("2026-06-10");
+    expect(savedInput?.installments[17]?.expectedPrincipal).toBe(331.92);
   }, 15_000);
 
   it("shows an explicit missing-schedule review instead of treating term as imported rows", async () => {
