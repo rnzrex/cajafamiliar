@@ -104,3 +104,10 @@ Date: 2026-08-27
 Status: active
 Decision: Keep `Analizar con IA externa` as a permanent no-API bank-document path using the versioned `CAJA_FAMILIAR_BANK_DOCUMENT_V1` wrapper, local strict parsing/normalization, and the same V4/V5 financial validation and review gates; keep integrated Gemini available only when its server-side configuration is present.
 Reason: Let users analyze documents with a provider of their choice without consuming Caja Familiar AI credits, while preserving provider independence, PII/unknown-field filtering, mathematical validation, and explicit user confirmation before persistence.
+
+## D-016 - Complete dossier extraction with deterministic completeness
+
+Date: 2026-08-27
+Status: active
+Decision: Treat every externally analyzed attachment as one credit dossier, require the external prompt to inspect all pages and transcribe every located contractual schedule row, preserve unreadable cells as null, and evaluate completeness locally with full/partial/pending-only/not-found coverage before save.
+Reason: A term, regular payment, or first due date is not proof that the contractual schedule was received; users need an auditable distinction between complete data, required blockers, review items, and optional omissions without adding provider calls or changing the V1 bridge schema.

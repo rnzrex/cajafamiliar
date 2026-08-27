@@ -2,58 +2,57 @@
 
 ## Objective
 
-BANK CONTRACT RECONSTRUCTION V4 + BANK DOCUMENT INTELLIGENCE V5 + the permanent External AI Import Bridge are CLOSED IN PRODUCTION. Integrated Gemini API support is implemented but configuration is intentionally deferred until a future explicit `GEMINI_API_KEY` / billing gate.
+Implement and publish the complete-dossier/full-schedule improvements for the permanent `Analizar con IA externa` path on `feat/bank-external-ai-complete-dossier-v1`, then keep the work in a DRAFT PR for orchestrator audit before any real contract test.
 
 ## Repository
 
-- PR: #64 — merged to `main`.
-- Final feature head: `3e0925590b16b840f6042e86f74aa1b5e25f14d0`.
-- Functional merge commit: `6eda80b2d4fd6239b1b471faa870dd0fd67e8138`.
-- V4/V5 migration: `20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` — applied in Production and immutable.
+- Branch: `feat/bank-external-ai-complete-dossier-v1`.
+- Base before this work: `776caaf03401f62701434d75f7881028ebbc40d6`.
+- Current work is uncommitted and must receive the requested feature commit before push.
+- No new migration; applied `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` is untouched and immutable.
+
+## Constraints
+
+- Preserve the no-network external bridge: external AI analyzes documents, the user pastes JSON, and Caja Familiar parses/normalizes/validates locally.
+- No `GEMINI_API_KEY`, provider call, billing change, real contract upload, Production write/deploy, migration change, merge, or test financial data.
+- Keep protocol `CAJA_FAMILIAR_BANK_DOCUMENT_V1` backwards-compatible.
 
 ## Completed
 
-- BANK V4 deterministic contract reconstruction supports actual/360 and actual/365, due-date adjustments, total-installment semantics, insurance inference, reconciliation, balance classification, and `contractual` / `reconstructed` / `estimated` provenance.
-- The anonymized 18-row regression fixture reconciles exactly: principal 4100.00, interest 2003.41, insurance 154.79, contractual total 6258.20; paidBefore=5 derives current principal 3294.39 and next contractual installment 6.
-- BANK V5 adds secure PDF/image/spreadsheet document intelligence architecture, private temporary Storage, metadata-only import jobs, cost guards, provider abstraction, deterministic structured-file parsing, and user review before persistence.
-- Integrated Gemini provider remains dormant without `GEMINI_API_KEY`; no real key or billing configuration is required for the released feature.
-- Permanent External AI Import Bridge is available with protocol `CAJA_FAMILIAR_BANK_DOCUMENT_V1`: copy the official prompt, analyze the document in an external AI, paste the structured JSON back into Caja Familiar, then run the same V4/V5 normalization, reconciliation, review, and save gates locally.
-- External responses are size/version checked, parsed with `JSON.parse`, normalized through the allowlisted `BankDocumentExtraction` domain, preserve null as unknown, ignore unknown fields, filter PII metadata, surface conflicts, and never save directly without review.
-- Four bank onboarding paths are supported: external AI, integrated AI, reconstruction from contract terms, and manual entry. Structured XLS/XLSX/CSV/TSV/TXT can still be parsed deterministically without AI when possible.
+- Expanded the official external prompt to treat all attached PDFs/images/pages/sheets as one dossier and require full contractual schedule extraction, multi-page continuation, multiple-photo ordering, null cell preservation, duplicate/conflict warnings, and `schedule=[]` only for a genuinely absent/unprovided schedule.
+- Added deterministic `src/utils/bankDocumentCompleteness.ts` with complete/needs_review/missing_required_data statuses, full/partial/pending-only/not-found/unknown coverage, required/review/optional issue classes, schedule sequence/date/duplicate/cell checks, balance context, conflicts, and reconciliation review.
+- Added `src/components/BankDocumentReviewPanel.tsx` and wired both external import and review summary to show found data, coverage banner, real responsive imported schedule preview, missing/review/optional issues, and accessible labels.
+- Preserved manual schedule textarea as a manual tool; imported rows come from normalized external extraction and remain behind the review/save gate.
+- Extended prompt, completeness, and UI regression coverage; anonymized ALFIN fixture remains 18/18 with principal 4100.00, interest 2003.41, insurance 154.79, total 6258.20, and paidBefore=5 derives 3294.39 with next contractual installment 6.
 
 ## Validation
 
-- Full suite reported PASS: 65 files / 953 tests with 15s UI timeout allowance.
-- External bridge: 2 files / 17 tests PASS.
-- Document Intelligence V5: 6 files / 26 tests PASS.
-- Reconstruction V4: 1 file / 11 tests PASS.
-- BANK V3 local SQL: PASS.
-- BANK V2 local SQL: PASS.
-- DEBT-2B.2: PASS.
-- API typecheck: PASS.
-- Build: PASS.
+- Full Vitest suite: PASS, 66 files / 962 tests with `--testTimeout=15000`.
+- Focused external/completeness/UI suite: PASS, 3 files / 29 tests.
+- `npm run test:bank-external-ai-import`: PASS, 3 files / 25 tests.
+- `npm run test:bank-reconstruction-v4`: PASS, 1 file / 11 tests.
+- `npm run test:bank-document-v5-local`: PASS, 6 files / 26 tests.
+- BANK V3 local SQL, BANK V2 local SQL, and DEBT-2B.2 local SQL: PASS after Docker-local approval; no Production access used.
+- `npm run typecheck:api`: PASS.
+- `npm run build`: PASS; only existing dynamic-import and large-chunk warnings.
 - `git diff --check`: PASS.
-- DEBT-5F-A and RECON-1A destructive local harnesses were intentionally not rerun in the bridge checkpoint; no workaround or Production data mutation was used.
+- Destructive local reset harnesses `test:debt5fa:local` and `test:recon1a:local` were not run, per safety constraints.
+
+## Delivery Pending
+
+- Commit with message `feat(bank): require complete external ai dossier extraction`.
+- Normal push to the same branch, then create/update a DRAFT PR against `main` with title `BANK External AI — extracción completa de expediente y cronograma`.
+- Wait for automatic Vercel Preview and verify the deployment is READY for the exact pushed SHA.
 
 ## Production
 
-- Supabase Production migration history independently confirms `20260826204418 bank_contract_reconstruction_v4_document_intelligence_v5`.
-- Read-only Production verification confirms the new V4/V5 bank-loan columns, `debt_installments.reported_balance`, `bank_document_import_jobs`, private `bank-document-imports` bucket, and RLS on import jobs.
-- Functional Production deployment: `dpl_4z2AWGcSfW6jvfsSK8ZSWrYoPaCc`, Git SHA `6eda80b2d4fd6239b1b471faa870dd0fd67e8138`, state READY.
-- Public `https://cajafamiliar.vercel.app` returned HTTP 200 after the deployment.
-- No error/fatal runtime logs were found for the functional Production deployment at closeout.
-- No real Gemini key, OpenAI key, AI billing change, real contract upload, or financial test data was introduced during the closeout.
+- Production remains untouched by this task. No Supabase write, Vercel Production deployment, Gemini key, billing change, or real bank document was used.
 
-## Deferred Integrated AI Gate
+## Relevant Files
 
-- `GEMINI_API_KEY` remains intentionally unconfigured.
-- The API path is already implemented; a future enablement should configure a Paid Tier server-side key, begin in Vercel Preview, verify quality/cost on real redacted documents, and only then enable Production.
-- The External AI Import Bridge remains a permanent supported fallback even after integrated AI is enabled.
-
-## Next Planned Domain Scope
-
-- Broader Peru debt taxonomy remains the next planned debt-domain objective unless a concrete Production regression or explicit new priority is reported.
-
-## Reopen Criteria
-
-Reopen BANK V4/V5 only for a concrete Production regression, an explicit integrated-AI configuration request, or new bank-document capability scope.
+- `src/utils/bankExternalAiImport.ts` — official V1 prompt and external JSON bridge.
+- `src/utils/bankDocumentCompleteness.ts` — deterministic dossier completeness evaluator.
+- `src/components/BankDocumentReviewPanel.tsx` — analysis, coverage, issues, and imported schedule preview.
+- `src/components/BankExternalAiImportPanel.tsx` — external copy/paste flow and immediate review.
+- `src/components/DebtForm.tsx` — completeness context and save gate integration.
+- `src/utils/bankDocumentCompleteness.test.ts`, `src/utils/bankExternalAiImport.test.ts`, `src/components/BankLoanFormUX.test.tsx` — focused coverage.

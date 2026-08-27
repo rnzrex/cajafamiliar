@@ -20,9 +20,11 @@ import { applyInitialBankLoanBaseline, bankLoanBaselineSummary, bankLoanSchedule
 import { generateEstimatedDebtSchedule } from "../utils/debtEstimation";
 import { BankDocumentImportPanel } from "./BankDocumentImportPanel";
 import { BankExternalAiImportPanel } from "./BankExternalAiImportPanel";
+import { BankDocumentReviewPanel } from "./BankDocumentReviewPanel";
 import type { BankDocumentExtraction } from "../utils/bankDocumentExtraction";
 import { reviewFieldStatus } from "../utils/bankDocumentExtraction";
 import type { BankFinancialValidationResult } from "../utils/bankDocumentFinancialValidation";
+import { evaluateBankDocumentCompleteness, type BankDocumentCompletenessResult } from "../utils/bankDocumentCompleteness";
 import type { BankInterestDayCountBasis, BankDueDateAdjustmentRule, BankInstallmentTotalMode, BankReportedBalanceKind } from "../types";
 import { deriveCurrentPrincipalBalance } from "../utils/bankContractReconciliation";
 import { detectFrequencyFromDates } from "../utils/debtScheduleParser";
@@ -106,6 +108,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [documentImportReady, setDocumentImportReady] = useState(false);
   const [documentImportSource, setDocumentImportSource] = useState<BankDocumentImportSource | null>(null);
   const [documentImportExtraction, setDocumentImportExtraction] = useState<BankDocumentExtraction | null>(null);
+  const [documentImportValidation, setDocumentImportValidation] = useState<BankFinancialValidationResult | null>(null);
   const [documentImportWarnings, setDocumentImportWarnings] = useState<string[]>([]);
   const [documentImportReconciliation, setDocumentImportReconciliation] = useState<string | null>(null);
   const [assetPrice, setAssetPrice] = useState("");
@@ -230,6 +233,17 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     : openingPrincipalBalance.trim()
       ? Number(openingPrincipalBalance)
       : derivedOpeningBalance;
+  const documentImportCompleteness: BankDocumentCompletenessResult | null = documentImportReady && documentImportExtraction
+    ? documentImportValidation
+      ? evaluateBankDocumentCompleteness(documentImportExtraction, documentImportValidation, {
+        onboardingMode,
+        installmentsPaidBeforeTracking: onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0,
+        currentPrincipal: effectiveOpeningPrincipalBalance,
+        creditorName,
+        currencyCode,
+      })
+      : null
+    : null;
 
   const insuranceLabel = (type: DebtInsuranceType): string => {
     if (type === "credit_life") return "Seguro de desgravamen";
@@ -472,6 +486,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setDocumentImportReady(true);
     setDocumentImportSource(source);
     setDocumentImportExtraction(extraction);
+    setDocumentImportValidation(result);
     setDocumentImportReconciliation(result.reconciliation?.status ?? null);
     setDocumentImportWarnings([...new Set([
       ...extraction.extractionWarnings,
@@ -610,6 +625,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       }
       if (documentImportReady && documentImportExtraction?.fieldConflicts.length) {
         setToast({ message: "Hay datos contradictorios entre los documentos. Resuelve los conflictos antes de guardar.", type: "error" });
+        return false;
+      }
+      if (documentImportReady && documentImportCompleteness?.requiredIssues.length) {
+        setToast({ message: "Faltan datos obligatorios del expediente. Revisa el panel de completitud antes de guardar.", type: "error" });
         return false;
       }
       if (documentImportReady && ((!isPendingOnlyOfficialSchedule && documentImportReconciliation === "insufficient_data") || installments.some((row) => [row.expectedAmount, row.expectedPrincipal, row.expectedInterest, row.expectedInsurance, row.expectedFees].some((value) => value.trim() === "")))) {
@@ -1151,6 +1170,13 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                 <BankExternalAiImportPanel
                   onExtractionReady={(extraction, result) => applyDocumentExtraction(extraction, result, "external_ai")}
                   setToast={setToast}
+                  completenessContext={{
+                    onboardingMode,
+                    installmentsPaidBeforeTracking: onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0,
+                    currentPrincipal: effectiveOpeningPrincipalBalance,
+                    creditorName,
+                    currencyCode,
+                  }}
                 />
               )}
               {debtKind === "bank_loan" && bankLoanEntryPath === "integrated_ai" && (
@@ -2585,13 +2611,13 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                    <div><p className="text-xs text-slate-500">Fuente del cronograma</p><p className="font-bold">{scheduleSource === "contractual" ? "Contractual" : scheduleSource === "reconstructed" ? "Reconstruida" : "Estimada"}</p></div>
                   {onboardingMode === "EXISTING_DEBT" && <div><p className="text-xs text-slate-500">Situación actual</p><p className="font-bold">{(() => { const summary = bankLoanBaselineSummary(Number(plannedInstallmentCount || 0), Number(installmentsPaidBeforeTracking || 0)); return <>Última pagada: {summary.paid} · Próxima: {summary.nextContractualNumber ?? "—"} de {summary.total ?? "—"} · Pendientes: {summary.pending ?? "—"}</>; })()}</p></div>}
                  </div>
-                 {documentImportReady && documentImportExtraction && (
+                  {documentImportReady && documentImportExtraction && (
                    <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 space-y-3">
                      <div>
                        <p className="text-sm font-black text-indigo-950">Esto encontramos en tus documentos</p>
                        <p className="mt-1 text-xs text-indigo-900">La confianza orienta la revisión, pero no reemplaza la comprobación matemática ni tu confirmación.</p>
-                       {documentImportSource === "external_ai" && <p className="mt-2 inline-flex rounded-full border border-indigo-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-indigo-800">Analizado con IA externa</p>}
-                       {documentImportSource === "integrated_ai" && <p className="mt-2 inline-flex rounded-full border border-slate-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-slate-700">Analizado con IA integrada</p>}
+                        {documentImportSource === "external_ai" && <p className="mt-2 inline-flex rounded-full border border-indigo-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-indigo-800">Importación desde IA externa</p>}
+                        {documentImportSource === "integrated_ai" && <p className="mt-2 inline-flex rounded-full border border-slate-300 bg-white px-2 py-1 text-[11px] font-black uppercase tracking-wide text-slate-700">Importación desde IA integrada</p>}
                      </div>
                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5">
                        {["lenderName", "financedAmount", "teaPercent", "schedule", "reportedBalance"].map((field) => {
@@ -2605,9 +2631,17 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                          {documentImportWarnings.map((warning) => <p key={warning}>• {warning}</p>)}
                        </div>
                      )}
-                   </div>
-                 )}
-                 <div>
+                    </div>
+                  )}
+                  {documentImportReady && documentImportExtraction && documentImportValidation && documentImportCompleteness && (
+                    <BankDocumentReviewPanel
+                      extraction={documentImportExtraction}
+                      validation={documentImportValidation}
+                      completeness={documentImportCompleteness}
+                      sourceLabel={documentImportSource === "external_ai" ? "Analizado con IA externa" : "Analizado con IA integrada"}
+                    />
+                  )}
+                  <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Seguros</p>
                   {insurances.length === 0 ? <p className="mt-1 text-slate-600">Sin desgravamen ni seguros definidos.</p> : <ul className="mt-1 space-y-1 text-slate-700">{insurances.map((insurance, index) => <li key={index}>{insurance.label} · {insurance.pricingMode === "fixed_amount" ? insuranceBasisLabel(insurance.rateBasis) : insurance.pricingMode === "percent_outstanding_balance" ? "% sobre saldo pendiente" : insurance.pricingMode === "percent_original_principal" ? "% sobre principal original" : "Según cronograma / por confirmar"}{insurance.pricingMode === "fixed_amount" && insurance.rateBasis !== "per_installment" && insurance.fixedAmount ? ` · Seguro contractual total registrado: ${currencySymbol} ${Number(insurance.fixedAmount).toFixed(2)}` : ""} {insurance.provider ? `· ${insurance.provider}` : ""}</li>)}</ul>}
                 </div>

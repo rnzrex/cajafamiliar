@@ -202,14 +202,53 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
 
     fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito externo" } });
     fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
     fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
     await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
     await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
 
     expect(fetchSpy).not.toHaveBeenCalledWith("/api/bank-document/analyze", expect.anything());
     expect(screen.getByText("Analizado con IA externa")).toBeTruthy();
+    expect(screen.getByText("Resultado del análisis")).toBeTruthy();
+    expect(screen.getByText("CRONOGRAMA COMPLETO")).toBeTruthy();
+    expect(screen.getByText("18 cuotas detectadas e importadas")).toBeTruthy();
+    expect(screen.getByText("Tenemos la información necesaria para continuar.")).toBeTruthy();
     expect(screen.getByText(/18 filas/)).toBeTruthy();
     expect(screen.getByText("Contractual", { exact: true })).toBeTruthy();
+    expect(screen.getByText(/S\/\s*3,294\.39/)).toBeTruthy();
+    expect(screen.getByText(/Próxima: 6 de 18/)).toBeTruthy();
     expect(BANK_EXTERNAL_AI_ALFIN_FIXTURE.schedule).toHaveLength(18);
+  }, 15_000);
+
+  it("shows an explicit missing-schedule review instead of treating term as imported rows", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.fn().mockRejectedValue(new Error("network must not be needed for external import"));
+    vi.stubGlobal("fetch", fetchSpy);
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    const withoutSchedule = {
+      ...BANK_EXTERNAL_AI_ALFIN_FIXTURE,
+      schedule: [],
+      teaPercent: null,
+      extractionWarnings: [],
+    };
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito sin cronograma" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText(withoutSchedule) } });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+
+    expect(screen.getByText("NO ENCONTRAMOS EL CRONOGRAMA")).toBeTruthy();
+    expect(screen.getByText(/Vuelve a ejecutar el prompt asegurándote de adjuntar todas las páginas del cronograma/)).toBeTruthy();
+    expect(screen.queryByText("cuotas detectadas e importadas")).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalledWith("/api/bank-document/analyze", expect.anything());
   }, 15_000);
 });
