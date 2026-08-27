@@ -8,6 +8,7 @@ Implement and publish the permanent no-API External AI Import Bridge for BANK V4
 
 - Branch: `feat/bank-contract-reconstruction-v4-document-intelligence-v5`.
 - Baseline before this block: `b0ae19b6b85e634fc888c6f999724802402f17b8`.
+- Published bridge commit: `5136ed6b5decdc5302ac344f292a373bdff72885`, pushed normally to the same remote branch; working tree is clean after the metadata checkpoint below.
 - Target PR: [#64](https://github.com/rnzrex/cajafamiliar/pull/64), expected to remain OPEN/DRAFT against `main`.
 - Migration `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` was already applied by the previous Production gate and is immutable. This block must not edit it or add a migration.
 
@@ -36,18 +37,18 @@ Implement and publish the permanent no-API External AI Import Bridge for BANK V4
 - `npm run build`: PASS — Vite build completed with only existing dynamic-import and large-chunk warnings.
 - `git diff --check`: PASS at last check.
 - `npm run test:debt5fa:local` and `npm run test:recon1a:local` were not run because their harnesses explicitly drop/recreate the local Docker public schema; the safety reviewer rejected that broad destructive reset. No workaround or destructive reset was attempted.
+- Automatic Vercel Preview: READY — deployment `dpl_7wZznRGvQLj9ojLkR56rf392A93U`, URL `https://cajafamiliar-pcajmd9g9-renzorex.vercel.app`, Git branch `feat/bank-contract-reconstruction-v4-document-intelligence-v5`, SHA `5136ed6b5decdc5302ac344f292a373bdff72885`.
 
 ## Production / Remote
 
 - Production migration status from the previous gate is unchanged: exactly `20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5` was applied with `npx supabase db push --linked`; no manual SQL, repair, `--include-all`, reset, or new migration in this block.
 - Previous read-only Production verification confirmed the requested V4/V5 columns, `bank_document_import_jobs`, and private `bank-document-imports` bucket. No new Production operation is authorized for this block.
 - No `GEMINI_API_KEY`, Vercel env write, real Gemini/OpenAI call, real document upload, financial test data, merge, or frontend Production deployment.
+- PR #64 is OPEN/DRAFT, targets `main`, and head SHA is `5136ed6b5decdc5302ac344f292a373bdff72885`.
 
 ## Next Move
 
-1. Run all remaining regression/full validation and inspect the final diff.
-2. Commit the bridge and metadata, push normally without force, update PR #64 while preserving DRAFT, and verify the automatic Preview uses the pushed SHA.
-3. Report the exact SHA, PR/Preview, validation, protocol, and safety gates; then stop. Do not add Gemini secrets or merge.
+1. Stop for orchestrator audit. Do not add Gemini secrets, change Production, mark PR ready, or merge.
 
 ## Relevant Files
 
