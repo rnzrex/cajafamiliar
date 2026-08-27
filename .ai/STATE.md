@@ -7,7 +7,7 @@ Close the bank-loan onboarding UX gate on `feat/bank-external-ai-complete-dossie
 ## Repository
 
 - Branch: `feat/bank-external-ai-complete-dossier-v1`.
-- Current local HEAD before this metadata commit: `86d190b90c0748d0f2b0d1c8cc176855d28179db`.
+- Current local HEAD before this metadata commit: `cc6cb41c08679f0b2ff7d6c55a7cf28339171cb8`.
 - Feature commits: `5687eaa` (`feat(bank): add explicit current principal calculation`) and `86d190b` (`fix(debt): surface created debt immediately after save`), both pushed normally to origin.
 - Git is authoritative for the exact HEAD after this metadata checkpoint.
 - Applied migrations remain untouched and immutable.
@@ -40,10 +40,10 @@ Close the bank-loan onboarding UX gate on `feat/bank-external-ai-complete-dossie
 
 ## Delivery
 
-- Remote branch currently verified at `86d190b90c0748d0f2b0d1c8cc176855d28179db`.
-- PR #65: `https://github.com/rnzrex/cajafamiliar/pull/65`, open, `draft=true`, head branch `feat/bank-external-ai-complete-dossier-v1`, head SHA `86d190b90c0748d0f2b0d1c8cc176855d28179db`.
+- Remote branch currently verified at `cc6cb41c08679f0b2ff7d6c55a7cf28339171cb8`.
+- PR #65: `https://github.com/rnzrex/cajafamiliar/pull/65`, open, `draft=true`, head branch `feat/bank-external-ai-complete-dossier-v1`, head SHA `cc6cb41c08679f0b2ff7d6c55a7cf28339171cb8`.
 - PR description updated with explicit principal confirmation, immediate AppData merge, background reconciliation, and no-reload behavior.
-- Automatic Vercel Preview: deployment `dpl_3F2SDjcCoauPebd2H4cSYvpSkbJu`, URL `https://cajafamiliar-2wsz32upn-renzorex.vercel.app`, branch alias `https://cajafamiliar-git-feat-bank-external-ai-complete-7f0639-renzorex.vercel.app`, exact Git SHA `86d190b90c0748d0f2b0d1c8cc176855d28179db`, state `READY`.
+- Automatic Vercel Preview: deployment `dpl_9tLR6Yqsq632vAaMD8R6CwCNSx9L`, URL `https://cajafamiliar-b0u7qksly-renzorex.vercel.app`, branch alias `https://cajafamiliar-git-feat-bank-external-ai-complete-7f0639-renzorex.vercel.app`, exact Git SHA `cc6cb41c08679f0b2ff7d6c55a7cf28339171cb8`, state `READY`.
 - No force push, merge, Production deployment, or Vercel environment write was performed.
 
 ## Production
@@ -61,3 +61,4 @@ Close the bank-loan onboarding UX gate on `feat/bank-external-ai-complete-dossie
 - `src/services/authoritativeSync.ts` — idempotent create-result merge and containment helpers.
 - `src/App.tsx` — immediate debt merge plus background authoritative refresh.
 - `src/components/BankLoanFormUX.test.tsx`, `src/utils/bankDocumentCompleteness.test.ts`, `src/services/authoritativeSyncDebtCreate.test.ts`, `src/App.test.tsx` — regression coverage.
+
