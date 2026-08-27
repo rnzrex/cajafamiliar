@@ -8,7 +8,8 @@ Fix the existing-bank-debt onboarding gate and bank-contract entry-method UX on 
 
 - Branch: `feat/bank-external-ai-complete-dossier-v1`.
 - Baseline before this fix: `6663157a424104c33d5012f0fbca9fe3dd55f7b4`.
-- The working tree contains the paid-installment validation, null-preserving baseline logic, completeness gate, selection-only cards, and regression coverage; it is not committed yet.
+- Feature fix commit: `074ba9654a3c07430e5e94f6227a965296d8c60e` (`fix(bank): require last paid installment for existing loans`), pushed normally to origin.
+- This file is the final closeout metadata checkpoint; Git is authoritative for the exact current head after its metadata commit.
 - Applied migrations remain untouched and immutable.
 
 ## Constraints
@@ -43,7 +44,10 @@ Fix the existing-bank-debt onboarding gate and bank-contract entry-method UX on 
 ## Delivery
 
 - PR #65 remains open against `main` and DRAFT.
-- Next command: commit the coherent fix, push normally to the same branch, verify remote SHA/PR/Preview, then stop.
+- Remote branch was verified at `074ba9654a3c07430e5e94f6227a965296d8c60e` before this metadata closeout.
+- Automatic Vercel Preview: deployment `dpl_24aLPR6dBSA32sTijH6Q8xgYbEfV`, branch alias `https://cajafamiliar-git-feat-bank-external-ai-complete-7f0639-renzorex.vercel.app`, exact Git SHA `074ba9654a3c07430e5e94f6227a965296d8c60e`, state `READY`.
+- Preview is protected by Vercel SSO; connector/browser verification returned HTTP 302 to Vercel login rather than app HTTP 200. No authenticated browser login was attempted.
+- No force push, merge, or Production deployment was performed.
 
 ## Production
 
@@ -51,7 +55,7 @@ Fix the existing-bank-debt onboarding gate and bank-contract entry-method UX on 
 
 ## Next Step
 
-- Commit and push the fix without force; verify the automatic Vercel Preview matches the pushed SHA and remains non-Production.
+- Stop after the metadata closeout commit and its normal push; the orchestrator may retest the existing-debt UX on the DRAFT Preview.
 
 ## Relevant Files
 
