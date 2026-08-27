@@ -1,6 +1,48 @@
 ﻿import type { AppData } from "../types";
-import type { AppDataLoadResult } from "./dataRepository";
+import type { AppDataLoadResult, DebtCreateResult } from "./dataRepository";
 import type { OfflineCreateMovementOperation } from "./offlineOutbox";
+
+function upsertById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
+  if (incoming.length === 0) return existing;
+
+  const positions = new Map(existing.map((item, index) => [item.id, index]));
+  const merged = [...existing];
+  for (const item of incoming) {
+    const existingIndex = positions.get(item.id);
+    if (existingIndex == null) {
+      positions.set(item.id, merged.length);
+      merged.push(item);
+    } else {
+      merged[existingIndex] = item;
+    }
+  }
+  return merged;
+}
+
+/**
+ * Applies the authoritative rows returned by a successful debt-creation RPC
+ * to the currently rendered AppData. The helper is intentionally idempotent:
+ * a later authoritative refresh may contain the same IDs, and reapplying the
+ * create result must not duplicate any debt-owned rows.
+ */
+export function mergeDebtCreateResultIntoAppData(data: AppData, result: DebtCreateResult): AppData {
+  return {
+    ...data,
+    debts: upsertById(data.debts, [result.debt]),
+    debtScheduleVersions: result.scheduleVersion
+      ? upsertById(data.debtScheduleVersions, [result.scheduleVersion])
+      : data.debtScheduleVersions,
+    debtInstallments: upsertById(data.debtInstallments, result.installments),
+    debtCollaterals: upsertById(data.debtCollaterals, result.collaterals),
+  };
+}
+
+export function containsDebtCreateResult(data: AppData, result: DebtCreateResult): boolean {
+  return data.debts.some((debt) => debt.id === result.debt.id)
+    && (result.scheduleVersion == null || data.debtScheduleVersions.some((version) => version.id === result.scheduleVersion!.id))
+    && result.installments.every((installment) => data.debtInstallments.some((row) => row.id === installment.id))
+    && result.collaterals.every((collateral) => data.debtCollaterals.some((row) => row.id === collateral.id));
+}
 
 /**
  * Validates whether loaded AppData can be adopted based on browser connectivity state.
