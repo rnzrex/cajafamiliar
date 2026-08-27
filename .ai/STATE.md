@@ -9,7 +9,8 @@ Fix the imported-schedule state and Section 5 UX for the permanent `Analizar con
 - Branch: `feat/bank-external-ai-complete-dossier-v1`.
 - Base before this work: `776caaf03401f62701434d75f7881028ebbc40d6`.
 - Feature implementation commit: `8caf5d902133e7d69a58653675896d7702aa5d0b` (`feat(bank): require complete external ai dossier extraction`).
-- Current fix commit: `2514ba30dd614cab9a03012a6a1335669341107d` (`fix(bank): surface imported schedule in contract section`), pushed normally to origin; Git remains authoritative for the exact current SHA.
+- Functional fix commit: `2514ba30dd614cab9a03012a6a1335669341107d` (`fix(bank): surface imported schedule in contract section`).
+- Final branch HEAD: `b30d3ddb27895f67640dd8e8f03e10db19b2dbdb` (`chore(ai): record imported schedule UX handoff`), pushed normally to origin; Git remains authoritative for the exact current SHA.
 - No new migration; applied `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` is untouched and immutable.
 
 ## Constraints
