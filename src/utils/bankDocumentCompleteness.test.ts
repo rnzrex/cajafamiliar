@@ -63,14 +63,27 @@ describe("bank document completeness", () => {
     expect(newDebt.requiredIssues).not.toContainEqual(expect.objectContaining({ code: "LAST_PAID_INSTALLMENT_REQUIRED" }));
   });
 
-  it("derives the current principal only after a valid existing-debt baseline", () => {
+  it("keeps a derived current principal pending until the user confirms it", () => {
     const result = completeness(BANK_EXTERNAL_AI_ALFIN_FIXTURE, {
       onboardingMode: "EXISTING_DEBT",
       installmentsPaidBeforeTracking: 5,
       creditorName: "Entidad fixture",
       currencyCode: "PEN",
     });
-    expect(result.requiredIssues).toHaveLength(0);
+    expect(result.requiredIssues).toContainEqual(expect.objectContaining({
+      code: "CURRENT_PRINCIPAL_REQUIRED",
+      message: expect.stringContaining("puede calcularlo usando el cronograma"),
+      action: expect.stringContaining("Pulsa «Calcular»"),
+    }));
+
+    const confirmed = completeness(BANK_EXTERNAL_AI_ALFIN_FIXTURE, {
+      onboardingMode: "EXISTING_DEBT",
+      installmentsPaidBeforeTracking: 5,
+      currentPrincipal: 3294.39,
+      creditorName: "Entidad fixture",
+      currencyCode: "PEN",
+    });
+    expect(confirmed.requiredIssues).toHaveLength(0);
   });
 
   it("does not mistake a term and regular payment for a found schedule", () => {

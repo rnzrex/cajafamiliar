@@ -276,6 +276,10 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.getAllByText("2027-11-10").length).toBeGreaterThan(0);
     expect(screen.getAllByText("138.91").length).toBeGreaterThan(0);
     expect(screen.getAllByText("331.92").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "CALCULAR" })).toBeTruthy();
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("");
+    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("3294.39");
     await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
 
     expect(screen.getByText("Analizado con IA externa")).toBeTruthy();
@@ -311,11 +315,88 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
 
     expect(screen.getByText("Indica la última cuota pagada para ubicar tu próxima cuota.")).toBeTruthy();
     expect(screen.queryByText(/Última pagada: 0/)).toBeNull();
-    expect(screen.queryByText(/Capital calculado con el contrato: S\/ 4100\.00/)).toBeNull();
+    expect(screen.queryByText(/Calculado con el cronograma: S\/ 4100\.00/)).toBeNull();
 
     fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
-    expect(screen.getByText(/Capital calculado con el contrato: S\/ 3294\.39\./)).toBeTruthy();
+    expect(screen.getByText(/Podemos calcularlo con tu cronograma: S\/ 3294\.39\./)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "CALCULAR" })).toBeTruthy();
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("");
+    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("3294.39");
+    expect(screen.queryByRole("button", { name: "CALCULAR" })).toBeNull();
     expect(screen.getByText(/Última pagada: 5 · Próxima: 6 de 18 · Pendientes: 13/)).toBeTruthy();
+  }, 15_000);
+
+  it("recalculates confirmed principal, supports manual override, and invalidates stale derived values", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito calculable" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+
+    const paidBeforeInput = screen.getByLabelText("Última cuota contractual que ya pagaste");
+    const principalInput = screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement;
+    expect(screen.queryByRole("button", { name: "CALCULAR" })).toBeNull();
+
+    fireEvent.change(paidBeforeInput, { target: { value: "5" } });
+    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
+    expect(principalInput.value).toBe("3294.39");
+
+    fireEvent.change(paidBeforeInput, { target: { value: "6" } });
+    expect(principalInput.value).not.toBe("3294.39");
+    expect(principalInput.value).not.toBe("");
+
+    fireEvent.change(principalInput, { target: { value: "3000" } });
+    expect(principalInput.value).toBe("3000");
+    fireEvent.change(paidBeforeInput, { target: { value: "5" } });
+    expect(principalInput.value).toBe("3000");
+
+    // Clear the manual override, re-select the derived action, then deleting
+    // its required historical input must clear the stale derived balance.
+    fireEvent.change(principalInput, { target: { value: "" } });
+    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
+    fireEvent.change(paidBeforeInput, { target: { value: "" } });
+    await waitFor(() => expect(principalInput.value).toBe(""));
+    expect(screen.queryByRole("button", { name: "CALCULAR" })).toBeNull();
+  }, 15_000);
+
+  it("keeps an explicitly imported principal and does not offer a duplicate calculation action", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
+    const withImportedPrincipal = {
+      ...BANK_EXTERNAL_AI_ALFIN_FIXTURE,
+      reportedBalance: { amount: 3961.09, label: "Saldo Capital", inferredKind: "principal_balance" as const, confidence: 0.99 },
+    };
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito con saldo informado" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText(withImportedPrincipal) } });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("3961.09");
+    expect(screen.queryByRole("button", { name: "CALCULAR" })).toBeNull();
   }, 15_000);
 
   it("keeps an imported schedule while opening, cancelling, or submitting an empty replacement", async () => {
@@ -389,12 +470,13 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     const user = userEvent.setup();
     vi.clearAllMocks();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
+    const onSaved = vi.fn();
     render(
       <DebtForm
         accounts={[]}
         categories={[]}
         setToast={() => {}}
-        onSaved={() => {}}
+        onSaved={onSaved}
         onCancel={() => {}}
         initialStep="details"
       />
@@ -405,10 +487,12 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
     fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
     await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
     await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
     await user.click(screen.getByRole("button", { name: "Registrar deuda" }));
 
     await waitFor(() => expect(dataRepository.createBankLoan).toHaveBeenCalled());
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ debt: expect.objectContaining({ id: "test-bank-1" }) })));
     const savedInput = vi.mocked(dataRepository.createBankLoan).mock.calls.at(-1)?.[0];
     expect(savedInput?.installmentsPaidBeforeTracking).toBe(5);
     expect(savedInput?.installments).toHaveLength(18);

@@ -250,11 +250,26 @@ export function evaluateBankDocumentCompleteness(
       ));
     }
     const derivedPrincipal = deriveHistoricalPrincipalIfPossible(extraction, context);
-    const currentPrincipalKnown = currentPrincipalIsKnown(extraction, context) || finiteNonNegative(derivedPrincipal);
+    // A deterministic derivation is only a suggestion until the user confirms
+    // it in the form, so `currentPrincipal` remains the completeness source of
+    // truth for the required issue.
+    const currentPrincipalKnown = currentPrincipalIsKnown(extraction, context);
     if (!currentPrincipalKnown) {
-      requiredIssues.push(issue("CURRENT_PRINCIPAL_REQUIRED", "openingPrincipalBalance", "required", "Falta el capital pendiente actual", coverage.pendingOnly
-        ? `El cronograma comienza en la cuota ${coverage.firstContractualInstallment} y no tenemos las cuotas históricas para calcular el capital actual.`
-        : "No pudimos determinar cuánto capital queda pendiente hoy.", "Busca Saldo Capital / Capital Pendiente en tu banca, estado de cuenta o constancia de deuda; si no aparece, consulta al banco."));
+      const hasDerivedSuggestion = finiteNonNegative(derivedPrincipal);
+      requiredIssues.push(issue(
+        "CURRENT_PRINCIPAL_REQUIRED",
+        "openingPrincipalBalance",
+        "required",
+        "Falta el capital pendiente actual",
+        hasDerivedSuggestion
+          ? "El banco no indicó claramente el capital pendiente actual, pero Caja Familiar puede calcularlo usando el cronograma y la última cuota pagada."
+          : coverage.pendingOnly
+            ? `El cronograma comienza en la cuota ${coverage.firstContractualInstallment} y no tenemos las cuotas históricas para calcular el capital actual.`
+            : "No pudimos determinar cuánto capital queda pendiente hoy.",
+        hasDerivedSuggestion
+          ? `Pulsa «Calcular» en Situación actual para usar ${derivedPrincipal!.toFixed(2)}.`
+          : "Busca Saldo Capital / Capital Pendiente en tu banca, estado de cuenta o constancia de deuda; si no aparece, consulta al banco.",
+      ));
     }
     if (paidBefore != null && Number.isInteger(paidBefore) && extraction.termInstallments != null && paidBefore >= extraction.termInstallments) {
       requiredIssues.push(issue("LAST_PAID_INSTALLMENT_INVALID", "installmentsPaidBeforeTracking", "required", "La última cuota pagada no es válida", "La última cuota pagada debe ser menor al total de cuotas del crédito.", "Confirma el número de la última cuota pagada y compáralo con el plazo contractual."));

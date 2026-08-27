@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, Check, Plus, Trash2, Shield, Banknote, Building2, Home, PackageCheck, HelpCircle, AlertCircle, Upload } from "lucide-react";
 import type { HouseholdMember, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, FinancialAccount, Category, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, DebtInsuranceRateBasis, ScheduleSource } from "../types";
 import {
@@ -8,7 +8,7 @@ import {
   buildDebtCreateInputPayload,
   validateDebtFinancialTerms,
 } from "../utils/debtFormMode";
-import { createDebt, createBankLoan } from "../services/dataRepository";
+import { createDebt, createBankLoan, type DebtCreateResult } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError } from "../utils/debtViewModel";
@@ -35,7 +35,7 @@ interface DebtFormProps {
   accounts: FinancialAccount[];
   categories: Category[];
   canWriteDebt?: boolean;
-  onSaved: () => void;
+  onSaved: (result: DebtCreateResult) => void | Promise<void>;
   onCancel: () => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
   initialStep?: "type_select" | "details" | "review";
@@ -242,11 +242,28 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         paidBeforeForExisting ?? 0,
       )
     : null;
+  const explicitOpeningPrincipalBalance = openingPrincipalBalance.trim() ? Number(openingPrincipalBalance) : null;
   const effectiveOpeningPrincipalBalance = openingBalanceSource === "schedule_derived"
     ? derivedOpeningBalance
-    : openingPrincipalBalance.trim()
-      ? Number(openingPrincipalBalance)
-      : derivedOpeningBalance;
+    : openingBalanceSource === "user_principal" || openingBalanceSource === "imported_principal"
+      ? explicitOpeningPrincipalBalance
+      : null;
+  const canOfferDerivedOpeningBalance = openingBalanceSource === "none"
+    && canDeriveOpeningBalance
+    && derivedOpeningBalance != null
+    && Number.isFinite(derivedOpeningBalance)
+    && derivedOpeningBalance >= 0;
+
+  useEffect(() => {
+    if (openingBalanceSource !== "schedule_derived") return;
+    if (derivedOpeningBalance != null && Number.isFinite(derivedOpeningBalance) && derivedOpeningBalance >= 0) {
+      const derivedValue = String(derivedOpeningBalance);
+      if (openingPrincipalBalance !== derivedValue) setOpeningPrincipalBalance(derivedValue);
+      return;
+    }
+    setOpeningPrincipalBalance("");
+    setOpeningBalanceSource("none");
+  }, [derivedOpeningBalance, openingBalanceSource, openingPrincipalBalance]);
   const documentImportCompleteness: BankDocumentCompletenessResult | null = documentImportReady && documentImportExtraction
     ? documentImportValidation
       ? evaluateBankDocumentCompleteness(documentImportExtraction, documentImportValidation, {
@@ -639,26 +656,18 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     }
     if (extraction.reportedBalance.amount != null) setReportedBalanceAmount(String(extraction.reportedBalance.amount));
 
-    const original = extraction.originalPrincipal ?? extraction.financedAmount;
     if (extraction.reportedBalance.inferredKind === "principal_balance" && extraction.reportedBalance.amount != null) {
       setOpeningPrincipalBalance(String(extraction.reportedBalance.amount));
       setOpeningBalanceSource("imported_principal");
-    } else if (onboardingMode === "EXISTING_DEBT"
-      && original != null
-      && Number.isInteger(paidBeforeForExisting)
-      && (paidBeforeForExisting ?? 0) >= 1
-      && importedRows.length >= (paidBeforeForExisting ?? 0)
-      && importedRows.slice(0, paidBeforeForExisting ?? 0).every((row, index) => row.contractualInstallmentNumber === index + 1 && hasKnownAmount(row.expectedPrincipal))) {
-      setOpeningPrincipalBalance(String(deriveCurrentPrincipalBalance(
-        original,
-        importedRows.slice(0, paidBeforeForExisting ?? 0).map((row) => ({ principal: Number(row.expectedPrincipal) })),
-        paidBeforeForExisting ?? 0,
-      )));
-      setOpeningBalanceSource("schedule_derived");
     } else if (onboardingMode === "NEW_DEBT" && extraction.financedAmount != null) {
       setOpeningPrincipalBalance(String(extraction.financedAmount));
       setOpeningBalanceSource("imported_principal");
+    } else if (onboardingMode === "EXISTING_DEBT" && openingBalanceSource === "user_principal" && openingPrincipalBalance.trim()) {
+      // Preserve an amount the user explicitly entered; a document without a
+      // clear principal must never replace it with an unconfirmed derivation.
+      setOpeningBalanceSource("user_principal");
     } else {
+      setOpeningPrincipalBalance("");
       setOpeningBalanceSource("none");
     }
 
@@ -839,6 +848,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
     setSubmitting(true);
     try {
+      let createResult: DebtCreateResult;
       if (debtKind === "bank_loan") {
         const payload = buildDebtCreateInputPayload({
           debtId,
@@ -879,7 +889,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           minimumPrincipalPayment,
         });
 
-        await createBankLoan({
+        createResult = await createBankLoan({
           ...payload,
           onboardingMode,
           loanSubtype,
@@ -968,10 +978,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           minimumPrincipalPayment,
         });
 
-        await createDebt(payload);
+        createResult = await createDebt(payload);
         setToast({ message: "Deuda registrada exitosamente.", type: "success" });
       }
-      onSaved();
+      await onSaved(createResult);
     } catch (err) {
       setToast({ message: translateDebtError(err), type: "error" });
     } finally {
@@ -1004,6 +1014,13 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       setScheduleSource("contractual");
       setInterestCalculationMode("contract_schedule");
     }
+  };
+
+  const useDerivedOpeningBalance = () => {
+    if (!canOfferDerivedOpeningBalance || derivedOpeningBalance == null) return;
+    const derivedValue = String(derivedOpeningBalance);
+    setOpeningPrincipalBalance(derivedValue);
+    setOpeningBalanceSource("schedule_derived");
   };
 
   return (
@@ -1636,11 +1653,26 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                         <label className="block text-xs font-bold text-slate-700">
                           {onboardingMode === "EXISTING_DEBT" && bankBalanceInformation !== "principal_balance" ? "Capital pendiente hoy (opcional si se puede calcular)" : "Saldo de capital pendiente hoy *"}
                         </label>
-                        <div className="relative mt-1 flex items-center rounded-xl border border-slate-300 bg-white focus-within:border-blue-600">
-                          <span className="select-none pl-3 text-sm font-bold text-slate-500">{currencySymbol}</span>
-                          <input type="number" min="0" step="0.01" required={onboardingMode !== "EXISTING_DEBT" || bankBalanceInformation === "principal_balance" || !canDeriveOpeningBalance} value={openingBalanceSource === "schedule_derived" && derivedOpeningBalance != null ? String(derivedOpeningBalance) : openingPrincipalBalance} onChange={(e) => { setOpeningPrincipalBalance(e.target.value); setOpeningBalanceSource(e.target.value.trim() ? "user_principal" : "none"); }} placeholder="Ej. 7300" className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none" />
+                        <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <div className="relative flex min-w-0 flex-1 items-center rounded-xl border border-slate-300 bg-white focus-within:border-blue-600">
+                            <span className="select-none pl-3 text-sm font-bold text-slate-500">{currencySymbol}</span>
+                            <input type="number" min="0" step="0.01" required={onboardingMode !== "EXISTING_DEBT" || bankBalanceInformation === "principal_balance" || !canDeriveOpeningBalance} value={openingBalanceSource === "schedule_derived" && derivedOpeningBalance != null ? String(derivedOpeningBalance) : openingPrincipalBalance} onChange={(e) => { setOpeningPrincipalBalance(e.target.value); setOpeningBalanceSource(e.target.value.trim() ? "user_principal" : "none"); }} placeholder="Ej. 7300" className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none" />
+                          </div>
+                          {canOfferDerivedOpeningBalance && (
+                            <button
+                              type="button"
+                              onClick={useDerivedOpeningBalance}
+                              className="rounded-xl border border-amber-300 bg-white px-3 py-2.5 text-xs font-black uppercase tracking-wide text-amber-900 transition hover:bg-amber-100"
+                            >
+                              CALCULAR
+                            </button>
+                          )}
                         </div>
-                        <p className="mt-1 text-xs text-slate-600">{derivedOpeningBalance != null ? `Capital calculado con el contrato: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.` : "Este es el capital que todavía debes hoy, no el monto original."}</p>
+                        <p className="mt-1 text-xs text-slate-600">{derivedOpeningBalance != null
+                          ? openingBalanceSource === "schedule_derived"
+                            ? `Calculado con el cronograma: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.`
+                            : `Podemos calcularlo con tu cronograma: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.`
+                          : "Este es el capital que todavía debes hoy, no el monto original."}</p>
                       </div>
                       {onboardingMode === "EXISTING_DEBT" && (bankBalanceInformation === "schedule_financial_balance" || bankBalanceInformation === "total_remaining_payments") && (
                         <div>
