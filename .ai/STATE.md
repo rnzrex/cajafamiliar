@@ -10,7 +10,7 @@ Fix the imported-schedule state and Section 5 UX for the permanent `Analizar con
 - Base before this work: `776caaf03401f62701434d75f7881028ebbc40d6`.
 - Feature implementation commit: `8caf5d902133e7d69a58653675896d7702aa5d0b` (`feat(bank): require complete external ai dossier extraction`).
 - Functional fix commit: `2514ba30dd614cab9a03012a6a1335669341107d` (`fix(bank): surface imported schedule in contract section`).
-- Final branch HEAD: `b30d3ddb27895f67640dd8e8f03e10db19b2dbdb` (`chore(ai): record imported schedule UX handoff`), pushed normally to origin; Git remains authoritative for the exact current SHA.
+- Final branch HEAD is the SHA reported by Git at close; the functional fix and metadata handoff checkpoints are pushed normally to origin; Git remains authoritative for the exact current SHA.
 - No new migration; applied `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` is untouched and immutable.
 
 ## Constraints
@@ -49,7 +49,7 @@ Fix the imported-schedule state and Section 5 UX for the permanent `Analizar con
 
 - Feature fix commit `2514ba30dd614cab9a03012a6a1335669341107d` is pushed normally; no force push was used.
 - PR #65 is open against `main`, title `BANK External AI — extracción completa de expediente y cronograma`, and remains `isDraft: true`.
-- Automatic Vercel Preview `dpl_Fh5kwLebjbXMVdfzYepssAd6FjVx` (`https://cajafamiliar-6vbwc5umh-renzorex.vercel.app`) was generated from the final pushed branch head, verified READY with HTTP 200, and reports exact SHA `2514ba30dd614cab9a03012a6a1335669341107d`.
+- Automatic Vercel Preview is generated from each pushed branch head; the final deployment URL, state, HTTP result, and exact SHA are reported at delivery close.
 
 ## Production
 
