@@ -43,7 +43,7 @@ import { buildCreditCardStatementAlerts, selectUrgentCreditCardStatementAlertsFo
 import { eligibleCreditCardsForSpending, isCreditCardMovementContext } from "./utils/creditCardSpending";
 import { buildObligationProjection } from "./utils/obligationProjection";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
-import { containsDebtCreateResult, mergeDebtCreateResultIntoAppData, mergePendingMovements, shouldStartAuthoritativeRefresh, validateAuthoritativeLoadSource } from "./services/authoritativeSync";
+import { containsDebtCreateResult, containsDebtOperationResult, mergeDebtCreateResultIntoAppData, mergeDebtOperationResultIntoAppData, mergePendingMovements, shouldStartAuthoritativeRefresh, validateAuthoritativeLoadSource, type DebtOperationSaveResult } from "./services/authoritativeSync";
 import type { DebtCreateResult } from "./services/dataRepository";
 import {
   CategoryNotFoundError,
@@ -196,6 +196,7 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
   const refreshInFlightRef = useRef(false);
   const lastRefreshStartedAtRef = useRef(0);
   const pendingDebtCreateResultsRef = useRef(new Map<string, DebtCreateResult>());
+  const pendingDebtOperationResultsRef = useRef(new Map<string, DebtOperationSaveResult>());
   const pendingDebtScopeRef = useRef<string | null>(null);
   const dataReadyRef = useRef(dataReady);
 
@@ -203,6 +204,7 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
     const scope = currentMember ? `${currentMember.householdId}:${currentMember.userId}` : null;
     if (pendingDebtScopeRef.current !== scope) {
       pendingDebtCreateResultsRef.current.clear();
+      pendingDebtOperationResultsRef.current.clear();
       pendingDebtScopeRef.current = scope;
     }
   }, [currentMember?.householdId, currentMember?.userId]);
@@ -255,6 +257,11 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
           (current, result) => mergeDebtCreateResultIntoAppData(current, result),
           mergedData,
         );
+        const pendingDebtOperationResults = [...pendingDebtOperationResultsRef.current.values()];
+        const dataWithPendingDebtOperations = pendingDebtOperationResults.reduce(
+          (current, result) => mergeDebtOperationResultIntoAppData(current, result),
+          dataWithPendingDebtCreates,
+        );
 
         // A refresh may have started before the RPC completed. Keep the
         // returned create rows over a stale snapshot, then release them once
@@ -265,9 +272,14 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
               pendingDebtCreateResultsRef.current.delete(result.debt.id);
             }
           }
+          for (const result of pendingDebtOperationResults) {
+            if (containsDebtOperationResult(res.data, result)) {
+              pendingDebtOperationResultsRef.current.delete(result.event.id);
+            }
+          }
         }
 
-        setData(dataWithPendingDebtCreates);
+        setData(dataWithPendingDebtOperations);
         setDataReady(true);
         setDataLoadError(null);
 
@@ -310,6 +322,15 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
   const handleDebtSaved = useCallback((result: DebtCreateResult) => {
     pendingDebtCreateResultsRef.current.set(result.debt.id, result);
     setData((current) => mergeDebtCreateResultIntoAppData(current, result));
+    setSelectedDebtId(null);
+    setView("deudas");
+    void refreshAuthoritativeData("manual");
+  }, [refreshAuthoritativeData]);
+
+  const handleDebtOperationSaved = useCallback((result: DebtOperationSaveResult) => {
+    pendingDebtOperationResultsRef.current.set(result.event.id, result);
+    setData((current) => mergeDebtOperationResultIntoAppData(current, result));
+    setDebtOperationState(null);
     setSelectedDebtId(null);
     setView("deudas");
     void refreshAuthoritativeData("manual");
@@ -1694,12 +1715,10 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               accounts={data.financialAccounts}
               categories={data.categories}
               currentPrincipal={currentDebtPrincipal(selectedDebt, data.debtEvents)}
+              bankLoanProfile={data.bankLoanProfiles?.find((profile) => profile.debtId === selectedDebt.id) ?? null}
+              debtInsuranceTerms={(data.debtInsuranceTerms ?? []).filter((term) => term.debtId === selectedDebt.id)}
               canWriteDebt={canWriteDebt}
-              onSaved={async () => {
-                await refreshAppData();
-                setDebtOperationState(null);
-                setView("deudas");
-              }}
+              onSaved={handleDebtOperationSaved}
               onCancel={() => {
                 setDebtOperationState(null);
                 setView("deudas");

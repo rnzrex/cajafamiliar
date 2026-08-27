@@ -296,6 +296,10 @@ export function DebtDetailModal({
   const debtCollaterals = collaterals.filter((c) => c.debtId === debt.id);
   const bankProfile = bankLoanProfiles?.find((profile) => profile.debtId === debt.id) ?? null;
   const bankInsurances = (debtInsuranceTerms || []).filter((insurance) => insurance.debtId === debt.id);
+  const estimatedPrepaymentSchedule = debt.debtKind === "bank_loan"
+    && currentSchedule?.reason === "prepayment"
+    && currentSchedule.scheduleSource === "estimated"
+    && currentSchedule.isAuthoritative === false;
   const ledgerResult = buildDebtPaymentLedger(debt, allEventsForDebt);
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
@@ -860,6 +864,17 @@ export function DebtDetailModal({
                       Cargar cronograma oficial
                     </button>
                   )}
+                </section>
+              )}
+
+              {estimatedPrepaymentSchedule && !pendingBankSchedule && (
+                <section className="rounded-2xl border border-indigo-300 bg-indigo-50 p-5 shadow-sm">
+                  <p className="text-xs font-black uppercase tracking-wider text-indigo-800">CRONOGRAMA ESTIMADO DESPUÉS DEL PREPAGO</p>
+                  <p className="mt-1 text-sm font-semibold text-indigo-950">Esta proyección conserva el abono aplicado al principal, pero no es contractual ni sustituye el cronograma que entregue el banco.</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setActiveTab("schedule")} className="rounded-xl bg-indigo-200 px-4 py-2 text-sm font-bold text-indigo-950 hover:bg-indigo-300">Ver simulación</button>
+                    {canWriteDebt && <button type="button" onClick={() => onOpenOperation("schedule_update")} className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-indigo-800 ring-1 ring-indigo-300 hover:bg-indigo-50">Cargar cronograma oficial</button>}
+                  </div>
                 </section>
               )}
 

@@ -1,5 +1,5 @@
-﻿import type { AppData } from "../types";
-import type { AppDataLoadResult, DebtCreateResult } from "./dataRepository";
+import type { AppData, DebtEvent, DebtInstallment, DebtScheduleVersion, Debt, Movement } from "../types";
+import type { AppDataLoadResult, DebtCreateResult, DebtFundOperationResult, DebtReversalResult, DebtScheduleUpdateResult } from "./dataRepository";
 import type { OfflineCreateMovementOperation } from "./offlineOutbox";
 
 function upsertById<T extends { id: string }>(existing: T[], incoming: T[]): T[] {
@@ -53,6 +53,42 @@ export function containsDebtCreateResult(data: AppData, result: DebtCreateResult
  * - Offline + fallback: ACCEPT (true)
  * - Offline + remote / local: REJECT (false)
  */
+
+export type DebtOperationSaveResult = DebtFundOperationResult | DebtReversalResult | DebtScheduleUpdateResult;
+
+/**
+ * Overlays the complete result returned by a debt-operation RPC before the
+ * background refresh. This keeps the principal, event, movement and any
+ * generated schedule visible even when the remote read races the write.
+ */
+export function mergeDebtOperationResultIntoAppData(data: AppData, result: DebtOperationSaveResult): AppData {
+  const operation = result as Partial<DebtFundOperationResult> & Partial<DebtReversalResult> & Partial<DebtScheduleUpdateResult>;
+  return {
+    ...data,
+    debts: upsertById(data.debts, [operation.debt as Debt]),
+    movements: operation.movement ? upsertById(data.movements, [operation.movement as Movement]) : data.movements,
+    debtEvents: upsertById(data.debtEvents, [operation.event as DebtEvent]),
+    debtEventInstallmentAllocations: operation.allocations
+      ? upsertById(data.debtEventInstallmentAllocations, operation.allocations)
+      : data.debtEventInstallmentAllocations,
+    debtScheduleVersions: operation.scheduleVersion
+      ? upsertById(data.debtScheduleVersions, [operation.scheduleVersion as DebtScheduleVersion])
+      : data.debtScheduleVersions,
+    debtInstallments: operation.installments
+      ? upsertById(data.debtInstallments, operation.installments as DebtInstallment[])
+      : data.debtInstallments,
+  };
+}
+
+export function containsDebtOperationResult(data: AppData, result: DebtOperationSaveResult): boolean {
+  const operation = result as Partial<DebtFundOperationResult> & Partial<DebtReversalResult> & Partial<DebtScheduleUpdateResult>;
+  return data.debts.some((debt) => debt.id === operation.debt?.id)
+    && data.debtEvents.some((event) => event.id === operation.event?.id)
+    && (!operation.movement || data.movements.some((movement) => movement.id === operation.movement?.id))
+    && (!operation.scheduleVersion || data.debtScheduleVersions.some((version) => version.id === operation.scheduleVersion?.id))
+    && (operation.installments ?? []).every((installment) => data.debtInstallments.some((row) => row.id === installment.id))
+    && (operation.allocations ?? []).every((allocation) => data.debtEventInstallmentAllocations.some((row) => row.id === allocation.id));
+}
 export function validateAuthoritativeLoadSource({
   isOnline,
   source,

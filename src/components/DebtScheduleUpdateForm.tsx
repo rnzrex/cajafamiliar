@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import type { Debt, DebtEvent, DebtInstallment, DebtScheduleVersion } from "../types.js";
 import { updateDebtContractualSchedule } from "../services/dataRepository.js";
+import type { DebtScheduleUpdateResult } from "../services/dataRepository.js";
 import { makeUuid } from "../utils/storage.js";
 import { localDateString } from "../utils/date.js";
 import { translateDebtError } from "../utils/debtViewModel.js";
@@ -22,7 +23,7 @@ interface DebtScheduleUpdateFormProps {
   installments: DebtInstallment[];
   scheduleVersions: DebtScheduleVersion[];
   canWriteDebt?: boolean;
-  onSaved: () => Promise<void>;
+  onSaved: (result: DebtScheduleUpdateResult) => Promise<void> | void;
   onCancel: () => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
 }
@@ -137,7 +138,7 @@ export function DebtScheduleUpdateForm({
 
     setSubmitting(true);
     try {
-      await updateDebtContractualSchedule({
+      const result = await updateDebtContractualSchedule({
         debtId: debt.id,
         eventId,
         eventDate,
@@ -146,7 +147,7 @@ export function DebtScheduleUpdateForm({
         scheduleNotes: notes.trim() || null,
       });
       setToast({ message: "Cronograma contractual actualizado correctamente.", type: "success" });
-      await onSaved();
+      await onSaved(result);
     } catch (error) {
       setToast({ message: translateDebtError(error), type: "error" });
     } finally {
