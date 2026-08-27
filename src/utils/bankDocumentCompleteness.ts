@@ -90,11 +90,14 @@ function currentPrincipalIsKnown(extraction: BankDocumentExtraction, context: Ba
 
 function deriveHistoricalPrincipalIfPossible(extraction: BankDocumentExtraction, context: BankDocumentCompletenessContext): number | null {
   const originalPrincipal = extraction.originalPrincipal ?? extraction.financedAmount;
-  const paidBefore = context.installmentsPaidBeforeTracking ?? 0;
-  if (originalPrincipal == null || !finiteNonNegative(originalPrincipal) || !Number.isInteger(paidBefore) || paidBefore < 0 || paidBefore === 0) return originalPrincipal ?? null;
-  if (extraction.schedule[0]?.contractualInstallmentNumber !== 1 || extraction.schedule.length < paidBefore) return null;
+  const isExisting = context.onboardingMode === "EXISTING_DEBT";
+  const paidBefore = isExisting ? context.installmentsPaidBeforeTracking : 0;
+  if (isExisting && (paidBefore == null || !Number.isInteger(paidBefore) || paidBefore < 1)) return null;
+  const normalizedPaidBefore = paidBefore ?? 0;
+  if (originalPrincipal == null || !finiteNonNegative(originalPrincipal) || !Number.isInteger(normalizedPaidBefore) || normalizedPaidBefore < 0 || normalizedPaidBefore === 0) return originalPrincipal ?? null;
+  if (extraction.schedule[0]?.contractualInstallmentNumber !== 1 || extraction.schedule.length < normalizedPaidBefore) return null;
   try {
-    return deriveCurrentPrincipalBalance(originalPrincipal, extraction.schedule.slice(0, paidBefore), paidBefore);
+    return deriveCurrentPrincipalBalance(originalPrincipal, extraction.schedule.slice(0, normalizedPaidBefore), normalizedPaidBefore);
   } catch {
     return null;
   }
@@ -139,7 +142,7 @@ export function evaluateBankDocumentCompleteness(
   const optionalMissing: BankDocumentCompletenessIssue[] = [];
   const coverage = scheduleCoverage(extraction);
   const isExisting = context.onboardingMode === "EXISTING_DEBT";
-  const paidBefore = context.installmentsPaidBeforeTracking ?? 0;
+  const paidBefore = isExisting ? context.installmentsPaidBeforeTracking : 0;
   const originalPrincipal = extraction.originalPrincipal ?? extraction.financedAmount;
 
   if (!extraction.lenderName && !context.creditorName?.trim()) {
@@ -210,7 +213,12 @@ export function evaluateBankDocumentCompleteness(
     }
 
     if (coverage.expectedInstallments != null && coverage.status === "partial") {
-      const pendingWithCurrentPrincipal = coverage.pendingOnly && isExisting && currentPrincipalIsKnown(extraction, context);
+      const pendingWithCurrentPrincipal = coverage.pendingOnly
+        && isExisting
+        && Number.isInteger(paidBefore)
+        && (paidBefore ?? 0) >= 1
+        && coverage.firstContractualInstallment === (paidBefore ?? 0) + 1
+        && currentPrincipalIsKnown(extraction, context);
       if (!pendingWithCurrentPrincipal) {
         requiredIssues.push(issue(
           "SCHEDULE_PARTIAL",
@@ -231,6 +239,16 @@ export function evaluateBankDocumentCompleteness(
   }
 
   if (isExisting) {
+    if (paidBefore == null || !Number.isInteger(paidBefore) || paidBefore < 1) {
+      requiredIssues.push(issue(
+        "LAST_PAID_INSTALLMENT_REQUIRED",
+        "installmentsPaidBeforeTracking",
+        "required",
+        "Falta la última cuota pagada",
+        "Indicaste que ya vienes pagando este crédito, pero no sabemos cuál fue la última cuota contractual pagada.",
+        "Busca en tu banca, comprobante o cronograma el número de la última cuota pagada. Si todavía no pagaste ninguna, selecciona «Es nuevo / todavía no he pagado cuotas».",
+      ));
+    }
     const derivedPrincipal = deriveHistoricalPrincipalIfPossible(extraction, context);
     const currentPrincipalKnown = currentPrincipalIsKnown(extraction, context) || finiteNonNegative(derivedPrincipal);
     if (!currentPrincipalKnown) {
@@ -238,8 +256,8 @@ export function evaluateBankDocumentCompleteness(
         ? `El cronograma comienza en la cuota ${coverage.firstContractualInstallment} y no tenemos las cuotas históricas para calcular el capital actual.`
         : "No pudimos determinar cuánto capital queda pendiente hoy.", "Busca Saldo Capital / Capital Pendiente en tu banca, estado de cuenta o constancia de deuda; si no aparece, consulta al banco."));
     }
-    if (!Number.isInteger(paidBefore) || paidBefore < 0) {
-      requiredIssues.push(issue("PAID_BEFORE_INVALID", "installmentsPaidBeforeTracking", "required", "Falta una última cuota pagada válida", "La última cuota contractual pagada debe ser un número entero igual o mayor a cero.", "Confirma la última cuota pagada antes de guardar."));
+    if (paidBefore != null && Number.isInteger(paidBefore) && extraction.termInstallments != null && paidBefore >= extraction.termInstallments) {
+      requiredIssues.push(issue("LAST_PAID_INSTALLMENT_INVALID", "installmentsPaidBeforeTracking", "required", "La última cuota pagada no es válida", "La última cuota pagada debe ser menor al total de cuotas del crédito.", "Confirma el número de la última cuota pagada y compáralo con el plazo contractual."));
     }
   }
 

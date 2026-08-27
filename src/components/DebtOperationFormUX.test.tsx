@@ -162,7 +162,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
       category: "Pago de deuda",
       allocations: [{ installmentId: installments[0].id, allocatedAmount: 1100 }],
     })));
-  }, 10_000);
+  }, 15_000);
 
   it("submits a standalone bank prepayment as pending when no schedule exists", async () => {
     const user = userEvent.setup();

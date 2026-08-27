@@ -48,7 +48,7 @@ export interface DebtScheduleEstimateResult {
   totalFees: number;
   financialInstallmentAmount: number; // Principal + Interest base cuota
   installmentAmountMode: "fixed" | "variable";
-  remainingPrincipalBalanceAfterPaidBeforeTracking: number;
+  remainingPrincipalBalanceAfterPaidBeforeTracking: number | null;
   undistributedInsuranceTotal: number;
   hasUnknownInsuranceDistribution: boolean;
   isEstimated: true;
@@ -155,7 +155,7 @@ export function generateEstimatedDebtSchedule(
   if (!Number.isInteger(termInstallments) || termInstallments <= 0) {
     throw new Error("El plazo debe ser un número de cuotas mayor a cero.");
   }
-  if (!Number.isInteger(installmentsPaidBeforeTracking ?? 0) || (installmentsPaidBeforeTracking ?? 0) < 0 || (installmentsPaidBeforeTracking ?? 0) > termInstallments) {
+  if (installmentsPaidBeforeTracking != null && (!Number.isInteger(installmentsPaidBeforeTracking) || installmentsPaidBeforeTracking < 0 || installmentsPaidBeforeTracking > termInstallments)) {
     throw new Error("Las cuotas pagadas antes de empezar el seguimiento deben estar entre 0 y el plazo total.");
   }
   const mixedInsuranceAmounts = [
@@ -277,10 +277,12 @@ export function generateEstimatedDebtSchedule(
   const installmentAmountMode = rows.every((row) => Math.abs(row.expectedAmount - rows[0].expectedAmount) <= 0.01)
     ? "fixed"
     : "variable";
-  const paidBefore = installmentsPaidBeforeTracking ?? 0;
-  const remainingPrincipalBalanceAfterPaidBeforeTracking = paidBefore === 0
-    ? round2(financedAmount)
-    : rows[paidBefore - 1]?.remainingPrincipalBalance ?? 0;
+  const paidBefore = installmentsPaidBeforeTracking;
+  const remainingPrincipalBalanceAfterPaidBeforeTracking = paidBefore == null
+    ? null
+    : paidBefore === 0
+      ? round2(financedAmount)
+      : rows[paidBefore - 1]?.remainingPrincipalBalance ?? null;
   const undistributedInsuranceTotal = fixedTotalUnknown;
 
   return {

@@ -27,6 +27,52 @@ describe("bank document completeness", () => {
     expect(result.scheduleCoverage).toMatchObject({ status: "full", expectedInstallments: 18, foundInstallments: 18, firstContractualInstallment: 1, lastContractualInstallment: 18, pendingOnly: false });
   });
 
+  it("requires the last paid contractual installment for an existing debt", () => {
+    const result = completeness(BANK_EXTERNAL_AI_ALFIN_FIXTURE, {
+      onboardingMode: "EXISTING_DEBT",
+      installmentsPaidBeforeTracking: null,
+      creditorName: "Entidad fixture",
+      currencyCode: "PEN",
+    });
+    expect(result.requiredIssues).toContainEqual({
+      code: "LAST_PAID_INSTALLMENT_REQUIRED",
+      field: "installmentsPaidBeforeTracking",
+      severity: "required",
+      title: "Falta la última cuota pagada",
+      message: "Indicaste que ya vienes pagando este crédito, pero no sabemos cuál fue la última cuota contractual pagada.",
+      action: "Busca en tu banca, comprobante o cronograma el número de la última cuota pagada. Si todavía no pagaste ninguna, selecciona «Es nuevo / todavía no he pagado cuotas».",
+    });
+    expect(result.requiredIssues).not.toContainEqual(expect.objectContaining({ code: "PAID_BEFORE_INVALID" }));
+  });
+
+  it("rejects zero for existing debt but keeps zero valid for new debt", () => {
+    const existing = completeness(BANK_EXTERNAL_AI_ALFIN_FIXTURE, {
+      onboardingMode: "EXISTING_DEBT",
+      installmentsPaidBeforeTracking: 0,
+      creditorName: "Entidad fixture",
+      currencyCode: "PEN",
+    });
+    expect(existing.requiredIssues).toContainEqual(expect.objectContaining({ code: "LAST_PAID_INSTALLMENT_REQUIRED", field: "installmentsPaidBeforeTracking" }));
+
+    const newDebt = completeness(BANK_EXTERNAL_AI_ALFIN_FIXTURE, {
+      onboardingMode: "NEW_DEBT",
+      installmentsPaidBeforeTracking: 0,
+      creditorName: "Entidad fixture",
+      currencyCode: "PEN",
+    });
+    expect(newDebt.requiredIssues).not.toContainEqual(expect.objectContaining({ code: "LAST_PAID_INSTALLMENT_REQUIRED" }));
+  });
+
+  it("derives the current principal only after a valid existing-debt baseline", () => {
+    const result = completeness(BANK_EXTERNAL_AI_ALFIN_FIXTURE, {
+      onboardingMode: "EXISTING_DEBT",
+      installmentsPaidBeforeTracking: 5,
+      creditorName: "Entidad fixture",
+      currencyCode: "PEN",
+    });
+    expect(result.requiredIssues).toHaveLength(0);
+  });
+
   it("does not mistake a term and regular payment for a found schedule", () => {
     const result = completeness({
       ...BANK_EXTERNAL_AI_ALFIN_FIXTURE,
@@ -57,6 +103,18 @@ describe("bank document completeness", () => {
     expect(result.requiredIssues).toHaveLength(0);
     expect(result.scheduleCoverage).toMatchObject({ status: "partial", pendingOnly: true, firstContractualInstallment: 6, lastContractualInstallment: 18 });
     expect(result.reviewIssues).toContainEqual(expect.objectContaining({ code: "PENDING_ONLY_SCHEDULE" }));
+  });
+
+  it("does not treat a pending-only schedule as complete when last paid is unknown", () => {
+    const result = completeness({ ...BANK_EXTERNAL_AI_ALFIN_FIXTURE, schedule: BANK_EXTERNAL_AI_ALFIN_FIXTURE.schedule.slice(5) }, {
+      onboardingMode: "EXISTING_DEBT",
+      installmentsPaidBeforeTracking: null,
+      currentPrincipal: 3294.39,
+      creditorName: "Entidad fixture",
+      currencyCode: "PEN",
+    });
+    expect(result.requiredIssues).toContainEqual(expect.objectContaining({ code: "LAST_PAID_INSTALLMENT_REQUIRED" }));
+    expect(result.reviewIssues).not.toContainEqual(expect.objectContaining({ code: "PENDING_ONLY_SCHEDULE" }));
   });
 
   it("requires current principal for pending rows when historical rows are unavailable", () => {

@@ -2,69 +2,62 @@
 
 ## Objective
 
-Fix the imported-schedule state and Section 5 UX for the permanent `Analizar con IA externa` path on `feat/bank-external-ai-complete-dossier-v1`, then keep the work in a DRAFT PR for orchestrator audit before any real contract test.
+Fix the existing-bank-debt onboarding gate and bank-contract entry-method UX on `feat/bank-external-ai-complete-dossier-v1`, then keep PR #65 in DRAFT for orchestrator audit.
 
 ## Repository
 
 - Branch: `feat/bank-external-ai-complete-dossier-v1`.
-- Base before this work: `776caaf03401f62701434d75f7881028ebbc40d6`.
-- Feature implementation commit: `8caf5d902133e7d69a58653675896d7702aa5d0b` (`feat(bank): require complete external ai dossier extraction`).
-- Functional fix commit: `2514ba30dd614cab9a03012a6a1335669341107d` (`fix(bank): surface imported schedule in contract section`).
-- Final branch HEAD is the SHA reported by Git at close; the functional fix and metadata handoff checkpoints are pushed normally to origin; Git remains authoritative for the exact current SHA.
-- No new migration; applied `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` is untouched and immutable.
+- Baseline before this fix: `6663157a424104c33d5012f0fbca9fe3dd55f7b4`.
+- The working tree contains the paid-installment validation, null-preserving baseline logic, completeness gate, selection-only cards, and regression coverage; it is not committed yet.
+- Applied migrations remain untouched and immutable.
 
 ## Constraints
 
-- Preserve the no-network external bridge: external AI analyzes documents, the user pastes JSON, and Caja Familiar parses/normalizes/validates locally.
-- Treat `installments` as the operational schedule source of truth; `tsvScheduleText` is only an explicit replacement editor.
-- No `GEMINI_API_KEY`, provider call, billing change, real contract upload, Production write/deploy, migration change, merge, or test financial data.
-- Keep protocol `CAJA_FAMILIAR_BANK_DOCUMENT_V1` backwards-compatible.
+- Existing bank loans require a known contractual last-paid installment: integer `>= 1` and `< termInstallments`.
+- Blank existing-debt input is unknown/null; it must not become zero, mark baseline rows, derive capital, or be saved.
+- New debt keeps internal `paidBefore=0` behavior.
+- Entry-method cards only select; the bottom CONTINUAR button advances.
+- No migration changes, Supabase Production writes, Gemini key/provider calls, Vercel env/deploy changes, merge, or financial test data.
 
 ## Completed
 
-- Expanded the official external prompt to treat all attached PDFs/images/pages/sheets as one dossier and require full contractual schedule extraction, multi-page continuation, multiple-photo ordering, null cell preservation, duplicate/conflict warnings, and `schedule=[]` only for a genuinely absent/unprovided schedule.
-- Added deterministic `src/utils/bankDocumentCompleteness.ts` with complete/needs_review/missing_required_data statuses, full/partial/pending-only/not-found/unknown coverage, required/review/optional issue classes, schedule sequence/date/duplicate/cell checks, balance context, conflicts, and reconciliation review.
-- Added `src/components/BankDocumentReviewPanel.tsx` and wired both external import and review summary to show found data, coverage banner, real responsive imported schedule preview, missing/review/optional issues, and accessible labels.
-- Preserved manual schedule textarea as a manual tool; imported rows come from normalized external extraction and remain behind the review/save gate.
-- Added a shared `BankSchedulePreview` for the compact review panel and full Section 5 desktop/mobile schedule views.
-- Section 5 now derives loaded state from `installments`, shows automatic/imported coverage and provenance, hides manual tools by default, and only opens them through explicit replacement.
-- Manual cancel, empty/invalid replacement, and invalid spreadsheet input preserve the loaded rows; valid manual/spreadsheet replacement clears stale external review state and updates provenance.
-- `reportedBalance` is carried through imported and replacement rows, and save continues to pass the operational `installments` array.
-- Extended prompt, completeness, and UI regression coverage; anonymized ALFIN fixture remains 18/18 with principal 4100.00, interest 2003.41, insurance 154.79, total 6258.20, and paidBefore=5 derives 3294.39 with next contractual installment 6.
+- Added required existing-debt input validation and exact missing/invalid UX messages.
+- Added `LAST_PAID_INSTALLMENT_REQUIRED` completeness issue with the requested field, severity, title, message, and action.
+- Prevented blank/invalid existing baselines and schedule-derived capital; preserved null through document completeness and estimate remaining-balance output.
+- Added repository defense-in-depth so an explicitly existing-debt save cannot persist a missing/zero last-paid value.
+- Converted all four bank contract entry cards to visual `aria-pressed` selection without auto-advance; external AI remains selected by default.
+- Added external-import-before/after-last-paid, pending-only, completeness, selection, and save-payload regressions.
 
 ## Validation
 
-- Full Vitest suite: PASS, 66 files / 965 tests with `--testTimeout=15000`.
-- Focused UI suite: PASS, 1 file / 11 tests; external parser suite: PASS, 2 files / 21 tests.
-- `npm run test:bank-external-ai-import`: PASS, 3 files / 25 tests.
+- `npm test -- --testTimeout=15000`: PASS, 66 files / 973 tests.
+- Focused UX/completeness/onboarding tests: PASS, 3 files / 40 tests; final UX suite: 14 tests.
+- `npm run build`: PASS; only existing dynamic-import and large-chunk warnings.
+- `npm run typecheck:api`: PASS.
+- `npm run test:bank-external-ai-import`: PASS, 3 files / 29 tests.
 - `npm run test:bank-reconstruction-v4`: PASS, 1 file / 11 tests.
 - `npm run test:bank-document-v5-local`: PASS, 6 files / 26 tests.
-- BANK V3 local SQL, BANK V2 local SQL, and DEBT-2B.2 local SQL: PASS after Docker-local approval; no Production access used.
-- `npm run typecheck:api`: PASS.
-- `npm run build`: PASS; only existing dynamic-import and large-chunk warnings.
 - `git diff --check`: PASS.
-- Destructive local reset harnesses `test:debt5fa:local` and `test:recon1a:local` were not run, per safety constraints.
+- `test:bank-loan-v3:local`, `test:bank-v2-local`, and `test:debt2b2` were attempted but are blocked because `supabase_db_caja-familiar` is exited (137) and port 54322 is occupied by another local Supabase project; no Production access was used.
 
 ## Delivery
 
-- Feature fix commit `2514ba30dd614cab9a03012a6a1335669341107d` is pushed normally; no force push was used.
-- PR #65 is open against `main`, title `BANK External AI — extracción completa de expediente y cronograma`, and remains `isDraft: true`.
-- Automatic Vercel Preview is generated from each pushed branch head; the final deployment URL, state, HTTP result, and exact SHA are reported at delivery close.
+- PR #65 remains open against `main` and DRAFT.
+- Next command: commit the coherent fix, push normally to the same branch, verify remote SHA/PR/Preview, then stop.
 
 ## Production
 
-- Production remains untouched by this task. No Supabase write, Vercel Production deployment, Gemini key, billing change, or real bank document was used.
+- Production untouched. No Gemini key, billing change, real bank document, Vercel env write, frontend Production deployment, migration, or merge was performed.
 
 ## Next Step
 
-- Stop after this delivery checkpoint. The orchestrator may audit the DRAFT PR and later run the real redacted external-AI contract test; do not merge or deploy Production from this task.
+- Commit and push the fix without force; verify the automatic Vercel Preview matches the pushed SHA and remains non-Production.
 
 ## Relevant Files
 
-- `src/utils/bankExternalAiImport.ts` — official V1 prompt and external JSON bridge.
-- `src/utils/bankDocumentCompleteness.ts` — deterministic dossier completeness evaluator.
-- `src/components/BankDocumentReviewPanel.tsx` — analysis, coverage, issues, and imported schedule preview.
-- `src/components/BankExternalAiImportPanel.tsx` — external copy/paste flow and immediate review.
-- `src/components/BankSchedulePreview.tsx` — shared responsive schedule preview.
-- `src/components/DebtForm.tsx` — completeness context and save gate integration.
-- `src/utils/bankDocumentCompleteness.test.ts`, `src/utils/bankExternalAiImport.test.ts`, `src/components/BankLoanFormUX.test.tsx` — focused coverage.
+- `src/components/DebtForm.tsx` — existing-debt paid-installment gate, baseline/derivation semantics, and entry-method selection UX.
+- `src/utils/bankDocumentCompleteness.ts` — required missing-last-paid completeness issue and pending-only gate.
+- `src/utils/bankLoanBaseline.ts` — null/invalid existing baseline consistency handling.
+- `src/utils/debtEstimation.ts` — preserves null remaining balance for unknown paid-before input.
+- `src/services/dataRepository.ts` — save invariant defense-in-depth.
+- `src/components/BankLoanFormUX.test.tsx`, `src/utils/bankDocumentCompleteness.test.ts`, `src/utils/bankLoanOnboardingV3.test.ts` — regression coverage.

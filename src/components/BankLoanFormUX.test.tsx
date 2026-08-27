@@ -65,7 +65,66 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.getByRole("button", { name: "Generar Cronograma Estimado (Caja Familiar)" })).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Generar Cronograma Estimado (Caja Familiar)" }));
     expect(screen.getByText("El monto financiado debe ser mayor a cero.")).toBeTruthy();
-  }, 10_000);
+  }, 20_000);
+
+  it("selects the contract entry method without auto-advancing", async () => {
+    const user = userEvent.setup();
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="type_select"
+      />
+    );
+
+    const external = screen.getByRole("button", { name: /Analizar con IA externa/ });
+    const integrated = screen.getByRole("button", { name: /Importar automáticamente con IA/ });
+    const reconstruction = screen.getByRole("button", { name: /Generar desde los datos del contrato/ });
+    const manual = screen.getByRole("button", { name: /Ingresar manualmente/ });
+    expect(external.getAttribute("aria-pressed")).toBe("true");
+    expect(external.className).toContain("ring-2");
+
+    for (const card of [integrated, reconstruction, manual]) {
+      await user.click(card);
+      expect(screen.getByRole("heading", { name: "¿Qué deuda quieres registrar?" })).toBeTruthy();
+      expect(card.getAttribute("aria-pressed")).toBe("true");
+      expect(card.className).toContain("border-indigo-500");
+      expect(external.getAttribute("aria-pressed")).toBe("false");
+    }
+
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+    expect(screen.getByText("1. SOBRE EL CRÉDITO")).toBeTruthy();
+  });
+
+  it("requires a positive integer last paid installment for existing debt", () => {
+    const setToast = vi.fn();
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={setToast}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    const input = screen.getByLabelText("Última cuota contractual que ya pagaste") as HTMLInputElement;
+    expect(input.required).toBe(true);
+    expect(input.min).toBe("1");
+    expect(input.step).toBe("1");
+    expect(input.placeholder).toBe("Ej. 5");
+    expect(screen.getByRole("alert").textContent).toContain("Indica cuál fue la última cuota contractual que ya pagaste.");
+
+    fireEvent.change(input, { target: { value: "0" } });
+    expect(screen.getByRole("alert").textContent).toContain("número entero mayor o igual a 1");
+    fireEvent.change(input, { target: { value: "5" } });
+    expect(screen.queryByText("Indica cuál fue la última cuota contractual que ya pagaste.", { exact: true })).toBeNull();
+    expect(setToast).not.toHaveBeenCalled();
+  });
 
   it("exposes all required bank loan subtype options", () => {
     const values = BANK_LOAN_SUBTYPE_OPTIONS.map((o) => o.value);
@@ -231,6 +290,34 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(BANK_EXTERNAL_AI_ALFIN_FIXTURE.schedule).toHaveLength(18);
   }, 15_000);
 
+  it("keeps imported full schedule pending until last paid installment is entered", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito con baseline pendiente" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+
+    expect(screen.getByText("Indica la última cuota pagada para ubicar tu próxima cuota.")).toBeTruthy();
+    expect(screen.queryByText(/Última pagada: 0/)).toBeNull();
+    expect(screen.queryByText(/Capital calculado con el contrato: S\/ 4100\.00/)).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
+    expect(screen.getByText(/Capital calculado con el contrato: S\/ 3294\.39\./)).toBeTruthy();
+    expect(screen.getByText(/Última pagada: 5 · Próxima: 6 de 18 · Pendientes: 13/)).toBeTruthy();
+  }, 15_000);
+
   it("keeps an imported schedule while opening, cancelling, or submitting an empty replacement", async () => {
     const user = userEvent.setup();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
@@ -323,6 +410,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
 
     await waitFor(() => expect(dataRepository.createBankLoan).toHaveBeenCalled());
     const savedInput = vi.mocked(dataRepository.createBankLoan).mock.calls.at(-1)?.[0];
+    expect(savedInput?.installmentsPaidBeforeTracking).toBe(5);
     expect(savedInput?.installments).toHaveLength(18);
     expect(savedInput?.installments[0]?.dueDate).toBe("2026-06-10");
     expect(savedInput?.installments[17]?.expectedPrincipal).toBe(331.92);

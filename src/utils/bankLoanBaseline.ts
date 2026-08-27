@@ -81,7 +81,9 @@ export function bankLoanScheduleConsistencyError(input: BankLoanScheduleConsiste
   if (input.installments.length === 0 || input.scheduleSource == null) return null;
 
   const paidBefore = input.onboardingMode === "EXISTING_DEBT"
-    ? Number(input.installmentsPaidBeforeTracking ?? 0)
+    ? input.installmentsPaidBeforeTracking == null || input.installmentsPaidBeforeTracking === ""
+      ? null
+      : Number(input.installmentsPaidBeforeTracking)
     : 0;
   const term = input.plannedInstallmentCount == null || input.plannedInstallmentCount === ""
     ? null
@@ -91,7 +93,7 @@ export function bankLoanScheduleConsistencyError(input: BankLoanScheduleConsiste
     ?? input.installments.at(-1)?.installmentNumber
     ?? null;
 
-  if (!Number.isInteger(paidBefore) || paidBefore < 0 || !Number.isInteger(firstContractual) || firstContractual <= 0) {
+  if (paidBefore == null || !Number.isInteger(paidBefore) || paidBefore < (input.onboardingMode === "EXISTING_DEBT" ? 1 : 0) || !Number.isInteger(firstContractual) || firstContractual <= 0) {
     return null;
   }
 

@@ -203,13 +203,25 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     ? installments[0].dueDate
     : null;
   const balanceOriginal = Number(financedAmount || originalPrincipal);
-  const balancePaidBefore = Number(installmentsPaidBeforeTracking || 0);
+  const paidBeforeRaw = installmentsPaidBeforeTracking.trim();
+  const paidBeforeForExisting = paidBeforeRaw === "" ? null : Number(paidBeforeRaw);
+  const effectivePaidBefore = onboardingMode === "EXISTING_DEBT" ? paidBeforeForExisting : 0;
+  const bankTermForValidation = Number(plannedInstallmentCount);
+  const paidBeforeInputMessage = onboardingMode !== "EXISTING_DEBT"
+    ? null
+    : paidBeforeRaw === ""
+      ? "Indica cuál fue la última cuota contractual que ya pagaste."
+      : !Number.isInteger(paidBeforeForExisting) || (paidBeforeForExisting ?? 0) < 1
+        ? "Si ya vienes pagando este crédito, la última cuota pagada debe ser un número entero mayor o igual a 1."
+        : Number.isInteger(bankTermForValidation) && bankTermForValidation > 0 && (paidBeforeForExisting ?? 0) >= bankTermForValidation
+          ? "Este flujo registra créditos activos. La última cuota pagada debe ser menor al total de cuotas."
+          : null;
   const isPendingOnlyOfficialSchedule = documentImportReady
     && scheduleSource === "contractual"
     && onboardingMode === "EXISTING_DEBT"
-    && Number.isInteger(balancePaidBefore)
-    && balancePaidBefore >= 0
-    && installments[0]?.contractualInstallmentNumber === balancePaidBefore + 1
+    && Number.isInteger(paidBeforeForExisting)
+    && (paidBeforeForExisting ?? 0) >= 1
+    && installments[0]?.contractualInstallmentNumber === (paidBeforeForExisting ?? 0) + 1
     && installments[0].contractualInstallmentNumber > 1
     && Number.isInteger(Number(plannedInstallmentCount))
     && Number(plannedInstallmentCount) > 0
@@ -219,19 +231,16 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     && onboardingMode === "EXISTING_DEBT"
     && Number.isFinite(balanceOriginal)
     && balanceOriginal > 0
-      && Number.isInteger(balancePaidBefore)
-      && balancePaidBefore >= 0
-      && (balancePaidBefore === 0
-      || (installments.length >= balancePaidBefore
-        && installments.slice(0, balancePaidBefore).every((row, index) => row.contractualInstallmentNumber === index + 1 && hasKnownAmount(row.expectedPrincipal))));
+    && Number.isInteger(paidBeforeForExisting)
+    && (paidBeforeForExisting ?? 0) >= 1
+    && installments.length >= (paidBeforeForExisting ?? 0)
+    && installments.slice(0, paidBeforeForExisting ?? 0).every((row, index) => row.contractualInstallmentNumber === index + 1 && hasKnownAmount(row.expectedPrincipal));
   const derivedOpeningBalance = canDeriveOpeningBalance
-    ? balancePaidBefore === 0
-      ? balanceOriginal
-      : deriveCurrentPrincipalBalance(
-          balanceOriginal,
-          installments.slice(0, balancePaidBefore).map((row) => ({ principal: Number(row.expectedPrincipal) })),
-          balancePaidBefore,
-        )
+    ? deriveCurrentPrincipalBalance(
+        balanceOriginal,
+        installments.slice(0, paidBeforeForExisting ?? 0).map((row) => ({ principal: Number(row.expectedPrincipal) })),
+        paidBeforeForExisting ?? 0,
+      )
     : null;
   const effectiveOpeningPrincipalBalance = openingBalanceSource === "schedule_derived"
     ? derivedOpeningBalance
@@ -242,7 +251,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     ? documentImportValidation
       ? evaluateBankDocumentCompleteness(documentImportExtraction, documentImportValidation, {
         onboardingMode,
-        installmentsPaidBeforeTracking: onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0,
+        installmentsPaidBeforeTracking: effectivePaidBefore,
         currentPrincipal: effectiveOpeningPrincipalBalance,
         creditorName,
         currencyCode,
@@ -254,12 +263,12 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const scheduleExpectedInstallments = Number.isInteger(Number(plannedInstallmentCount)) && Number(plannedInstallmentCount) > 0 ? Number(plannedInstallmentCount) : null;
   const scheduleFirstContractualInstallment = installments[0]?.contractualInstallmentNumber ?? null;
   const scheduleLastContractualInstallment = installments.at(-1)?.contractualInstallmentNumber ?? null;
-  const schedulePaidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
+  const schedulePaidBefore = effectivePaidBefore;
   const schedulePendingOnly = scheduleExpectedInstallments != null
     && onboardingMode === "EXISTING_DEBT"
     && Number.isInteger(schedulePaidBefore)
-    && schedulePaidBefore > 0
-    && scheduleFirstContractualInstallment === schedulePaidBefore + 1
+    && (schedulePaidBefore ?? 0) >= 1
+    && scheduleFirstContractualInstallment === (schedulePaidBefore ?? 0) + 1
     && scheduleLastContractualInstallment === scheduleExpectedInstallments;
   const scheduleIsFull = scheduleExpectedInstallments != null
     && installments.length === scheduleExpectedInstallments
@@ -454,6 +463,21 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     clearDocumentImportState();
   };
 
+  const applyBankLoanBaselineForCurrentMode = <T extends {
+    contractualInstallmentNumber: number;
+    isPaidBeforeTracking?: boolean;
+  }>(rows: T[], totalInstallments?: number | null, mode: OnboardingMode = onboardingMode, paidBefore: number | null = effectivePaidBefore): T[] => {
+    const knownTotal = totalInstallments != null && Number.isInteger(totalInstallments) && totalInstallments > 0
+      ? totalInstallments
+      : null;
+    const canApplyBaseline = mode === "NEW_DEBT"
+      || (Number.isInteger(paidBefore) && (paidBefore ?? 0) >= 1 && (knownTotal == null || (paidBefore ?? 0) < knownTotal));
+    if (!canApplyBaseline) {
+      return rows.map((row) => ({ ...row, isPaidBeforeTracking: false }));
+    }
+    return applyInitialBankLoanBaseline(rows, paidBefore ?? 0, knownTotal);
+  };
+
   const applyParsedSchedule = (rows: Array<{
     installmentNumber: number;
     contractualInstallmentNumber?: number | null;
@@ -477,9 +501,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       expectedFees: row.expectedFees.toString(),
       reportedBalance: row.reportedBalance == null ? "" : row.reportedBalance.toString(),
     }));
-    const paidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
     const knownTotal = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : null;
-    setInstallments(applyInitialBankLoanBaseline(normalizedRows, paidBefore, knownTotal));
+    setInstallments(applyBankLoanBaselineForCurrentMode(normalizedRows, knownTotal));
     setInstallmentAmountMode(amountMode);
     setPaymentFrequency(detectedFrequency);
     setScheduleEntryProvenance(provenance);
@@ -597,7 +620,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     if (extraction.ordinaryDueDay != null) setMonthlyDueDay(String(extraction.ordinaryDueDay));
     if (extraction.firstDueDate && (importedRows[0]?.contractualInstallmentNumber ?? 1) === 1) setFirstDueDate(extraction.firstDueDate);
     if (importedRows.length > 0) {
-      setInstallments(applyInitialBankLoanBaseline(importedRows, Number(installmentsPaidBeforeTracking || 0), extraction.termInstallments));
+      setInstallments(applyBankLoanBaselineForCurrentMode(importedRows, extraction.termInstallments));
       setPaymentFrequency(detectFrequencyFromDates(importedRows.map((row) => row.dueDate)));
       setInstallmentAmountMode(importedRows.slice(0, -1).every((row) => row.expectedAmount === importedRows[0]?.expectedAmount) ? "fixed" : "variable");
     }
@@ -617,14 +640,20 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     if (extraction.reportedBalance.amount != null) setReportedBalanceAmount(String(extraction.reportedBalance.amount));
 
     const original = extraction.originalPrincipal ?? extraction.financedAmount;
-    const paidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
     if (extraction.reportedBalance.inferredKind === "principal_balance" && extraction.reportedBalance.amount != null) {
       setOpeningPrincipalBalance(String(extraction.reportedBalance.amount));
       setOpeningBalanceSource("imported_principal");
-    } else if (original != null && Number.isInteger(paidBefore) && paidBefore >= 0 && (paidBefore === 0 || (importedRows.length >= paidBefore && importedRows.slice(0, paidBefore).every((row, index) => row.contractualInstallmentNumber === index + 1 && hasKnownAmount(row.expectedPrincipal))))) {
-      setOpeningPrincipalBalance(String(paidBefore === 0
-        ? original
-        : deriveCurrentPrincipalBalance(original, importedRows.slice(0, paidBefore).map((row) => ({ principal: Number(row.expectedPrincipal) })), paidBefore)));
+    } else if (onboardingMode === "EXISTING_DEBT"
+      && original != null
+      && Number.isInteger(paidBeforeForExisting)
+      && (paidBeforeForExisting ?? 0) >= 1
+      && importedRows.length >= (paidBeforeForExisting ?? 0)
+      && importedRows.slice(0, paidBeforeForExisting ?? 0).every((row, index) => row.contractualInstallmentNumber === index + 1 && hasKnownAmount(row.expectedPrincipal))) {
+      setOpeningPrincipalBalance(String(deriveCurrentPrincipalBalance(
+        original,
+        importedRows.slice(0, paidBeforeForExisting ?? 0).map((row) => ({ principal: Number(row.expectedPrincipal) })),
+        paidBeforeForExisting ?? 0,
+      )));
       setOpeningBalanceSource("schedule_derived");
     } else if (onboardingMode === "NEW_DEBT" && extraction.financedAmount != null) {
       setOpeningPrincipalBalance(String(extraction.financedAmount));
@@ -698,17 +727,20 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         return false;
       }
       const bankTerm = Number(plannedInstallmentCount);
-      const paidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
       if (onboardingMode === "EXISTING_DEBT") {
-        if (!Number.isInteger(paidBefore) || paidBefore < 0) {
-          setToast({ message: "La última cuota pagada debe ser un número entero igual o mayor a cero.", type: "error" });
+        if (paidBeforeRaw === "") {
+          setToast({ message: "Indica cuál fue la última cuota contractual que ya pagaste.", type: "error" });
+          return false;
+        }
+        if (!Number.isInteger(paidBeforeForExisting) || (paidBeforeForExisting ?? 0) < 1) {
+          setToast({ message: "Si ya vienes pagando este crédito, la última cuota pagada debe ser un número entero mayor o igual a 1.", type: "error" });
           return false;
         }
         if (!Number.isInteger(bankTerm) || bankTerm <= 0) {
           setToast({ message: "Indica el total de cuotas del contrato para ubicar la próxima cuota.", type: "error" });
           return false;
         }
-        if (paidBefore >= bankTerm) {
+        if ((paidBeforeForExisting ?? 0) >= bankTerm) {
           setToast({ message: "Este flujo registra créditos activos. La última cuota pagada debe ser menor al total de cuotas.", type: "error" });
           return false;
         }
@@ -849,6 +881,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
 
         await createBankLoan({
           ...payload,
+          onboardingMode,
           loanSubtype,
           contractNumber: contractNumber || null,
           amortizationMethod,
@@ -860,7 +893,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           gracePeriodType,
           gracePeriodInstallments: gracePeriodInstallments ? Number(gracePeriodInstallments) : null,
           balloonPaymentAmount: balloonPaymentAmount ? Number(balloonPaymentAmount) : null,
-           installmentsPaidBeforeTracking: onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0,
+           installmentsPaidBeforeTracking: onboardingMode === "EXISTING_DEBT" ? paidBeforeForExisting as number : 0,
            interestDayCountBasis,
            dueDateAdjustmentRule,
            installmentTotalMode,
@@ -962,6 +995,16 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     const status = reviewFieldStatus(documentImportExtraction, field);
     return status === "confirmed" ? "CONFIRMADO" : status === "review" ? "REVISAR" : "NO ENCONTRADO";
   };
+  const selectBankLoanEntryPath = (path: BankLoanEntryPath) => {
+    setBankLoanEntryPath(path);
+    if (path === "reconstruction") {
+      setScheduleSource("estimated");
+      setInterestCalculationMode("tea_estimate");
+    } else {
+      setScheduleSource("contractual");
+      setInterestCalculationMode("contract_schedule");
+    }
+  };
 
   return (
     <section className="mx-auto max-w-4xl rounded-3xl bg-white p-6 shadow-xl lg:p-8">
@@ -1046,11 +1089,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   setOnboardingMode("EXISTING_DEBT");
                   if (debtKind === "bank_loan") {
                     setBankBalanceInformation("unknown");
-                    const paidBefore = Number(installmentsPaidBeforeTracking || 0);
-                    if (Number.isInteger(paidBefore) && paidBefore >= 0) {
-                      const knownTotal = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : null;
-                      setInstallments((rows) => applyInitialBankLoanBaseline(rows, paidBefore, knownTotal));
-                    }
+                    const knownTotal = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : null;
+                    setInstallments((rows) => applyBankLoanBaselineForCurrentMode(rows, knownTotal, "EXISTING_DEBT", paidBeforeForExisting));
                   }
                 }}
                 className={`p-4 rounded-2xl border text-left transition-all ${
@@ -1100,21 +1140,53 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
               <p className="text-sm font-black uppercase tracking-wide text-indigo-950">Cómo cargar el contrato</p>
               <p className="mt-1 text-xs text-indigo-900">Puedes importar documentos, reconstruir el cronograma desde los términos o ingresar las filas manualmente.</p>
               <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <button type="button" onClick={() => { setBankLoanEntryPath("external_ai"); setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border-2 border-indigo-400 bg-white p-3 text-left shadow-sm ring-2 ring-indigo-500/10 hover:border-indigo-600">
-                  <p className="text-sm font-black text-indigo-950">Analizar con IA externa</p>
+                <button
+                  type="button"
+                  onClick={() => selectBankLoanEntryPath("external_ai")}
+                  aria-pressed={bankLoanEntryPath === "external_ai"}
+                  className={`rounded-xl border-2 p-3 text-left shadow-sm transition ${bankLoanEntryPath === "external_ai" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20" : "border-slate-200 bg-white hover:border-indigo-400"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-black text-indigo-950">Analizar con IA externa</p>
+                    {bankLoanEntryPath === "external_ai" && <Check className="h-5 w-5 shrink-0 text-indigo-600" aria-hidden="true" />}
+                  </div>
                   <span className="mt-1 inline-block rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] font-black uppercase text-white">Recomendado</span>
                   <p className="mt-1 text-[11px] text-slate-600">ChatGPT, Gemini, Claude u otra IA. No consume créditos de Caja Familiar.</p>
                 </button>
-                <button type="button" onClick={() => { setBankLoanEntryPath("integrated_ai"); setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
-                  <p className="text-sm font-black text-slate-900">Importar automáticamente con IA</p>
+                <button
+                  type="button"
+                  onClick={() => selectBankLoanEntryPath("integrated_ai")}
+                  aria-pressed={bankLoanEntryPath === "integrated_ai"}
+                  className={`rounded-xl border-2 p-3 text-left transition ${bankLoanEntryPath === "integrated_ai" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20" : "border-slate-200 bg-white hover:border-indigo-400"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-black text-slate-900">Importar automáticamente con IA</p>
+                    {bankLoanEntryPath === "integrated_ai" && <Check className="h-5 w-5 shrink-0 text-indigo-600" aria-hidden="true" />}
+                  </div>
                   <p className="mt-1 text-[11px] text-slate-600">Disponible cuando configures la API.</p>
                 </button>
-                <button type="button" onClick={() => { setBankLoanEntryPath("reconstruction"); setScheduleSource("estimated"); setInterestCalculationMode("tea_estimate"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
-                  <p className="text-sm font-black text-slate-900">Generar desde los datos del contrato</p>
+                <button
+                  type="button"
+                  onClick={() => selectBankLoanEntryPath("reconstruction")}
+                  aria-pressed={bankLoanEntryPath === "reconstruction"}
+                  className={`rounded-xl border-2 p-3 text-left transition ${bankLoanEntryPath === "reconstruction" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20" : "border-slate-200 bg-white hover:border-indigo-400"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-black text-slate-900">Generar desde los datos del contrato</p>
+                    {bankLoanEntryPath === "reconstruction" && <Check className="h-5 w-5 shrink-0 text-indigo-600" aria-hidden="true" />}
+                  </div>
                   <p className="mt-1 text-[11px] text-slate-600">Usa TEA, fechas y plazo; queda como estimación.</p>
                 </button>
-                <button type="button" onClick={() => { setBankLoanEntryPath("manual"); setScheduleSource("contractual"); setInterestCalculationMode("contract_schedule"); setStep("details"); }} className="rounded-xl border border-slate-200 bg-white p-3 text-left hover:border-indigo-400">
-                  <p className="text-sm font-black text-slate-900">Ingresar manualmente</p>
+                <button
+                  type="button"
+                  onClick={() => selectBankLoanEntryPath("manual")}
+                  aria-pressed={bankLoanEntryPath === "manual"}
+                  className={`rounded-xl border-2 p-3 text-left transition ${bankLoanEntryPath === "manual" ? "border-indigo-500 bg-indigo-50 ring-2 ring-indigo-500/20" : "border-slate-200 bg-white hover:border-indigo-400"}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-sm font-black text-slate-900">Ingresar manualmente</p>
+                    {bankLoanEntryPath === "manual" && <Check className="h-5 w-5 shrink-0 text-indigo-600" aria-hidden="true" />}
+                  </div>
                   <p className="mt-1 text-[11px] text-slate-600">Escribe o pega las filas oficiales del banco.</p>
                 </button>
               </div>
@@ -1283,7 +1355,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   resetKey={documentImportResetVersion}
                   completenessContext={{
                     onboardingMode,
-                    installmentsPaidBeforeTracking: onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0,
+                    installmentsPaidBeforeTracking: effectivePaidBefore,
                     currentPrincipal: effectiveOpeningPrincipalBalance,
                     creditorName,
                     currencyCode,
@@ -1582,32 +1654,47 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                       )}
                       {onboardingMode === "EXISTING_DEBT" && (
                         <div>
-                          <label className="block text-xs font-bold text-slate-700">Última cuota contractual que ya pagaste</label>
+                          <label className="block text-xs font-bold text-slate-700">Última cuota contractual que ya pagaste *</label>
                           <input
                             type="number"
-                            min="0"
+                            min="1"
                             step="1"
                             aria-label="Última cuota contractual que ya pagaste"
+                            aria-describedby="last-paid-installment-help last-paid-installment-error"
+                            aria-invalid={paidBeforeInputMessage != null}
+                            required
                             value={installmentsPaidBeforeTracking}
                             onChange={(e) => {
                               const value = e.target.value;
                               setInstallmentsPaidBeforeTracking(value);
-                              const paidBefore = Number(value || 0);
-                              if (Number.isInteger(paidBefore) && paidBefore >= 0) {
+                              const rawValue = value.trim();
+                              const paidBefore = rawValue === "" ? null : Number(rawValue);
+                              if (Number.isInteger(paidBefore) && (paidBefore ?? 0) >= 1) {
                                 const knownTotal = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : null;
-                                setInstallments((rows) => applyInitialBankLoanBaseline(rows, paidBefore, knownTotal));
+                                setInstallments((rows) => applyBankLoanBaselineForCurrentMode(rows, knownTotal));
+                              } else if (rawValue === "") {
+                                setInstallments((rows) => rows.map((row) => ({ ...row, isPaidBeforeTracking: false })));
+                                if (openingBalanceSource === "schedule_derived") {
+                                  setOpeningPrincipalBalance("");
+                                  setOpeningBalanceSource("none");
+                                }
                               }
                             }}
-                            placeholder="0"
-                            className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-slate-900"
+                            placeholder="Ej. 5"
+                            className={`mt-1 w-full rounded-xl border bg-white px-3 py-2.5 text-slate-900 ${paidBeforeInputMessage ? "border-red-400" : "border-slate-300"}`}
                           />
-                          <p className="mt-1 text-xs text-slate-600">No crea pagos ni movimientos históricos; solo ubica la próxima cuota.</p>
+                          <p id="last-paid-installment-help" className="mt-1 text-xs text-slate-600">Es obligatorio porque seleccionaste «Ya lo vengo pagando». No crea pagos ni movimientos históricos; solo ubica la próxima cuota.</p>
+                          {paidBeforeInputMessage && <p id="last-paid-installment-error" role="alert" className="mt-1 text-xs font-semibold text-red-700">{paidBeforeInputMessage}</p>}
                         </div>
                       )}
                     </div>
                     {onboardingMode === "EXISTING_DEBT" && Number.isInteger(Number(plannedInstallmentCount)) && Number(plannedInstallmentCount) > 0 && (
                       <div className="rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-semibold text-amber-950">
-                        {(() => { const summary = bankLoanBaselineSummary(Number(plannedInstallmentCount), Number(installmentsPaidBeforeTracking || 0)); return <>Última pagada: {summary.paid} · Próxima: {summary.nextContractualNumber ?? "—"} de {summary.total} · Pendientes: {summary.pending}</>; })()}
+                        {paidBeforeForExisting == null
+                          ? "Indica la última cuota pagada para ubicar tu próxima cuota."
+                          : Number.isInteger(paidBeforeForExisting) && paidBeforeForExisting >= 1 && paidBeforeForExisting < Number(plannedInstallmentCount)
+                            ? (() => { const summary = bankLoanBaselineSummary(Number(plannedInstallmentCount), paidBeforeForExisting); return <>Última pagada: {summary.paid} · Próxima: {summary.nextContractualNumber ?? "—"} de {summary.total} · Pendientes: {summary.pending}</>; })()
+                            : "Indica una última cuota pagada válida para ubicar tu próxima cuota."}
                       </div>
                     )}
                   </div>
@@ -1922,7 +2009,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                                const hasValidPeriodicRate = Number.isFinite(periodicNum) && periodicNum > 0 && Boolean(periodicRateBasis);
                                const termsNum = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : Number.NaN;
                                const insuranceInputs = estimatedInsuranceInputs();
-                               const paidBefore = onboardingMode === "EXISTING_DEBT" ? Number(installmentsPaidBeforeTracking || 0) : 0;
+                               const paidBefore = effectivePaidBefore;
 
                                if (!Number.isFinite(finAmt) || finAmt <= 0) throw new Error("El monto financiado debe ser mayor a cero.");
                                if (!hasValidTea && !hasValidPeriodicRate) throw new Error("Ingresa una TEA o una tasa periódica contractual válida.");
@@ -1956,7 +2043,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                                 installmentsPaidBeforeTracking: paidBefore,
                               });
 
-                              setInstallments(applyInitialBankLoanBaseline(est.rows.map((r) => ({
+                              setInstallments(applyBankLoanBaselineForCurrentMode(est.rows.map((r) => ({
                                 installmentNumber: r.installmentNumber,
                                 contractualInstallmentNumber: r.installmentNumber,
                                 isPaidBeforeTracking: false,
@@ -1967,7 +2054,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                                  expectedInsurance: r.expectedInsurance.toString(),
                                  expectedFees: r.expectedFees.toString(),
                                  reportedBalance: "",
-                              })), paidBefore, termsNum));
+                              })), termsNum));
                               setInstallmentAmountMode(est.installmentAmountMode);
                               setPlannedInstallmentAmount(est.financialInstallmentAmount.toString());
                               setPlannedInstallmentCount(est.rows.length.toString());
@@ -1983,10 +2070,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                               if (insuranceInputs.hasUnknownInsuranceCost || est.hasUnknownInsuranceDistribution) {
                                 warnings.push("El seguro total está registrado, pero no se incluyó en las cuotas porque no sabemos cómo lo distribuye el banco.");
                               }
-                              if (onboardingMode === "EXISTING_DEBT" && paidBefore > 0) {
+                              if (onboardingMode === "EXISTING_DEBT" && paidBefore != null && paidBefore > 0) {
                                 const theoretical = est.remainingPrincipalBalanceAfterPaidBeforeTracking;
                                 const actual = Number(openingPrincipalBalance);
-                                if (Number.isFinite(actual) && Math.abs(theoretical - actual) > 0.01) {
+                                if (theoretical != null && Number.isFinite(actual) && Math.abs(theoretical - actual) > 0.01) {
                                   warnings.push(`El saldo teórico del cronograma estimado es ${currencySymbol} ${theoretical.toFixed(2)}, pero el saldo actual informado es ${currencySymbol} ${actual.toFixed(2)}. Caja Familiar respetará el saldo actual informado por el banco.`);
                                 }
                               }
@@ -2724,7 +2811,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   <div><p className="text-xs text-slate-500">TEA</p><p className="font-bold">{teaPercent ? `${teaPercent}%` : "—"}</p></div>
                   <div><p className="text-xs text-slate-500">TCEA</p><p className="font-bold">{tceaPercent ? `${tceaPercent}%` : "—"}</p></div>
                    <div><p className="text-xs text-slate-500">Fuente del cronograma</p><p className="font-bold">{scheduleSource === "contractual" ? "Contractual" : scheduleSource === "reconstructed" ? "Reconstruida" : "Estimada"}</p></div>
-                  {onboardingMode === "EXISTING_DEBT" && <div><p className="text-xs text-slate-500">Situación actual</p><p className="font-bold">{(() => { const summary = bankLoanBaselineSummary(Number(plannedInstallmentCount || 0), Number(installmentsPaidBeforeTracking || 0)); return <>Última pagada: {summary.paid} · Próxima: {summary.nextContractualNumber ?? "—"} de {summary.total ?? "—"} · Pendientes: {summary.pending ?? "—"}</>; })()}</p></div>}
+                  {onboardingMode === "EXISTING_DEBT" && <div><p className="text-xs text-slate-500">Situación actual</p><p className="font-bold">{paidBeforeForExisting == null ? "Indica la última cuota pagada para ubicar tu próxima cuota." : (() => { const summary = bankLoanBaselineSummary(Number(plannedInstallmentCount || 0), paidBeforeForExisting); return <>Última pagada: {summary.paid} · Próxima: {summary.nextContractualNumber ?? "—"} de {summary.total ?? "—"} · Pendientes: {summary.pending ?? "—"}</>; })()}</p></div>}
                  </div>
                   {documentImportReady && documentImportExtraction && (
                    <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 space-y-3">
