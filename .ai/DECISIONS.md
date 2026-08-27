@@ -69,3 +69,38 @@ Date: 2026-08-25
 Status: active
 Decision: Production changes require orchestrator review, ordered migration, schema/RLS/advisor checks, deployment verification, and smoke tests.
 Reason: Prevent applying audited code without operational verification.
+
+## D-011 - Deterministic-first document intelligence
+
+Date: 2026-08-26
+Status: active
+Decision: Parse clearly structured XLS/XLSX/CSV/TSV/TXT schedules locally before considering the server-side AI provider.
+Reason: Avoid unnecessary cost and keep contractual schedule rows reproducible and testable.
+
+## D-012 - Reconstructed schedules are non-authoritative
+
+Date: 2026-08-26
+Status: active
+Decision: A mathematically reconciled reconstruction is stored as `reconstructed`, while official imported rows remain `contractual`; only user confirmation can create the loan.
+Reason: AI or inferred terms must never silently replace bank-provided amounts or write financial data without review.
+
+## D-013 - Temporary document privacy boundary
+
+Date: 2026-08-26
+Status: active
+Decision: Store uploads only in the private `bank-document-imports` bucket during analysis, keep operating metadata without raw documents/OCR, and delete objects in success and error paths.
+Reason: Contract scans and photographs may contain sensitive financial or personal information.
+
+## D-014 - Paid-tier boundary for real bank documents
+
+Date: 2026-08-26
+Status: active
+Decision: Real bank-document AI analysis must use the Gemini Paid Tier; the free tier is not permitted for documents containing PII or financial information, and this feature does not configure billing or a real API key.
+Reason: Preserve the privacy and operational boundary until the orchestrator explicitly configures a Preview-only paid-tier key.
+
+## D-015 - Permanent external AI import bridge
+
+Date: 2026-08-27
+Status: active
+Decision: Keep `Analizar con IA externa` as a permanent no-API bank-document path using the versioned `CAJA_FAMILIAR_BANK_DOCUMENT_V1` wrapper, local strict parsing/normalization, and the same V4/V5 financial validation and review gates; keep integrated Gemini available only when its server-side configuration is present.
+Reason: Let users analyze documents with a provider of their choice without consuming Caja Familiar AI credits, while preserving provider independence, PII/unknown-field filtering, mathematical validation, and explicit user confirmation before persistence.

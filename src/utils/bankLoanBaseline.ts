@@ -1,3 +1,5 @@
+import type { ScheduleSource } from "../types.js";
+
 export interface BankLoanBaselineRow {
   contractualInstallmentNumber: number;
   isPaidBeforeTracking?: boolean;
@@ -7,7 +9,7 @@ export interface BankLoanScheduleConsistencyInput {
   onboardingMode: "EXISTING_DEBT" | "NEW_DEBT";
   installmentsPaidBeforeTracking: number | string | null | undefined;
   plannedInstallmentCount: number | string | null | undefined;
-  scheduleSource: "contractual" | "estimated" | "manual" | null | undefined;
+  scheduleSource: ScheduleSource | null | undefined;
   installments: Array<{
     installmentNumber: number;
     contractualInstallmentNumber?: number | null;
@@ -103,7 +105,7 @@ export function bankLoanScheduleConsistencyError(input: BankLoanScheduleConsiste
     return null;
   }
 
-  if (input.scheduleSource !== "contractual") return null;
+  if (input.scheduleSource !== "contractual" && input.scheduleSource !== "reconstructed") return null;
 
   const expectedNext = paidBefore + 1;
   if (firstContractual > 1 && firstContractual !== expectedNext) {

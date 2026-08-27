@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination.js";
 import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors.js";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentAdvanceInput, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource, BankLoanProfile, DebtInsuranceTerms } from "../types.js";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentAdvanceInput, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource, BankLoanProfile, DebtInsuranceTerms, BankInterestDayCountBasis, BankDueDateAdjustmentRule, BankInstallmentTotalMode, BankReportedBalanceKind } from "../types.js";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage.js";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient.js";
 
@@ -728,6 +728,11 @@ export interface BankLoanCreateInput extends DebtCreateInput {
   downPaymentAmount?: number | null;
   financedAmount?: number | null;
   termInstallments?: number | null;
+  interestDayCountBasis?: BankInterestDayCountBasis | null;
+  dueDateAdjustmentRule?: BankDueDateAdjustmentRule | null;
+  installmentTotalMode?: BankInstallmentTotalMode | null;
+  reportedBalanceKind?: BankReportedBalanceKind | null;
+  reportedBalanceAmount?: number | null;
   gracePeriodType?: "none" | "total" | "partial";
   gracePeriodInstallments?: number | null;
   balloonPaymentAmount?: number | null;
@@ -760,6 +765,11 @@ export async function createBankLoan(input: BankLoanCreateInput): Promise<DebtCr
       financed_amount: input.financedAmount ?? null,
       term_installments: input.termInstallments ?? null,
       installments_paid_before_tracking: input.installmentsPaidBeforeTracking ?? 0,
+      interest_day_count_basis: input.interestDayCountBasis ?? null,
+      due_date_adjustment_rule: input.dueDateAdjustmentRule ?? "unknown",
+      installment_total_mode: input.installmentTotalMode ?? "unknown",
+      reported_balance_kind: input.reportedBalanceKind ?? null,
+      reported_balance_amount: input.reportedBalanceAmount ?? null,
       grace_period_type: input.gracePeriodType ?? "none",
       grace_period_installments: input.gracePeriodInstallments ?? null,
       balloon_payment_amount: input.balloonPaymentAmount ?? null,
@@ -1310,6 +1320,7 @@ function toDebtScheduleInstallmentRow(input: DebtScheduleInstallmentInput) {
     expected_interest: input.expectedInterest ?? null,
     expected_fees: input.expectedFees ?? null,
     expected_insurance: input.expectedInsurance ?? null,
+    reported_balance: input.reportedBalance ?? null,
   };
 }
 
@@ -1733,6 +1744,7 @@ function fromDebtInstallmentRow(row: Record<string, any>): DebtInstallment {
     expectedInterest: row.expected_interest == null ? null : Number(row.expected_interest),
     expectedFees: row.expected_fees == null ? null : Number(row.expected_fees),
     expectedInsurance: row.expected_insurance == null ? null : Number(row.expected_insurance),
+    reportedBalance: row.reported_balance == null ? null : Number(row.reported_balance),
     contractualInstallmentNumber: row.contractual_installment_number == null
       ? Number(row.installment_number)
       : Number(row.contractual_installment_number),
@@ -1785,6 +1797,11 @@ export function fromBankLoanProfileRow(row: Record<string, any>): BankLoanProfil
     installmentsPaidBeforeTracking: row.installments_paid_before_tracking == null
       ? 0
       : Number(row.installments_paid_before_tracking),
+    interestDayCountBasis: row.interest_day_count_basis ?? null,
+    dueDateAdjustmentRule: row.due_date_adjustment_rule ?? "unknown",
+    installmentTotalMode: row.installment_total_mode ?? "unknown",
+    reportedBalanceKind: row.reported_balance_kind ?? null,
+    reportedBalanceAmount: row.reported_balance_amount == null ? null : Number(row.reported_balance_amount),
     gracePeriodType: row.grace_period_type ?? "none",
     gracePeriodInstallments: row.grace_period_installments != null ? Number(row.grace_period_installments) : null,
     balloonPaymentAmount: row.balloon_payment_amount != null ? Number(row.balloon_payment_amount) : null,

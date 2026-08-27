@@ -47,8 +47,13 @@ export type DebtInsuranceRateBasis =
   | "total_credit_upfront"
   | "total_credit_unknown";
 
-export type ScheduleSource = "contractual" | "estimated" | "manual";
+export type ScheduleSource = "contractual" | "reconstructed" | "estimated" | "manual";
 export type DebtScheduleState = "current" | "pending_bank_schedule" | "missing";
+
+export type BankInterestDayCountBasis = "actual_days_360" | "actual_days_365";
+export type BankDueDateAdjustmentRule = "none" | "sunday_to_monday" | "weekend_to_next_business_day" | "contractual_dates" | "unknown";
+export type BankInstallmentTotalMode = "financial_installment_plus_costs" | "total_installment_including_costs" | "unknown";
+export type BankReportedBalanceKind = "principal_balance" | "schedule_financial_balance" | "total_remaining_payments" | "unknown";
 
 export type PrepaymentEffect =
   | "reduce_term"
@@ -69,6 +74,11 @@ export interface BankLoanProfile {
   financedAmount: number | null;
   termInstallments: number | null;
   installmentsPaidBeforeTracking?: number;
+  interestDayCountBasis?: BankInterestDayCountBasis | null;
+  dueDateAdjustmentRule?: BankDueDateAdjustmentRule | null;
+  installmentTotalMode?: BankInstallmentTotalMode | null;
+  reportedBalanceKind?: BankReportedBalanceKind | null;
+  reportedBalanceAmount?: number | null;
   gracePeriodType: "none" | "total" | "partial";
   gracePeriodInstallments: number | null;
   balloonPaymentAmount: number | null;
@@ -217,6 +227,7 @@ export interface DebtInstallment {
   expectedInterest: number | null;
   expectedFees: number | null;
   expectedInsurance: number | null;
+  reportedBalance?: number | null;
   contractualInstallmentNumber?: number | null;
   isPaidBeforeTracking?: boolean;
   createdByUserId: string;
@@ -517,6 +528,7 @@ export interface DebtScheduleInstallmentInput {
   expectedInterest?: number | null;
   expectedFees?: number | null;
   expectedInsurance?: number | null;
+  reportedBalance?: number | null;
 }
 
 export interface DebtAllocationInput {

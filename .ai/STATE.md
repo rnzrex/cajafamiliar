@@ -2,86 +2,62 @@
 
 ## Objective
 
-BANK LOAN ONBOARDING V3 is CLOSED in Production.
-
-The bank-loan onboarding now supports existing-loan baselines without synthetic history, contractual numbering distinct from internal schedule numbering, XLSX/XLS/CSV/TSV/TXT schedule import, fixed-total insurance semantics, original-contract estimation, and the reordered six-step bank UX.
+Implement and publish the permanent no-API External AI Import Bridge for BANK V4/V5 on `feat/bank-contract-reconstruction-v4-document-intelligence-v5`, then stop for orchestrator audit. Keep integrated Gemini dormant until an explicit server-side `GEMINI_API_KEY` configuration gate; do not merge, change Production again, write Vercel env vars, call real AI providers, or create financial test data.
 
 ## Repository
 
-- Default branch: `main`.
-- PR #63: MERGED.
-- Validated PR head: `389aeff376a38b6a1b4e3c85fde551d037254940`.
-- Merge commit: `65851e7e11f597e858e2eea606368dd04e78be9c`.
-- Read Git for the current HEAD because this continuity update is committed after the functional merge.
+- Branch: `feat/bank-contract-reconstruction-v4-document-intelligence-v5`.
+- Baseline before this block: `b0ae19b6b85e634fc888c6f999724802402f17b8`.
+- Published bridge commit: `5136ed6b5decdc5302ac344f292a373bdff72885`, pushed normally to the same remote branch; working tree is clean after the metadata checkpoint below.
+- Target PR: [#64](https://github.com/rnzrex/cajafamiliar/pull/64), expected to remain OPEN/DRAFT against `main`.
+- Migration `supabase/migrations/20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5.sql` was already applied by the previous Production gate and is immutable. This block must not edit it or add a migration.
 
-## Completed — BANK LOAN ONBOARDING V3
+## Completed
 
-- Added `bank_loan_profiles.installments_paid_before_tracking`.
-- Added `debt_installments.contractual_installment_number` and `is_paid_before_tracking`.
-- Pre-tracking installments are metadata-only: no historical movements, debt events, expenses, account changes, or allocations are fabricated.
-- Internal schedule numbering remains 1..N; contractual numbering preserves bank numbering such as 6..18 for partial imports.
-- Initial partial contractual schedules must start at `installments_paid_before_tracking + 1`; partial estimated schedules are rejected.
-- Pre-tracking rows cannot receive allocations; later schedule versions cannot inherit the baseline flag.
-- Bank form order: 1 Sobre el crédito, 2 Contrato original, 3 Situación actual, 4 Seguros y costos, 5 Cronograma, 6 Revisión.
-- Partial imports do not overwrite the original first due date; the first pending imported date is separate.
-- Import supports XLSX/XLS/CSV/TSV/TXT with aliases, preview, manual mapping, duplicate/continuity/date validation, and full or pending-only schedules.
-- Estimation prioritizes original financed amount, supports contractual periodic rate, does not use TCEA for interest, and compares theoretical vs actual current principal without overwriting the real baseline.
-- Fixed insurance supports per-installment, total-even, upfront, and unknown-distribution buckets independently, including cent adjustment.
-- Agenda, planning, intelligence, and debt detail share the contractual next-installment SSOT.
-- Existing BANK V2, QAPAQ, non-bank debt, pledge, credit-card, account, and movement semantics were preserved by regression coverage.
+- Added permanent versioned protocol `CAJA_FAMILIAR_BANK_DOCUMENT_V1` with the official prompt, strict JSON/fenced-JSON parser, 1 MB limit, version validation, malformed/ambiguous rejection, and no executable/HTML parsing.
+- Added safe normalization through the existing `BankDocumentExtraction` domain: unknown properties are ignored, null remains null, document aliases are sanitized, and PII metadata fields are filtered before review or persistence.
+- Extracted pure shared `financialValidation` for integrated and external paths, preserving pending-only official schedule rules, V4 reconciliation, reconstruction, reported-balance classification, and schedule provenance.
+- Added `BankExternalAiImportPanel` with privacy warning, copy-prompt button/toast, paste textarea, local-only interpretation, explicit review messaging, and no automatic save or external navigation.
+- Added `/api/bank-document/capabilities`, returning only integrated-AI availability/provider/model and never exposing secrets. Integrated upload UI now reports the no-key dormant state while retaining the option.
+- Added the four bank paths in onboarding: external AI, integrated AI, reconstruction from contract terms, and manual entry. Existing structured XLS/XLSX/CSV/TSV/TXT deterministic import continues to use the shared validator.
+- Added an anonymized 18-row ALFIN fixture covering actual/360, due-date adjustment, insurance, exact totals, paidBefore=5 => current principal 3294.39, and contractual next installment 6.
+- Added focused bridge/capabilities/UI coverage and a `test:bank-external-ai-import` script.
 
 ## Validation
 
-- `npm test`: PASS — 55 files / 893 tests.
-- Focused BANK V3: PASS — 15 tests.
-- DebtForm bank UX: PASS — 4 tests.
-- Build: PASS.
-- Typecheck API: PASS.
-- `git diff --check`: PASS.
-- BANK V3 SQL smoke: PASS.
-- BANK V2 / DEBT2B2 / DEBT5FA local suites: PASS.
-- Local HTTP smoke: 200.
-- Vercel Preview for final PR head `389aeff...`: READY.
+- `npm run test:bank-external-ai-import`: PASS — 2 files / 17 tests.
+- `npm run test:bank-document-v5-local`: PASS — 6 files / 26 tests.
+- `npm run test:bank-reconstruction-v4`: PASS — 1 file / 11 tests.
+- `npx vitest run src/components/BankLoanFormUX.test.tsx --reporter=verbose --testTimeout=15000`: PASS — 1 file / 7 tests, including external fixture import without provider calls.
+- `npm test -- --testTimeout=15000`: PASS — 65 files / 953 tests.
+- `npm run test:bank-loan-v3:local`: PASS — local SQL smoke suite.
+- `npm run test:bank-v2-local`: PASS — local SQL smoke suite, including security/RLS checks.
+- `npm run test:debt2b2`: PASS — local SQL payment/replay/prepayment/concurrency checks.
+- `npm run typecheck:api`: PASS.
+- `npm run build`: PASS — Vite build completed with only existing dynamic-import and large-chunk warnings.
+- `git diff --check`: PASS at last check.
+- `npm run test:debt5fa:local` and `npm run test:recon1a:local` were not run because their harnesses explicitly drop/recreate the local Docker public schema; the safety reviewer rejected that broad destructive reset. No workaround or destructive reset was attempted.
+- Automatic Vercel Preview: READY — deployment `dpl_7wZznRGvQLj9ojLkR56rf392A93U`, URL `https://cajafamiliar-pcajmd9g9-renzorex.vercel.app`, Git branch `feat/bank-contract-reconstruction-v4-document-intelligence-v5`, SHA `5136ed6b5decdc5302ac344f292a373bdff72885`.
 
-## Supabase Production
+## Production / Remote
 
-Project: `dxogrdvgdbvbdyoepqtx`.
-
-- Migration applied exactly: `20260826141250_bank_loan_onboarding_v3`.
-- Historical BANK V2 migrations remain unchanged.
-- Production audit PASS for new columns/defaults/constraints/index/triggers, `create_bank_loan_v1`, partial-schedule guard, allocation guard, RLS, and policy presence.
-- `create_bank_loan_v1` remains the intentional authenticated SECURITY DEFINER RPC with `auth.uid()`, household-membership authorization, `search_path=''`, and no EXECUTE for `anon`.
-- Security/performance advisors were reviewed. Current notices are pre-existing/intended or informational; the new pretracking index is naturally reported unused immediately after creation.
-- No Production test/junk financial data was created. No synthetic historical payments were inserted.
-
-## Vercel Production
-
-- Functional merge deployment: `dpl_84PKvggUcWDpY5UQWcepggKgBeXM`.
-- Deployment Git SHA: `65851e7e11f597e858e2eea606368dd04e78be9c`.
-- State: READY.
-- `https://cajafamiliar.vercel.app`: HTTP 200.
-- Runtime `error` / `fatal` check after deployment: no entries.
-
-## BANK V2 / Migration Safety
-
-Do not edit applied migrations:
-
-- `20260824225428_bank_credit_contract_v2.sql`
-- `20260825010000_bank_credit_contract_v2_audit_fix.sql`
-- `20260825071034_bank_credit_contract_v2_finalization.sql`
-- `20260825165854_bank_credit_contract_v2_schedule_state_guard.sql`
-- `20260826141250_bank_loan_onboarding_v3.sql`
-
-Future SQL changes require a new additive migration. Never use destructive reset/clean/force-push workflows for routine work.
+- Production migration status from the previous gate is unchanged: exactly `20260826204418_bank_contract_reconstruction_v4_document_intelligence_v5` was applied with `npx supabase db push --linked`; no manual SQL, repair, `--include-all`, reset, or new migration in this block.
+- Previous read-only Production verification confirmed the requested V4/V5 columns, `bank_document_import_jobs`, and private `bank-document-imports` bucket. No new Production operation is authorized for this block.
+- No `GEMINI_API_KEY`, Vercel env write, real Gemini/OpenAI call, real document upload, financial test data, merge, or frontend Production deployment.
+- PR #64 is OPEN/DRAFT, targets `main`, and head SHA is `5136ed6b5decdc5302ac344f292a373bdff72885`.
 
 ## Next Move
 
-BANK LOAN ONBOARDING V3 has no pending implementation gate. Reopen it only for a concrete Production regression or explicit new scope.
+1. Stop for orchestrator audit. Do not add Gemini secrets, change Production, mark PR ready, or merge.
 
-The next planned debt-domain objective is broader Peru debt taxonomy coverage (for example non-card revolving credit, overdraft, leasing/lease-back, merchant financing, and business-credit classifications), but it is not part of BANK V3.
+## Relevant Files
 
-## Last Handoff
-
-- Agent: ChatGPT orchestrator.
-- Date: 2026-08-26.
-- Summary: Production schema audit passed, PR #63 was marked ready and merged with exact expected head, merge deployment reached READY, public Production returned HTTP 200, and runtime error/fatal logs were clean. BANK LOAN ONBOARDING V3 is CLOSED in Production.
+- `src/utils/bankExternalAiImport.ts` — versioned prompt, strict parser, and external normalization/validation bridge.
+- `src/utils/bankDocumentFinancialValidation.ts` — shared pure V4/V5 financial validation pipeline.
+- `src/components/BankExternalAiImportPanel.tsx` — external AI prompt/paste/review UX.
+- `src/components/DebtForm.tsx` — four bank entry paths, source badge, review/save integration.
+- `api/bank-document/capabilities.ts` — safe integrated-AI capability endpoint.
+- `src/services/bankDocumentCapabilities.ts` — safe client capability read with unavailable fallback.
+- `src/utils/bankDocumentExtraction.ts` — allowlisted normalization and PII metadata filtering.
+- `src/utils/bankExternalAiFixture.ts` and `src/utils/bankExternalAiImport.test.ts` — anonymized financial fixture and bridge tests.
+- `.ai/DECISIONS.md` — D-015 permanent external AI bridge decision.

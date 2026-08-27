@@ -7,6 +7,7 @@ import { DebtForm } from "./DebtForm.js";
 import { BANK_LOAN_SUBTYPE_OPTIONS, AMORTIZATION_METHOD_OPTIONS } from "../utils/bankCreditFormHelper.js";
 import * as dataRepository from "../services/dataRepository.js";
 import { addMonthsClamped } from "../utils/debtEstimation.js";
+import { bankExternalAiPayloadText, BANK_EXTERNAL_AI_ALFIN_FIXTURE } from "../utils/bankExternalAiFixture.js";
 
 vi.mock("../services/dataRepository", async () => {
   const actual = await vi.importActual<typeof dataRepository>("../services/dataRepository.js");
@@ -23,7 +24,10 @@ vi.mock("../services/dataRepository", async () => {
 });
 
 describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
 
   function scheduleLines(start: number, end: number): string {
     return Array.from({ length: end - start + 1 }, (_, index) => {
@@ -125,5 +129,87 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     fireEvent.change(scheduleText, { target: { value: scheduleLines(1, 18) } });
     await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
     expect((originalFirstDueDate as HTMLInputElement).value).toBe("2026-01-15");
+  }, 15_000);
+
+  it("accepts pending-only official rows when current principal is supplied", async () => {
+    const user = userEvent.setup();
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito existente" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco V3" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 10000"), { target: { value: "10000" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 18"), { target: { value: "18" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 7300"), { target: { value: "7000" } });
+    fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/Pegar filas del cronograma/), { target: { value: scheduleLines(6, 18) } });
+    await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+
+    expect(screen.getByRole("button", { name: "Registrar deuda" })).toBeTruthy();
+    expect(screen.getByText(/Próxima: 6 de 18/)).toBeTruthy();
+    expect(screen.getByText("Contractual", { exact: true })).toBeTruthy();
+  }, 15_000);
+
+  it("blocks pending-only official rows when current principal is unavailable", async () => {
+    const user = userEvent.setup();
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito existente" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco V3" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 10000"), { target: { value: "10000" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. 18"), { target: { value: "18" } });
+    fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText(/Pegar filas del cronograma/), { target: { value: scheduleLines(6, 18) } });
+    await user.click(screen.getByRole("button", { name: "Interpretar Cronograma" }));
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).required).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+
+    expect(screen.queryByRole("button", { name: "Registrar deuda" })).toBeNull();
+  }, 15_000);
+
+  it("imports the anonymized 18-row fixture through external AI without calling a provider", async () => {
+    const user = userEvent.setup();
+    const fetchSpy = vi.fn().mockRejectedValue(new Error("network must not be needed for external import"));
+    vi.stubGlobal("fetch", fetchSpy);
+    render(
+      <DebtForm
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito externo" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+
+    expect(fetchSpy).not.toHaveBeenCalledWith("/api/bank-document/analyze", expect.anything());
+    expect(screen.getByText("Analizado con IA externa")).toBeTruthy();
+    expect(screen.getByText(/18 filas/)).toBeTruthy();
+    expect(screen.getByText("Contractual", { exact: true })).toBeTruthy();
+    expect(BANK_EXTERNAL_AI_ALFIN_FIXTURE.schedule).toHaveLength(18);
   }, 15_000);
 });

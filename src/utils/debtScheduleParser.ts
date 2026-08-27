@@ -9,6 +9,7 @@ export interface ContractualScheduleRowInput {
   expectedInterest: number;
   expectedInsurance: number;
   expectedFees: number;
+  reportedBalance?: number | null;
 }
 
 export interface ScheduleParseResult {
@@ -195,6 +196,7 @@ export function parseContractualScheduleText(rawText: string): ScheduleParseResu
     }
 
     const [expectedAmount, expectedPrincipal, expectedInterest, expectedInsurance, expectedFees] = parsedAmounts as [number, number, number, number, number];
+    const reportedBalance = tokens.length > dateIdx + 6 ? parseRequiredPeruvianNumeric(tokens[dateIdx + 6]) : null;
 
     if (expectedAmount <= 0) {
       errors.push(`Línea ${idx + 1} (Cuota ${instNo}): La cuota total debe ser mayor a cero.`);
@@ -227,6 +229,7 @@ export function parseContractualScheduleText(rawText: string): ScheduleParseResu
       expectedInterest: round2(expectedInterest),
       expectedInsurance: round2(expectedInsurance),
       expectedFees: round2(expectedFees),
+      reportedBalance: reportedBalance == null ? null : round2(reportedBalance),
     });
   }
 
