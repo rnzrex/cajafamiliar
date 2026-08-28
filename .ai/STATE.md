@@ -8,9 +8,9 @@ Close the final BANK PREPAYMENT RECALCULATION V1 blockers on `feat/bank-prepayme
 
 - Branch: `feat/bank-prepayment-recalculation-v1`.
 - Expected starting HEAD: `c238edc8ddf7c0a392822c3a8885be15b2111ef1`.
-- Current starting remote/local HEAD: `c238edc8ddf7c0a392822c3a8885be15b2111ef1`.
+- Current remote/local HEAD: `215ddd4ef2733793b1d5cdefd2a6cbbe1b8a34d6`.
 - Implementation commit: `39271a8451d5e80f84d67d7c292e4ea3c24905ba` (`fix(bank): preserve restored installment state`), pushed normally with no force-push.
-- Working tree is clean before this state-only checkpoint; this metadata update will be committed and pushed normally. Never force-push.
+- State-only handoff commit: `215ddd4ef2733793b1d5cdefd2a6cbbe1b8a34d6` (`chore(ai): record restored-state audit handoff`), pushed normally with no force-push. Working tree is clean.
 - PR: #66, base `main`, must remain OPEN/DRAFT.
 
 ## Constraints
@@ -54,7 +54,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 blockers on `feat/bank-prepayme
 
 - GitHub authentication was previously verified as `rnzrex` over HTTPS with keyring-backed credentials; no token was exposed.
 - PR #66: https://github.com/rnzrex/cajafamiliar/pull/66; keep `draft=true`.
-- Automatic Vercel Preview for implementation SHA `39271a8451d5e80f84d67d7c292e4ea3c24905ba`: `dpl_EqKVejTgT6i6ovphQFu7yBDFGrjx`, `https://cajafamiliar-m8kns2n8l-renzorex.vercel.app`, READY, exact branch/SHA, Preview target `null`.
+- Automatic Vercel Preview for final branch SHA `215ddd4ef2733793b1d5cdefd2a6cbbe1b8a34d6`: `dpl_9M8mG6BKvt3wJ3xt9j1khs2wDiE9`, `https://cajafamiliar-6zavbpbrk-renzorex.vercel.app`, READY, exact branch/SHA, Preview target `null`. Earlier implementation preview remains `dpl_EqKVejTgT6i6ovphQFu7yBDFGrjx`.
 
 ## Production
 
