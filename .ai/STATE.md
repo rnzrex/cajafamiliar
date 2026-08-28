@@ -2,79 +2,88 @@
 
 ## Objective
 
-Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-recalculation-v1 for orchestrator audit. Keep PR #66 DRAFT and do not touch Production.
+Close the final BANK PREPAYMENT RECALCULATION V1 audit blockers on `feat/bank-prepayment-recalculation-v1`, publish the implementation for orchestrator review, keep PR #66 DRAFT, and do not touch Production.
 
 ## Repository
 
-- Branch: feat/bank-prepayment-recalculation-v1.
-- Base: c46d4b6faaee1cdcb2121a53696f69f757790eb5.
-- Prior implementation was 89a562e74782f925a57b42af7caa3d53f7715ec3 (fix(bank): correct prepayment schedule semantics), followed by metadata checkpoints.
-- Current Audit Fix 2 implementation commit: 9fe9b5a191c591db3f084f9ba8acbd7ef8e50302 (fix(bank): close prepayment audit blockers), pushed normally with no force.
-- Working tree is clean; remote branch currently points to 48d94fadd232c61a3015553cde52cde92d6a091a (implementation plus final metadata checkpoint).
+- Branch: `feat/bank-prepayment-recalculation-v1`.
+- Base: `main`.
+- Previous expected HEAD before this gate: `0fe59e71cd35ad44dfc34f35e8b253902caff33e`.
+- Latest code-affecting implementation commit: `3663d70188b8dd0557a5ec0755d43a023c46b1cc` (`fix(bank): close final prepayment audit blockers`).
+- The implementation commit was pushed normally; any later metadata-only checkpoint must not alter application behavior.
+- Working tree is expected to be clean after the state checkpoint is committed and pushed.
 
 ## Constraints
 
-- Support only the bank fixed-schedule prepayment lifecycle: regular payment plus extra principal or standalone principal prepayment.
-- Preserve installment advance semantics separately; never treat it as principal prepayment.
-- Estimated schedules must remain non-contractual and non-authoritative.
-- Official post-prepayment entry starts empty and only accepts the bank-delivered schedule; prior schedules are read-only references.
-- Automatic simulations require current schedule provenance contractual + authoritative and never persist calculated principal as reported_balance.
-- No merge, Production Supabase writes, Gemini key/provider, Vercel env writes, manual Production deploy, real bank documents, financial test data, reset, force push, migration repair, --include-all, or manual SQL against Production.
+- No new branch, merge, force push, Production Supabase writes/migration, manual Production SQL, Gemini key/provider, Vercel environment writes, manual Production deploy, Production financial/test data, real bank documents, migration repair/reset/include-all, or destructive cleanup.
+- Modify the existing pending migration only if SQL changes are required; do not modify applied historical migrations or create a second migration.
+- PR #66 must remain OPEN/DRAFT.
 
 ## Completed
 
-- Corrected deterministic simulateBankPrepayment semantics for original term, insurance modes, upfront/even totals, positive/unknown fees, mid-period dates, future allocations, and warning-based persistence guards.
-- Added dedicated official schedule target selection from the exact prepayment event and dedicated update_bank_prepayment_schedule_v1 client path; generic schedule updates remain separate.
-- Added one forward-only migration: supabase/migrations/20260827214244_bank_prepayment_schedule_lifecycle_v1.sql. It validates/persists contractual installment numbers and reported balances, preserves estimated history, adds authoritative official replacement with same-trigger idempotency/conflict checks, and exposes only the authenticated public RPC.
-- Added a local-only SQL smoke script: scripts/test-bank-prepayment-lifecycle-local.mjs.
-- No applied historical migration was modified.
-- Fixed insurance with missing/unsupported basis no longer charges an invented amount; standalone prepayments and off-cycle payment + extra principal are conservative non-persistible paths.
-- Contractual numbering now rejects mixed explicit/missing rows and preserves all-absent fallback to internal numbers in client and SQL paths.
-- Added the fixed-schedule-only guard and stable client translation for update_bank_prepayment_schedule_v1.
+- Made the four-card bank fixed-schedule prepayment UX the sole source of truth for standalone prepayment and payment + extra principal; hidden legacy duplicate effect/source controls in that scenario.
+- Fixed the official-bank path to open the direct schedule editor, accept contract number/date/total/capital/interest/fees/insurance/reported balance/notes, and force `scheduleSource = contractual`.
+- Added server-side `DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE` guards for later effective prepayments and later contractual schedule versions.
+- Preserved exact official replay idempotency and same-identity payload conflict behavior by checking replay before stale creation guards.
+- Added client error-code parsing and Spanish translation for the stale-target error.
+- Corrected `financial_installment_plus_costs` reduce-term projected total to use the recalculated first-row all-in total.
+- Removed false exact interest/savings when unknown insurance or fees make persistence unsafe.
+- Fixed estimated Debt Detail balances to derive from future schedule principals only; missing principals remain “Por confirmar”. Estimated schedules continue to leave `reported_balance` null.
+- Extended UX, simulation, debt-detail, and local SQL smoke regression coverage.
+- Existing pending migration remains:
+  `supabase/migrations/20260827214244_bank_prepayment_schedule_lifecycle_v1.sql`.
 
 ## Validation
 
-- npm test -- --testTimeout=15000: PASS, 71 files / 1007 tests.
-- npm run test:bank-prepayment-simulation: PASS, 1 file / 17 tests.
-- Targeted Audit Fix 2 UX/simulation tests: PASS, 3 files / 28 tests.
-- Targeted UX/repository/planning tests: PASS, 4 files / 52 tests.
-- npm run test:bank-reconstruction-v4: PASS, 1 file / 11 tests.
-- npm run test:bank-document-v5-local: PASS, 6 files / 26 tests.
-- npm run build: PASS; only existing dynamic-import and large-chunk warnings.
-- npm run typecheck:api: PASS.
-- npx tsc -b --pretty false: PASS.
-- git diff --check: PASS.
-- node --check scripts/test-bank-prepayment-lifecycle-local.mjs: PASS.
-- npx supabase db lint --local exited 0 but reported unrelated pre-existing schema warnings/errors and did not validate the pending migration.
-- npx supabase db push --local --dry-run was blocked by existing local migration-history drift; no repair/pull/reset/include-all was run.
-- npm run test:bank-prepayment-lifecycle:local was attempted only against local Supabase and is blocked before SQL because Docker reports supabase_db_caja-familiar is not running. No container was started. No Production substitute was used. The script now covers estimated reported_balance null, numbering fallback/mixed rejection, and open-ended guard when the container is available.
-- Prior local SQL suites (test:bank-loan-v3:local, test:bank-v2-local, test:debt2b2) remain blocked for the same local-container condition.
+- `npm test -- --testTimeout=15000`: PASS, 72 files / 1012 tests.
+- `npm run test:bank-prepayment-simulation`: PASS, 18 tests.
+- `npm run test:bank-reconstruction-v4`: PASS, 11 tests.
+- `npm run test:bank-external-ai-import`: PASS, 29 tests.
+- `npm run test:bank-document-v5-local`: PASS, 26 tests.
+- `npm run build`: PASS; only existing dynamic-import and large-chunk warnings.
+- `npm run typecheck:api`: PASS.
+- `node --check scripts/test-bank-prepayment-lifecycle-local.mjs`: PASS.
+- `git diff --check`: PASS.
+- Local SQL smoke commands (`test:bank-prepayment-lifecycle:local`, `test:bank-loan-v3:local`, `test:bank-v2-local`, `test:debt2b2`): BLOCKED before SQL because Docker Desktop/local Supabase is unavailable; no Production substitute was used.
+- Earlier `npx supabase db lint --local` and local dry-run checks remain non-authoritative because the local container/history was unavailable or drifted; no repair/reset/include-all was used.
 
 ## Delivery
 
-- gh auth status: authenticated to github.com as rnzrex via keyring/HTTPS; token not exposed.
-- PR #66: https://github.com/rnzrex/cajafamiliar/pull/66, open, draft=true, base main, head branch feat/bank-prepayment-recalculation-v1, head SHA 48d94fadd232c61a3015553cde52cde92d6a091a. Body updated for Audit Fix 2.
-- Automatic Preview: deployment dpl_BaS7CrwDUyMqUaTjDMieJP4WPQ38, URL https://cajafamiliar-jee3n351z9-renzorex.vercel.app, branch alias https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app, exact Git SHA 48d94fadd232c61a3015553cde52cde92d6a091a, state READY, target null (preview).
-- Preview metadata was verified through the read-only Vercel API; no manual deployment was run.
+- GitHub authentication is valid for `rnzrex` via keyring/HTTPS; token was not exposed.
+- Normal push completed for implementation commit `3663d70188b8dd0557a5ec0755d43a023c46b1cc`.
+- PR #66: https://github.com/rnzrex/cajafamiliar/pull/66
+- PR state: OPEN, `draft=true`, base `main`, head branch `feat/bank-prepayment-recalculation-v1`.
+- PR body updated for Audit Fix 3.
+- Automatic Vercel Preview for the implementation commit:
+  - Deployment: `dpl_64iaVFBvvHniPRWboeDDGGE1GUv5`
+  - URL: https://cajafamiliar-54e3ffipv-renzorex.vercel.app
+  - Branch alias: https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app
+  - Exact Git SHA: `3663d70188b8dd0557a5ec0755d43a023c46b1cc`
+  - State: READY; target: null (Preview)
+- A metadata-only STATE checkpoint may create a newer automatic Preview, which must remain Preview and must not be manually deployed.
 
 ## Production
 
-- Production untouched. The new migration exists only in the branch and has not been applied to Supabase Production.
-- No Production schema/data write, Gemini key/provider configuration, Vercel environment write, frontend Production deployment, merge, real bank document, or test/junk financial data was used.
+- Production untouched.
+- Migration exists in the branch but is NOT applied to Supabase Production.
+- No Production schema/data write, frontend Production deployment, Vercel environment write, Gemini key/provider, merge, real bank document, or financial/test data was used.
 
 ## Next Step
 
-- State checkpoint is ready; stop for orchestrator audit. No Production migration or frontend deployment is authorized by this task.
-- Do not apply 20260827214244_bank_prepayment_schedule_lifecycle_v1.sql in Production from this task.
+- Stop for orchestrator Audit 3 review.
+- Do not apply `20260827214244_bank_prepayment_schedule_lifecycle_v1.sql` to Production from this task.
+- Do not merge PR #66 or mark it ready.
 
 ## Relevant Files
 
-- src/utils/bankPrepaymentSimulation.ts — corrected pure post-prepayment schedule engine.
-- src/components/DebtOperationForm.tsx — lifecycle choices, simulation confirmation, and official schedule payload selection.
-- src/components/DebtDetailModal.tsx — exact event-targeted official schedule actions.
-- src/components/DebtScheduleUpdateForm.tsx — dedicated official schedule-entry mode.
-- src/services/dataRepository.ts — dedicated official RPC client serializer/call.
-- src/utils/debtPlanning.ts — exact prepayment event target selection.
-- supabase/migrations/20260827214244_bank_prepayment_schedule_lifecycle_v1.sql — pending forward-only lifecycle migration.
-- scripts/test-bank-prepayment-lifecycle-local.mjs — local-only SQL smoke test.
+- `src/components/DebtOperationForm.tsx` — four-card UX and direct official-bank schedule editor.
+- `src/components/BankPrepaymentUX.test.tsx` — four-card/official/pending UX regression coverage.
+- `src/components/DebtOperationFormUX.test.tsx` — payment+extra and official form coverage.
+- `src/utils/bankPrepaymentSimulation.ts` — prepayment simulation and conservative savings behavior.
+- `src/utils/bankPrepaymentSimulation.test.ts` — ALFIN and unknown-cost regression coverage.
+- `src/utils/debtEstimatedBalance.ts` — immutable estimated historical balance derivation.
+- `src/components/DebtDetailModal.tsx` — estimated balance display.
+- `src/services/dataRepository.ts` and `src/utils/debtViewModel.ts` — stale-target error mapping.
+- `supabase/migrations/20260827214244_bank_prepayment_schedule_lifecycle_v1.sql` — pending forward-only lifecycle migration and stale guards.
+- `scripts/test-bank-prepayment-lifecycle-local.mjs` — local-only SQL smoke tests.
 
