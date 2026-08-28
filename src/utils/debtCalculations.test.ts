@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallmentCarriedAllocation, DebtScheduleVersion } from "../types";
-import { allocatedAmountForInstallment, currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, totalAllocatedAmountForInstallment } from "./debtCalculations";
+import { allocatedAmountForInstallment, currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, hasLaterEffectiveDebtFundEvent, totalAllocatedAmountForInstallment } from "./debtCalculations";
 
 function debt(overrides: Partial<Debt> = {}): Debt {
   return {
@@ -211,5 +211,15 @@ describe("effectiveInstallmentAllocations", () => {
     ];
     expect(totalAllocatedAmountForInstallment({ id: "i1", debtId: "d1" }, [], [payment], carried)).toBe(40);
     expect(totalAllocatedAmountForInstallment({ id: "i1", debtId: "d1" }, [], [payment, reversal], carried)).toBe(0);
+  });
+});
+
+describe("hasLaterEffectiveDebtFundEvent", () => {
+  it("detecta pagos posteriores y deja de considerarlos cuando se revierten", () => {
+    const target = event({ id: "p1", eventType: "principal_prepayment", eventDate: "2026-08-20", createdAt: "2026-08-20T00:00:00.000Z" });
+    const later = event({ id: "p2", eventType: "payment", eventDate: "2026-08-21", createdAt: "2026-08-21T00:00:00.000Z" });
+    const reversal = event({ id: "r2", eventType: "reversal", eventDate: "2026-08-22", reversalOfEventId: later.id });
+    expect(hasLaterEffectiveDebtFundEvent(target, [target, later])).toBe(true);
+    expect(hasLaterEffectiveDebtFundEvent(target, [target, later, reversal])).toBe(false);
   });
 });

@@ -21,6 +21,14 @@ export function effectiveDebtFundEvents(events: DebtEvent[], debtId?: string): D
   return effectiveDebtEvents(events, debtId).filter((event) => DEBT_FUND_EVENT_TYPES.has(event.eventType));
 }
 
+export function hasLaterEffectiveDebtFundEvent(targetEvent: Pick<DebtEvent, "id" | "debtId" | "eventDate" | "createdAt">, events: DebtEvent[]): boolean {
+  const targetOrder = `${targetEvent.eventDate}|${targetEvent.createdAt}|${targetEvent.id}`;
+  return effectiveDebtFundEvents(events, targetEvent.debtId).some((event) =>
+    event.id !== targetEvent.id
+    && `${event.eventDate}|${event.createdAt}|${event.id}` > targetOrder
+  );
+}
+
 export function currentDebtPrincipal(debt: Debt, events: DebtEvent[]): number {
   return debt.openingPrincipalBalance + effectiveDebtEvents(events, debt.id).reduce((sum, event) => sum + event.principalDelta, 0);
 }

@@ -118,12 +118,25 @@ const ids = {
   overageAfterReversalE2: "00000000-0000-4000-8000-000000001015",
   overageAfterReversalE3: "00000000-0000-4000-8000-000000001016",
   overageAfterReversalR0: "00000000-0000-4000-8000-000000001017",
+  coherenceDebt: "00000000-0000-4000-8000-000000001019",
+  coherenceP1: "00000000-0000-4000-8000-000000001020",
+  coherenceP2: "00000000-0000-4000-8000-000000001021",
+  coherenceR2: "00000000-0000-4000-8000-000000001022",
+  coherenceR1: "00000000-0000-4000-8000-000000001023",
+  atomicPrepaymentDebt: "00000000-0000-4000-8000-000000001024",
+  atomicPrepaymentEvent: "00000000-0000-4000-8000-000000001025",
+  atomicPaymentDebt: "00000000-0000-4000-8000-000000001026",
+  atomicPaymentEvent: "00000000-0000-4000-8000-000000001027",
+  laterPaymentDebt: "00000000-0000-4000-8000-000000001028",
+  laterPaymentP1: "00000000-0000-4000-8000-000000001029",
+  laterPaymentEvent: "00000000-0000-4000-8000-000000001030",
+  coherenceP2Again: "00000000-0000-4000-8000-000000001031",
 };
 
 function runSql(sql) {
   return execFileAsync(
     "docker",
-    ["exec", container, "psql", "-X", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-At", "-F", "|", "-c", sql],
+    ["exec", container, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres", "-At", "-F", "|", "-c", sql],
     { maxBuffer: 4 * 1024 * 1024 }
   );
 }
@@ -133,7 +146,7 @@ async function execSql(sql) {
 }
 
 function withUser(sql) {
-  return `begin; select set_config('request.jwt.claim.sub', '${ids.user}', true); select set_config('request.jwt.claim.role', 'authenticated', true); set local role authenticated; ${sql} commit;`;
+  return `begin; set local request.jwt.claim.sub = '${ids.user}'; set local request.jwt.claim.role = 'authenticated'; set local role authenticated; ${sql} commit;`;
 }
 
 function scheduleRows(contractualStart, count, reportedBalanceStart = null, amount = 100, principal = 80, interest = 20) {
@@ -150,6 +163,27 @@ function scheduleRows(contractualStart, count, reportedBalanceStart = null, amou
   })));
 }
 
+function scheduleRowsForPrincipal(contractualStart, count, totalPrincipal, reportedBalanceStart = null, interest = 20, fees = 0, insurance = 0) {
+  const totalPrincipalCents = Math.round(totalPrincipal * 100);
+  const basePrincipalCents = Math.floor(totalPrincipalCents / count);
+  const finalPrincipalCents = totalPrincipalCents - (basePrincipalCents * (count - 1));
+  return JSON.stringify(Array.from({ length: count }, (_, index) => {
+    const expectedPrincipal = (index === count - 1 ? finalPrincipalCents : basePrincipalCents) / 100;
+    const expectedAmount = expectedPrincipal + interest + fees + insurance;
+    return {
+      installment_number: index + 1,
+      contractual_installment_number: contractualStart + index,
+      due_date: new Date(Date.UTC(2026, 8 + index, 1)).toISOString().slice(0, 10),
+      expected_amount: expectedAmount,
+      expected_principal: expectedPrincipal,
+      expected_interest: interest,
+      expected_fees: fees,
+      expected_insurance: insurance,
+      ...(reportedBalanceStart == null ? {} : { reported_balance: reportedBalanceStart - index }),
+    };
+  }));
+}
+
 function scheduleRowsWithoutContractual(count = 2) {
   return JSON.stringify(Array.from({ length: count }, (_, index) => ({
     installment_number: index + 1,
@@ -160,6 +194,26 @@ function scheduleRowsWithoutContractual(count = 2) {
     expected_fees: 0,
     expected_insurance: 0,
   })));
+}
+
+function scheduleRowsForPrincipalWithoutContractual(count, totalPrincipal, reportedBalanceStart = null, interest = 20, fees = 0, insurance = 0) {
+  const totalPrincipalCents = Math.round(totalPrincipal * 100);
+  const basePrincipalCents = Math.floor(totalPrincipalCents / count);
+  const finalPrincipalCents = totalPrincipalCents - (basePrincipalCents * (count - 1));
+  return JSON.stringify(Array.from({ length: count }, (_, index) => {
+    const expectedPrincipal = (index === count - 1 ? finalPrincipalCents : basePrincipalCents) / 100;
+    const expectedAmount = expectedPrincipal + interest + fees + insurance;
+    return {
+      installment_number: index + 1,
+      due_date: new Date(Date.UTC(2026, 8 + index, 1)).toISOString().slice(0, 10),
+      expected_amount: expectedAmount,
+      expected_principal: expectedPrincipal,
+      expected_interest: interest,
+      expected_fees: fees,
+      expected_insurance: insurance,
+      ...(reportedBalanceStart == null ? {} : { reported_balance: reportedBalanceStart - index }),
+    };
+  }));
 }
 
 function createBaselineLoanSql(debtId, name, {
@@ -197,11 +251,14 @@ function reverseDebtSql({ debtId, reversalEventId, targetEventId, eventDate = '2
   )->>'idempotentReplay');`;
 }
 
-function recordPaymentSql({ debtId, eventId, movementId, eventDate = '2026-08-29', cashAmount = 10, principalAmount = 10, interestAmount = 0, allocations = "'[]'::jsonb" }) {
+function recordPaymentSql({ debtId, eventId, movementId, eventDate = '2026-08-29', cashAmount = 10, principalAmount = 10, interestAmount = 0, allocations = "'[]'::jsonb", extraPrincipalAmount = 0, prepaymentEffect = null, schedule = "[]", scheduleSource = null, scheduleNotes = null }) {
+  const effectSql = prepaymentEffect == null ? 'null' : `'${prepaymentEffect}'`;
+  const sourceSql = scheduleSource == null ? 'null' : `'${scheduleSource}'`;
+  const notesSql = scheduleNotes == null ? 'null' : `'${scheduleNotes}'`;
   return `select public.record_debt_payment_v3(
     '${ids.household}', '${debtId}', '${eventId}', '${movementId}',
     '${eventDate}', ${cashAmount}, '${ids.account}', 'Pago posterior reversal smoke', 'Pago de deuda',
-    ${principalAmount}, ${interestAmount}, 0, 0, 0, 0, null, true, ${allocations}, '[]'::jsonb, null, null
+    ${principalAmount}, ${interestAmount}, 0, 0, 0, ${extraPrincipalAmount}, ${effectSql}, true, ${allocations}, '${schedule}'::jsonb, ${notesSql}, ${sourceSql}
   );`;
 }
 
@@ -322,7 +379,7 @@ try {
       '${ids.household}', '${ids.debt}', '${ids.prepaymentEvent}', 'bank-prepayment-v1-movement',
       '2026-08-27', 100, '${ids.account}', 'Prepago lifecycle', 'Pago de deuda',
       100, 0, 0, 0, 0, 'reduce_term', true,
-      '${scheduleRows(7, 10)}'::jsonb,
+       '${scheduleRowsForPrincipal(7, 10, 900)}'::jsonb,
       'Estimación local', 'estimated'
     );
   `));
@@ -342,7 +399,7 @@ try {
   await execSql(withUser(`
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.debt}', '${ids.prepaymentEvent}', '2026-08-27',
-      '${scheduleRows(7, 10, 450)}'::jsonb,
+       '${scheduleRowsForPrincipal(7, 10, 900, 450)}'::jsonb,
       'Cronograma oficial local'
     );
   `));
@@ -358,16 +415,18 @@ try {
   if (officialMetadata !== "contractual|true|prepayment|true|7-16|450,449,448,447,446,445,444,443,442,441|true") throw new Error(`Official metadata was not preserved: ${officialMetadata}`);
   const history = await execSql(`select string_agg(schedule_source, ',' order by version_number) from public.debt_schedule_versions where trigger_event_id = '${ids.prepaymentEvent}';`);
   if (history !== "estimated,contractual") throw new Error(`Estimated schedule was not preserved: ${history}`);
+  const officialFinancialState = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.debt}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select opening_principal_balance + coalesce((select sum(principal_delta) from public.debt_events where debt_id = '${ids.debt}'), 0) from public.debts where id = '${ids.debt}');`);
+  if (officialFinancialState !== beforeOfficial) throw new Error(`Official schedule changed financial state: ${beforeOfficial} -> ${officialFinancialState}`);
 
   console.log("4. Verifying contractual-number fallback and mixed-number rejection...");
-  await execSql(withUser(`
+  await execSql(`
     insert into public.debt_events (
       id, household_id, debt_id, event_date, event_type, cash_amount, principal_delta,
       interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete, registered_by_user_id
     ) values
       ('${ids.mixedEvent}', '${ids.household}', '${ids.debt}', '2026-08-27', 'principal_prepayment', 100, -100, 0, 0, 0, 0, true, '${ids.user}'),
       ('${ids.fallbackEvent}', '${ids.household}', '${ids.debt}', '2026-08-27', 'principal_prepayment', 100, -100, 0, 0, 0, 0, true, '${ids.user}');
-  `));
+  `);
   const mixedRows = JSON.stringify([
     { installment_number: 1, contractual_installment_number: 7, due_date: "2026-09-01", expected_amount: 100, expected_principal: 80, expected_interest: 20, expected_fees: 0, expected_insurance: 0 },
     { installment_number: 2, contractual_installment_number: null, due_date: "2026-10-01", expected_amount: 100, expected_principal: 80, expected_interest: 20, expected_fees: 0, expected_insurance: 0 },
@@ -381,7 +440,7 @@ try {
   await execSql(withUser(`
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.debt}', '${ids.fallbackEvent}', '2026-08-27',
-      '${scheduleRowsWithoutContractual()}'::jsonb, 'Fallback numbering local'
+       '${scheduleRowsForPrincipalWithoutContractual(2, 700)}'::jsonb, 'Fallback numbering local'
     );
   `));
   const fallbackNumbers = await execSql(`
@@ -392,17 +451,18 @@ try {
   `);
   if (fallbackNumbers !== "1,2") throw new Error(`Absent contractual numbers did not fall back to internal numbers: ${fallbackNumbers}`);
 
+  const beforeReplayFinancial = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.debt}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select opening_principal_balance + coalesce((select sum(principal_delta) from public.debt_events where debt_id = '${ids.debt}'), 0) from public.debts where id = '${ids.debt}');`);
   console.log("5. Verifying idempotent replay, no extra event/movement, and conflict protection...");
   const replay = await execSql(withUser(`
     select (public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.debt}', '${ids.prepaymentEvent}', '2026-08-27',
-      '${scheduleRows(7, 10, 450)}'::jsonb,
+       '${scheduleRowsForPrincipal(7, 10, 900, 450)}'::jsonb,
       'Cronograma oficial local'
     )->>'idempotentReplay');
   `));
   if (replay !== "true") throw new Error(`Expected idempotent replay, received: ${replay}`);
   const afterOfficial = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.debt}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select opening_principal_balance + coalesce((select sum(principal_delta) from public.debt_events where debt_id = '${ids.debt}'), 0) from public.debts where id = '${ids.debt}');`);
-  if (afterOfficial !== beforeOfficial) throw new Error(`Official schedule changed financial state: ${beforeOfficial} -> ${afterOfficial}`);
+  if (afterOfficial !== beforeReplayFinancial) throw new Error(`Official replay changed financial state: ${beforeReplayFinancial} -> ${afterOfficial}`);
   await expectSqlError(withUser(`
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.debt}', '${ids.prepaymentEvent}', '2026-08-27',
@@ -422,14 +482,14 @@ try {
   await execSql(withUser(`
     select public.update_debt_contractual_schedule_v1(
       '${ids.household}', '${ids.debt}', '${ids.laterScheduleEvent}', '2026-08-29',
-      'manual_adjustment', '${scheduleRows(20, 2)}'::jsonb, 'Cronograma contractual posterior'
+      'manual_adjustment', '${scheduleRows(1, 2)}'::jsonb, 'Cronograma contractual posterior'
     );
   `));
   const latestBeforeReplay = await execSql(`select reason || '|' || version_number::text from public.debt_schedule_versions where debt_id = '${ids.debt}' order by version_number desc limit 1;`);
   const replayAfterLaterSchedule = await execSql(withUser(`
     select (public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.debt}', '${ids.prepaymentEvent}', '2026-08-27',
-      '${scheduleRows(7, 10, 450)}'::jsonb,
+       '${scheduleRowsForPrincipal(7, 10, 900, 450)}'::jsonb,
       'Cronograma oficial local'
     )->>'idempotentReplay');
   `));
@@ -458,7 +518,7 @@ try {
   await execSql(withUser(`
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.pendingDebt}', '${ids.pendingEvent}', '2026-08-27',
-      '${scheduleRows(2, 1, 900)}'::jsonb,
+       '${scheduleRowsForPrincipal(2, 1, 900, 900)}'::jsonb,
       'Cronograma oficial pending local'
     );
   `));
@@ -480,24 +540,24 @@ try {
       '${ids.household}', '${ids.stalePrepaymentDebt}', '${ids.stalePrepaymentP1}', 'bank-prepayment-v1-stale-p1',
       '2026-08-27', 100, '${ids.account}', 'Prepago stale P1', 'Pago de deuda',
       100, 0, 0, 0, 0, 'reduce_term', true,
-      '${scheduleRows(7, 2)}'::jsonb, 'Estimación stale P1', 'estimated'
+       '${scheduleRowsForPrincipal(7, 2, 900)}'::jsonb, 'Estimación stale P1', 'estimated'
     );
     select public.record_debt_prepayment_v3(
       '${ids.household}', '${ids.stalePrepaymentDebt}', '${ids.stalePrepaymentP2}', 'bank-prepayment-v1-stale-p2',
       '2026-08-28', 50, '${ids.account}', 'Prepago stale P2', 'Pago de deuda',
-      50, 0, 0, 0, 0, 'pending_bank_schedule', true,
-      '[]'::jsonb, null, null
+      50, 0, 0, 0, 0, 'reduce_term', true,
+      '${scheduleRowsForPrincipal(1, 2, 850)}'::jsonb, 'Estimación stale P2', 'estimated'
     );
   `));
   const stalePrepaymentBefore = await execSql(`select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.stalePrepaymentDebt}';`);
   await expectSqlError(withUser(`
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.stalePrepaymentDebt}', '${ids.stalePrepaymentP1}', '2026-08-27',
-      '${scheduleRows(7, 2, 900)}'::jsonb, 'Stale P1 must fail'
+       '${scheduleRowsForPrincipal(7, 2, 900, 900)}'::jsonb, 'Stale P1 must fail'
     );
   `), "DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE");
-  const stalePrepaymentAfter = await execSql(`select count(*)::text || '|' || (select prepayment_effect from public.debt_events where id = '${ids.stalePrepaymentP2}') || '|' || (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.stalePrepaymentDebt}' and trigger_event_id = '${ids.stalePrepaymentP1}' and schedule_source = 'contractual');`);
-  if (stalePrepaymentAfter !== `${stalePrepaymentBefore}|pending_bank_schedule|0`) throw new Error(`Stale prepayment changed current state: ${stalePrepaymentBefore} -> ${stalePrepaymentAfter}`);
+  const stalePrepaymentAfter = await execSql(`select (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.stalePrepaymentDebt}') || '|' || (select prepayment_effect from public.debt_events where id = '${ids.stalePrepaymentP2}') || '|' || (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.stalePrepaymentDebt}' and trigger_event_id = '${ids.stalePrepaymentP1}' and schedule_source = 'contractual');`);
+  if (stalePrepaymentAfter !== `${stalePrepaymentBefore}|reduce_term|0`) throw new Error(`Stale prepayment changed current state: ${stalePrepaymentBefore} -> ${stalePrepaymentAfter}`);
 
   console.log("9. Rejecting a stale official target after a later contractual schedule...");
   await execSql(withUser(`
@@ -516,17 +576,17 @@ try {
     );
     select public.update_debt_contractual_schedule_v1(
       '${ids.household}', '${ids.staleScheduleDebt}', '${ids.staleScheduleEvent}', '2026-08-29',
-      'manual_adjustment', '${scheduleRows(3, 2)}'::jsonb, 'Cronograma posterior stale test'
+      'manual_adjustment', '${scheduleRows(1, 2)}'::jsonb, 'Cronograma posterior stale test'
     );
   `));
   const staleScheduleBefore = await execSql(`select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.staleScheduleDebt}';`);
   await expectSqlError(withUser(`
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.staleScheduleDebt}', '${ids.staleScheduleP1}', '2026-08-27',
-      '${scheduleRows(1, 2, 900)}'::jsonb, 'Stale later schedule must fail'
+       '${scheduleRowsForPrincipal(1, 2, 900, 900)}'::jsonb, 'Stale later schedule must fail'
     );
   `), "DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE");
-  const staleScheduleAfter = await execSql(`select count(*)::text || '|' || (select reason from public.debt_schedule_versions where debt_id = '${ids.staleScheduleDebt}' order by version_number desc limit 1) || '|' || (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.staleScheduleDebt}' and trigger_event_id = '${ids.staleScheduleP1}' and schedule_source = 'contractual');`);
+  const staleScheduleAfter = await execSql(`select (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.staleScheduleDebt}') || '|' || (select reason from public.debt_schedule_versions where debt_id = '${ids.staleScheduleDebt}' order by version_number desc limit 1) || '|' || (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.staleScheduleDebt}' and trigger_event_id = '${ids.staleScheduleP1}' and schedule_source = 'contractual');`);
   if (staleScheduleAfter !== `${staleScheduleBefore}|manual_adjustment|0`) throw new Error(`Stale later schedule changed current state: ${staleScheduleBefore} -> ${staleScheduleAfter}`);
 
   console.log("10. Verifying the fixed-schedule guard for open-ended bank loans...");
@@ -535,8 +595,10 @@ try {
       '${ids.household}', '${ids.openDebt}', 'Crédito abierto', 'Banco lifecycle', 'bank_loan', 'PEN',
       '2026-01-01', '2026-08-27', 1000, 1000, null, null, 'unknown', 'monthly', null, null,
       null, null, 'Open-ended guard fixture', 'open_ended', 'unknown', null, null, null,
-      null, '[]'::jsonb, 'manual', '[]'::jsonb, '[]'::jsonb
+      jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'unknown', 'financed_amount', 1000), '[]'::jsonb, 'manual', '[]'::jsonb, '[]'::jsonb
     );
+  `));
+  await execSql(`
     insert into public.debt_events (
       id, household_id, debt_id, event_date, event_type, cash_amount, principal_delta,
       interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete, registered_by_user_id
@@ -544,13 +606,193 @@ try {
       '${ids.openEvent}', '${ids.household}', '${ids.openDebt}', '2026-08-27', 'principal_prepayment',
       100, -100, 0, 0, 0, 0, true, '${ids.user}'
     );
-  `));
+  `);
   await expectSqlError(withUser(`
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.openDebt}', '${ids.openEvent}', '2026-08-27',
       '${scheduleRows(1, 1)}'::jsonb, 'Open-ended must fail'
     );
   `), "DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED");
+
+  console.log("10b. Enforcing effective contractual targets and principal-coherent schedule imports...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.coherenceDebt, "Crédito coherence")}
+    ${recordPrepaymentSql({
+      debtId: ids.coherenceDebt,
+      eventId: ids.coherenceP1,
+      movementId: "bank-prepayment-v1-coherence-p1",
+      effect: "reduce_term",
+      schedule: scheduleRowsForPrincipal(1, 2, 900),
+      notes: "Coherence P1",
+      source: "estimated",
+    })}
+    ${recordPrepaymentSql({
+      debtId: ids.coherenceDebt,
+      eventId: ids.coherenceP2,
+      movementId: "bank-prepayment-v1-coherence-p2",
+      eventDate: '2026-08-28',
+      effect: "reduce_term",
+      schedule: scheduleRowsForPrincipal(1, 2, 800),
+      notes: "Coherence P2",
+      source: "estimated",
+    })}
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.coherenceDebt}', '${ids.coherenceP2}', '2026-08-28',
+      '${scheduleRowsForPrincipal(1, 2, 800)}'::jsonb, 'Coherence P2 official'
+    );
+  `));
+  const coherenceBeforeStale = await execSql(mutationFingerprintSql(ids.coherenceDebt));
+  await expectSqlError(withUser(`
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.coherenceDebt}', '${ids.coherenceP1}', '2026-08-27',
+      '${scheduleRowsForPrincipal(1, 2, 900)}'::jsonb, 'Coherence P1 stale'
+    );
+  `), "DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE");
+  const coherenceAfterStale = await execSql(mutationFingerprintSql(ids.coherenceDebt));
+  if (coherenceAfterStale !== coherenceBeforeStale) throw new Error(`Stale P1 target changed state: ${coherenceBeforeStale} -> ${coherenceAfterStale}`);
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.coherenceDebt,
+    reversalEventId: ids.coherenceR2,
+    targetEventId: ids.coherenceP2,
+    eventDate: '2026-08-30',
+    schedule: scheduleRowsForPrincipal(1, 2, 900),
+  })));
+  await execSql(withUser(`
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.coherenceDebt}', '${ids.coherenceP1}', '2026-08-27',
+      '${scheduleRowsForPrincipal(1, 2, 900)}'::jsonb, 'Coherence P1 official'
+    );
+  `));
+  const coherencePrincipalAfterRestore = await execSql(`select round((select sum(expected_principal) from public.debt_installments where schedule_version_id = (select id from public.debt_schedule_versions where debt_id = '${ids.coherenceDebt}' order by version_number desc limit 1)), 2)::text || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.coherenceDebt}'), 2)::text;`);
+  if (coherencePrincipalAfterRestore !== "900|900") throw new Error(`Reversed P2 did not restore P1 principal coherence: ${coherencePrincipalAfterRestore}`);
+  await execSql(withUser(`
+    ${recordPrepaymentSql({
+      debtId: ids.coherenceDebt,
+      eventId: ids.coherenceP2Again,
+      movementId: "bank-prepayment-v1-coherence-p2-again",
+      eventDate: '2026-09-01',
+      effect: "reduce_term",
+      schedule: scheduleRowsForPrincipal(1, 2, 800),
+      notes: "Coherence P2 again",
+      source: "estimated",
+    })}
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.coherenceDebt}', '${ids.coherenceP2Again}', '2026-09-01',
+      '${scheduleRowsForPrincipal(1, 2, 800)}'::jsonb, 'Coherence P2 again official'
+    );
+  `));
+  const coherenceReplayBefore = await execSql(`select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.coherenceDebt}';`);
+  const coherenceReplay = await execSql(withUser(`
+    select (public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.coherenceDebt}', '${ids.coherenceP1}', '2026-08-27',
+      '${scheduleRowsForPrincipal(1, 2, 900)}'::jsonb, 'Coherence P1 official'
+    )->>'idempotentReplay');
+  `));
+  const coherenceReplayAfter = await execSql(`select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.coherenceDebt}';`);
+  if (coherenceReplay !== "true" || coherenceReplayAfter !== coherenceReplayBefore) throw new Error(`Exact P1 replay was blocked or created a version after later P2: ${coherenceReplay} ${coherenceReplayBefore} -> ${coherenceReplayAfter}`);
+
+  console.log("10c. Enforcing atomic principal reconciliation on prepayment and payment-with-extra schedules...");
+  await execSql(withUser(createBaselineLoanSql(ids.atomicPrepaymentDebt, "Crédito atomic prepayment")));
+  const atomicPrepaymentBefore = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.atomicPrepaymentDebt}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.atomicPrepaymentDebt}') || '|' || (select count(*) from public.debt_installments where debt_id = '${ids.atomicPrepaymentDebt}') || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.atomicPrepaymentDebt}') || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.atomicPrepaymentDebt}'), 2)::text;`);
+  await expectSqlError(withUser(recordPrepaymentSql({
+    debtId: ids.atomicPrepaymentDebt,
+    eventId: ids.atomicPrepaymentEvent,
+    movementId: "bank-prepayment-v1-atomic-prepayment",
+    effect: "reduce_term",
+    schedule: scheduleRowsForPrincipal(1, 2, 800),
+    notes: "Atomic prepayment mismatch",
+    source: "estimated",
+  })), "DEBT_PREPAYMENT_SCHEDULE_NOT_CURRENT");
+  const atomicPrepaymentAfterFailure = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.atomicPrepaymentDebt}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.atomicPrepaymentDebt}') || '|' || (select count(*) from public.debt_installments where debt_id = '${ids.atomicPrepaymentDebt}') || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.atomicPrepaymentDebt}') || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.atomicPrepaymentDebt}'), 2)::text;`);
+  if (atomicPrepaymentAfterFailure !== atomicPrepaymentBefore) throw new Error(`Prepayment mismatch was not atomic: ${atomicPrepaymentBefore} -> ${atomicPrepaymentAfterFailure}`);
+  await execSql(withUser(recordPrepaymentSql({
+    debtId: ids.atomicPrepaymentDebt,
+    eventId: ids.atomicPrepaymentEvent,
+    movementId: "bank-prepayment-v1-atomic-prepayment",
+    effect: "reduce_term",
+    schedule: scheduleRowsForPrincipal(1, 2, 900),
+    notes: "Atomic prepayment match",
+    source: "estimated",
+  })));
+  const atomicPrepaymentSuccess = await execSql(`select round((select sum(expected_principal) from public.debt_installments where schedule_version_id = (select id from public.debt_schedule_versions where trigger_event_id = '${ids.atomicPrepaymentEvent}' order by version_number desc limit 1)), 2)::text || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.atomicPrepaymentDebt}'), 2)::text;`);
+  if (atomicPrepaymentSuccess !== "900|900") throw new Error(`Matching prepayment schedule was not persisted coherently: ${atomicPrepaymentSuccess}`);
+
+  await execSql(withUser(createBaselineLoanSql(ids.atomicPaymentDebt, "Crédito atomic payment")));
+  const atomicPaymentBefore = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.atomicPaymentDebt}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.atomicPaymentDebt}') || '|' || (select count(*) from public.debt_installments where debt_id = '${ids.atomicPaymentDebt}') || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.atomicPaymentDebt}') || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.atomicPaymentDebt}'), 2)::text;`);
+  await expectSqlError(withUser(recordPaymentSql({
+    debtId: ids.atomicPaymentDebt,
+    eventId: ids.atomicPaymentEvent,
+    movementId: "bank-prepayment-v1-atomic-payment",
+    eventDate: '2026-08-27',
+    cashAmount: 180,
+    principalAmount: 80,
+    extraPrincipalAmount: 100,
+    prepaymentEffect: "reduce_term",
+    schedule: scheduleRowsForPrincipal(1, 2, 800),
+    scheduleNotes: "Atomic payment mismatch",
+    scheduleSource: "estimated",
+  })), "DEBT_PREPAYMENT_SCHEDULE_NOT_CURRENT");
+  const atomicPaymentAfterFailure = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.atomicPaymentDebt}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.atomicPaymentDebt}') || '|' || (select count(*) from public.debt_installments where debt_id = '${ids.atomicPaymentDebt}') || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.atomicPaymentDebt}') || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.atomicPaymentDebt}'), 2)::text;`);
+  if (atomicPaymentAfterFailure !== atomicPaymentBefore) throw new Error(`Payment mismatch was not atomic: ${atomicPaymentBefore} -> ${atomicPaymentAfterFailure}`);
+  await execSql(withUser(recordPaymentSql({
+    debtId: ids.atomicPaymentDebt,
+    eventId: ids.atomicPaymentEvent,
+    movementId: "bank-prepayment-v1-atomic-payment",
+    eventDate: '2026-08-27',
+    cashAmount: 180,
+    principalAmount: 80,
+    extraPrincipalAmount: 100,
+    prepaymentEffect: "reduce_term",
+    schedule: scheduleRowsForPrincipal(1, 2, 820),
+    scheduleNotes: "Atomic payment match",
+    scheduleSource: "estimated",
+  })));
+  const atomicPaymentSuccess = await execSql(`select round((select sum(expected_principal) from public.debt_installments where schedule_version_id = (select id from public.debt_schedule_versions where trigger_event_id = '${ids.atomicPaymentEvent}' order by version_number desc limit 1)), 2)::text || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.atomicPaymentDebt}'), 2)::text;`);
+  if (atomicPaymentSuccess !== "820|820") throw new Error(`Matching payment schedule was not persisted coherently: ${atomicPaymentSuccess}`);
+
+  console.log("10d. Requiring official schedules after later regular payments to use the latest date and live principal...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.laterPaymentDebt, "Crédito later payment")}
+    ${recordPrepaymentSql({
+      debtId: ids.laterPaymentDebt,
+      eventId: ids.laterPaymentP1,
+      movementId: "bank-prepayment-v1-later-payment-p1",
+      effect: "pending_bank_schedule",
+      schedule: "[]",
+      notes: null,
+      source: null,
+    })}
+    ${recordPaymentSql({
+      debtId: ids.laterPaymentDebt,
+      eventId: ids.laterPaymentEvent,
+      movementId: "bank-prepayment-v1-later-payment",
+      eventDate: '2026-08-28',
+      cashAmount: 80,
+      principalAmount: 80,
+    })}
+  `));
+  const laterPaymentBeforeOfficial = await execSql(mutationFingerprintSql(ids.laterPaymentDebt));
+  await expectSqlError(withUser(`
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.laterPaymentDebt}', '${ids.laterPaymentP1}', '2026-08-27',
+      '${scheduleRowsForPrincipal(1, 2, 900)}'::jsonb, 'Later payment stale date'
+    );
+  `), "DEBT_PREPAYMENT_SCHEDULE_NOT_CURRENT");
+  const laterPaymentAfterFailure = await execSql(mutationFingerprintSql(ids.laterPaymentDebt));
+  if (laterPaymentAfterFailure !== laterPaymentBeforeOfficial) throw new Error(`Older official date changed state after later payment: ${laterPaymentBeforeOfficial} -> ${laterPaymentAfterFailure}`);
+  await execSql(withUser(`
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.laterPaymentDebt}', '${ids.laterPaymentP1}', '2026-08-28',
+      '${scheduleRowsForPrincipal(1, 2, 820)}'::jsonb, 'Later payment current schedule'
+    );
+  `));
+  const laterPaymentReplay = await execSql(withUser(`
+    select (public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.laterPaymentDebt}', '${ids.laterPaymentP1}', '2026-08-28',
+      '${scheduleRowsForPrincipal(1, 2, 820)}'::jsonb, 'Later payment current schedule'
+    )->>'idempotentReplay');
+  `));
+  if (laterPaymentReplay !== "true") throw new Error(`Exact replay after later regular payment was not idempotent: ${laterPaymentReplay}`);
 
   console.log("11. Reversing an estimated-only prepayment to the original contractual baseline...");
   await execSql(withUser(`
@@ -560,7 +802,7 @@ try {
       eventId: ids.reversalEstimatedP1,
       movementId: "bank-prepayment-v1-reversal-estimated",
       effect: "reduce_term",
-      schedule: scheduleRows(7, 2),
+       schedule: scheduleRowsForPrincipal(7, 2, 900),
       notes: "Estimación reversal",
       source: "estimated",
     })}
@@ -611,7 +853,7 @@ try {
       eventId: ids.reversalOfficialP1,
       movementId: "bank-prepayment-v1-reversal-official",
       effect: "other",
-      schedule: scheduleRows(7, 2, 900),
+       schedule: scheduleRowsForPrincipal(7, 2, 900, 900),
       notes: "Cronograma oficial reversal",
       source: "contractual",
     })}
@@ -640,13 +882,13 @@ try {
       eventId: ids.reversalCriticalP1,
       movementId: "bank-prepayment-v1-reversal-critical",
       effect: "reduce_term",
-      schedule: scheduleRows(7, 2),
+       schedule: scheduleRowsForPrincipal(7, 2, 900),
       notes: "Estimación critical",
       source: "estimated",
     })}
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.reversalCriticalDebt}', '${ids.reversalCriticalP1}', '2026-08-27',
-      '${scheduleRows(7, 2, 900)}'::jsonb, 'Cronograma oficial critical'
+       '${scheduleRowsForPrincipal(7, 2, 900, 900)}'::jsonb, 'Cronograma oficial critical'
     );
   `));
   const criticalBeforeReversal = await execSql(`select (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.reversalCriticalDebt}');`);
@@ -725,7 +967,7 @@ try {
     })}
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.reversalLaterDebt}', '${ids.reversalLaterP1}', '2026-08-27',
-      '${scheduleRows(7, 2, 900)}'::jsonb, 'Cronograma posterior reversal'
+       '${scheduleRowsForPrincipal(7, 2, 900, 900)}'::jsonb, 'Cronograma posterior reversal'
     );
   `));
   await execSql(withUser(reverseDebtSql({
@@ -756,7 +998,7 @@ try {
       eventId: ids.lateReversalP1,
       movementId: "bank-prepayment-v1-reversal-late",
       effect: "reduce_term",
-      schedule: scheduleRows(7, 2),
+       schedule: scheduleRowsForPrincipal(7, 2, 900),
       notes: "Estimación reversal late",
       source: "estimated",
     })}
@@ -786,7 +1028,7 @@ try {
       eventId: ids.dependencyPaymentP1,
       movementId: "bank-prepayment-v1-dependency-payment-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(7, 2),
+       schedule: scheduleRowsForPrincipal(7, 2, 900),
       notes: "Dependency payment P1",
       source: "estimated",
     })}
@@ -810,7 +1052,7 @@ try {
       eventId: ids.dependencyPrepaymentP1,
       movementId: "bank-prepayment-v1-dependency-prepayment-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(7, 2),
+       schedule: scheduleRowsForPrincipal(7, 2, 900),
       notes: "Dependency prepayment P1",
       source: "estimated",
     })}
@@ -819,10 +1061,10 @@ try {
       eventId: ids.dependencyPrepaymentP2,
       movementId: "bank-prepayment-v1-dependency-prepayment-p2",
       eventDate: '2026-08-29',
-      effect: "pending_bank_schedule",
-      schedule: "[]",
-      notes: null,
-      source: null,
+      effect: "reduce_term",
+      schedule: scheduleRowsForPrincipal(1, 2, 800),
+      notes: "Dependency prepayment P2",
+      source: "estimated",
     })}
   `));
   const prepaymentDependencyBefore = await execSql(mutationFingerprintSql(ids.dependencyPrepaymentDebt));
@@ -843,7 +1085,7 @@ try {
       eventId: ids.dependencyAdvanceP1,
       movementId: "bank-prepayment-v1-dependency-advance-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(7, 2),
+      schedule: scheduleRowsForPrincipal(7, 2, 900),
       notes: "Dependency advance P1",
       source: "estimated",
     })}
@@ -867,13 +1109,13 @@ try {
       eventId: ids.dependencyScheduleP1,
       movementId: "bank-prepayment-v1-dependency-schedule-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(7, 2),
+      schedule: scheduleRowsForPrincipal(7, 2, 900),
       notes: "Dependency schedule P1",
       source: "estimated",
     })}
     select public.update_debt_contractual_schedule_v1(
       '${ids.household}', '${ids.dependencyScheduleDebt}', '${ids.dependencyScheduleS2}', '2026-08-29',
-      'manual_adjustment', '${scheduleRows(20, 2)}'::jsonb, 'Dependency later schedule'
+      'manual_adjustment', '${scheduleRows(1, 2)}'::jsonb, 'Dependency later schedule'
     );
   `));
   const scheduleDependencyBefore = await execSql(mutationFingerprintSql(ids.dependencyScheduleDebt));
@@ -894,7 +1136,7 @@ try {
       eventId: ids.dependencyReversedP1,
       movementId: "bank-prepayment-v1-dependency-reversed-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(7, 2),
+      schedule: scheduleRowsForPrincipal(7, 2, 900),
       notes: "Dependency reversed P1",
       source: "estimated",
     })}
@@ -939,7 +1181,7 @@ try {
       eventId: ids.nestedLifecycleP1,
       movementId: "bank-prepayment-v1-nested-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(1, 2),
+      schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Nested P1",
       source: "estimated",
     })}
@@ -949,7 +1191,7 @@ try {
       movementId: "bank-prepayment-v1-nested-p2",
       eventDate: '2026-08-28',
       effect: "reduce_term",
-      schedule: scheduleRows(1, 2),
+      schedule: scheduleRowsForPrincipal(1, 2, 800),
       notes: "Nested P2",
       source: "estimated",
     })}
@@ -968,7 +1210,7 @@ try {
     reversalEventId: ids.nestedLifecycleR2,
     targetEventId: ids.nestedLifecycleP2,
     eventDate: '2026-08-30',
-    schedule: scheduleRows(1, 2),
+    schedule: scheduleRowsForPrincipal(1, 2, 900),
   })));
   await execSql(withUser(reverseDebtSql({
     debtId: ids.nestedLifecycleDebt,
@@ -993,7 +1235,7 @@ try {
       eventId: ids.nestedMetadataP1,
       movementId: "bank-prepayment-v1-nested-metadata-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(1, 2),
+      schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Nested metadata P1",
       source: "estimated",
     })}
@@ -1003,13 +1245,13 @@ try {
       movementId: "bank-prepayment-v1-nested-metadata-p2",
       eventDate: '2026-08-28',
       effect: "reduce_term",
-      schedule: scheduleRows(1, 2),
+      schedule: scheduleRowsForPrincipal(1, 2, 800),
       notes: "Nested metadata P2 estimate",
       source: "estimated",
     })}
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.nestedMetadataDebt}', '${ids.nestedMetadataP2}', '2026-08-28',
-      '${scheduleRows(1, 2)}'::jsonb, 'Nested metadata P2 official'
+      '${scheduleRowsForPrincipal(1, 2, 800)}'::jsonb, 'Nested metadata P2 official'
     );
   `));
   await expectSqlError(withUser(reverseDebtSql({
@@ -1024,7 +1266,7 @@ try {
     reversalEventId: ids.nestedMetadataR2,
     targetEventId: ids.nestedMetadataP2,
     eventDate: '2026-08-30',
-    schedule: scheduleRows(1, 2),
+    schedule: scheduleRowsForPrincipal(1, 2, 900),
   })));
   await execSql(withUser(reverseDebtSql({
     debtId: ids.nestedMetadataDebt,
@@ -1049,7 +1291,7 @@ try {
       eventId: ids.carriedFullP1,
       movementId: "bank-prepayment-v1-carried-full-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(1, 6),
+      schedule: scheduleRowsForPrincipal(1, 6, 820),
       notes: "Carried full P1",
       source: "estimated",
     })}
@@ -1097,7 +1339,7 @@ try {
       eventId: ids.carriedPartialP1,
       movementId: "bank-prepayment-v1-carried-partial-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(1, 6),
+      schedule: scheduleRowsForPrincipal(1, 6, 868),
       notes: "Carried partial P1",
       source: "estimated",
     })}
@@ -1144,7 +1386,7 @@ try {
       eventId: ids.carriedRevertedP1,
       movementId: "bank-prepayment-v1-carried-reverted-p1",
       effect: "reduce_term",
-      schedule: scheduleRows(1, 6),
+      schedule: scheduleRowsForPrincipal(1, 6, 900),
       notes: "Carried reverted P1",
       source: "estimated",
     })}
@@ -1161,7 +1403,7 @@ try {
   await execSql(withUser(`
     ${createBaselineLoanSql(ids.inverseTimingDebt, "Crédito inverse timing", { termInstallments: 6, schedule: scheduleRows(1, 6) })}
     ${recordPaymentSql({ debtId: ids.inverseTimingDebt, eventId: ids.inverseTimingPayment, movementId: "bank-prepayment-v1-inverse-timing-payment", eventDate: '2026-08-20', cashAmount: 40, principalAmount: 40, allocations: inverseTimingAllocation })}
-    ${recordPrepaymentSql({ debtId: ids.inverseTimingDebt, eventId: ids.inverseTimingP1, movementId: "bank-prepayment-v1-inverse-timing-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRows(1, 6), notes: "Inverse timing P1", source: "estimated" })}
+    ${recordPrepaymentSql({ debtId: ids.inverseTimingDebt, eventId: ids.inverseTimingP1, movementId: "bank-prepayment-v1-inverse-timing-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 860), notes: "Inverse timing P1", source: "estimated" })}
   `));
   await execSql(withUser(reverseDebtSql({ debtId: ids.inverseTimingDebt, reversalEventId: ids.inverseTimingR1, targetEventId: ids.inverseTimingP1, eventDate: '2026-08-22', schedule: scheduleRows(1, 6) })));
   const inverseTimingBefore = await execSql(`select ${effectiveCarriedAmountSql(ids.inverseTimingDebt, 'i.id')} || '|' || (select count(*) from public.debt_installment_carried_allocations where restored_installment_id = i.id) from public.debt_installments as i where i.debt_id = '${ids.inverseTimingDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.inverseTimingDebt)} and i.installment_number = 3;`);
@@ -1181,7 +1423,7 @@ try {
     ${createBaselineLoanSql(ids.multipleSourcesDebt, "Crédito multiple sources", { termInstallments: 6, schedule: scheduleRows(1, 6) })}
     ${recordPaymentSql({ debtId: ids.multipleSourcesDebt, eventId: ids.multipleSourcesE0, movementId: "bank-prepayment-v1-multiple-e0", eventDate: '2026-08-20', cashAmount: 30, principalAmount: 30, allocations: multipleSourcesAllocation0 })}
     ${recordPaymentSql({ debtId: ids.multipleSourcesDebt, eventId: ids.multipleSourcesE1, movementId: "bank-prepayment-v1-multiple-e1", eventDate: '2026-08-21', cashAmount: 20, principalAmount: 20, allocations: multipleSourcesAllocation1 })}
-    ${recordPrepaymentSql({ debtId: ids.multipleSourcesDebt, eventId: ids.multipleSourcesP1, movementId: "bank-prepayment-v1-multiple-p1", eventDate: '2026-08-22', effect: "reduce_term", schedule: scheduleRows(1, 6), notes: "Multiple sources P1", source: "estimated" })}
+    ${recordPrepaymentSql({ debtId: ids.multipleSourcesDebt, eventId: ids.multipleSourcesP1, movementId: "bank-prepayment-v1-multiple-p1", eventDate: '2026-08-22', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 850), notes: "Multiple sources P1", source: "estimated" })}
   `));
   await execSql(withUser(reverseDebtSql({ debtId: ids.multipleSourcesDebt, reversalEventId: ids.multipleSourcesR1, targetEventId: ids.multipleSourcesP1, eventDate: '2026-08-23', schedule: scheduleRows(1, 6) })));
   const multipleSourcesBefore = await execSql(`select ${effectiveCarriedAmountSql(ids.multipleSourcesDebt, 'i.id')} || '|' || (select count(*) from public.debt_installment_carried_allocations where restored_installment_id = i.id) from public.debt_installments as i where i.debt_id = '${ids.multipleSourcesDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.multipleSourcesDebt)} and i.installment_number = 3;`);
@@ -1198,11 +1440,11 @@ try {
   await execSql(withUser(`
     ${createBaselineLoanSql(ids.nestedLineageDebt, "Crédito nested lineage", { termInstallments: 6, schedule: scheduleRows(1, 6) })}
     ${recordPaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageE0, movementId: "bank-prepayment-v1-nested-e0", eventDate: '2026-08-20', cashAmount: 40, principalAmount: 40, allocations: nestedLineageAllocation })}
-    ${recordPrepaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageP1, movementId: "bank-prepayment-v1-nested-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRows(1, 6), notes: "Nested lineage P1", source: "estimated" })}
+    ${recordPrepaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageP1, movementId: "bank-prepayment-v1-nested-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 860), notes: "Nested lineage P1", source: "estimated" })}
   `));
   await execSql(withUser(reverseDebtSql({ debtId: ids.nestedLineageDebt, reversalEventId: ids.nestedLineageR1, targetEventId: ids.nestedLineageP1, eventDate: '2026-08-22', schedule: scheduleRows(1, 6) })));
   await execSql(withUser(`
-    ${recordPrepaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageP2, movementId: "bank-prepayment-v1-nested-p2", eventDate: '2026-08-23', effect: "reduce_term", schedule: scheduleRows(1, 6), notes: "Nested lineage P2", source: "estimated" })}
+    ${recordPrepaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageP2, movementId: "bank-prepayment-v1-nested-p2", eventDate: '2026-08-23', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 860), notes: "Nested lineage P2", source: "estimated" })}
   `));
   await execSql(withUser(reverseDebtSql({ debtId: ids.nestedLineageDebt, reversalEventId: ids.nestedLineageR2, targetEventId: ids.nestedLineageP2, eventDate: '2026-08-24', schedule: scheduleRows(1, 6) })));
   const nestedLineageBefore = await execSql(`select ${effectiveCarriedAmountSql(ids.nestedLineageDebt, 'i.id')} || '|' || (select count(*) from public.debt_installment_carried_allocations where restored_installment_id = i.id) from public.debt_installments as i where i.debt_id = '${ids.nestedLineageDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.nestedLineageDebt)} and i.installment_number = 3;`);
@@ -1216,7 +1458,7 @@ try {
   await execSql(withUser(`
     ${createBaselineLoanSql(ids.directCarriedDebt, "Crédito direct plus carried", { termInstallments: 6, schedule: scheduleRows(1, 6) })}
     ${recordPaymentSql({ debtId: ids.directCarriedDebt, eventId: ids.directCarriedE0, movementId: "bank-prepayment-v1-direct-carried-e0", eventDate: '2026-08-20', cashAmount: 40, principalAmount: 40, allocations: directCarriedAllocation })}
-    ${recordPrepaymentSql({ debtId: ids.directCarriedDebt, eventId: ids.directCarriedP1, movementId: "bank-prepayment-v1-direct-carried-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRows(1, 6), notes: "Direct plus carried P1", source: "estimated" })}
+    ${recordPrepaymentSql({ debtId: ids.directCarriedDebt, eventId: ids.directCarriedP1, movementId: "bank-prepayment-v1-direct-carried-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 860), notes: "Direct plus carried P1", source: "estimated" })}
   `));
   await execSql(withUser(reverseDebtSql({ debtId: ids.directCarriedDebt, reversalEventId: ids.directCarriedR1, targetEventId: ids.directCarriedP1, eventDate: '2026-08-22', schedule: scheduleRows(1, 6) })));
   const directCarriedCurrentAllocation = `jsonb_build_array(jsonb_build_object('installment_id', (select i.id from public.debt_installments as i where i.debt_id = '${ids.directCarriedDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.directCarriedDebt)} and i.installment_number = 3), 'allocated_amount', 30))`;
@@ -1232,7 +1474,7 @@ try {
   await execSql(withUser(`
     ${createBaselineLoanSql(ids.overageAfterReversalDebt, "Crédito overage after reversal", { termInstallments: 6, schedule: scheduleRows(1, 6) })}
     ${recordPaymentSql({ debtId: ids.overageAfterReversalDebt, eventId: ids.overageAfterReversalE0, movementId: "bank-prepayment-v1-overage-e0", eventDate: '2026-08-20', cashAmount: 40, principalAmount: 40, allocations: overageAllocation0 })}
-    ${recordPrepaymentSql({ debtId: ids.overageAfterReversalDebt, eventId: ids.overageAfterReversalP1, movementId: "bank-prepayment-v1-overage-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRows(1, 6), notes: "Overage after reversal P1", source: "estimated" })}
+    ${recordPrepaymentSql({ debtId: ids.overageAfterReversalDebt, eventId: ids.overageAfterReversalP1, movementId: "bank-prepayment-v1-overage-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 860), notes: "Overage after reversal P1", source: "estimated" })}
   `));
   await execSql(withUser(reverseDebtSql({ debtId: ids.overageAfterReversalDebt, reversalEventId: ids.overageAfterReversalR1, targetEventId: ids.overageAfterReversalP1, eventDate: '2026-08-22', schedule: scheduleRows(1, 6) })));
   const overageCurrentAllocation = `jsonb_build_array(jsonb_build_object('installment_id', (select i.id from public.debt_installments as i where i.debt_id = '${ids.overageAfterReversalDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.overageAfterReversalDebt)} and i.installment_number = 3), 'allocated_amount', 60))`;

@@ -780,6 +780,126 @@ revoke all privileges on function private.debt2b2_canonical_schedule(jsonb)
 revoke all privileges on function private.debt2b2_persisted_schedule(uuid)
   from public, anon, authenticated, service_role;
 
+-- A schedule version is a dependency only while the event lineage that
+-- generated it is effective. Keep this helper before every public RPC that
+-- uses it, including the official prepayment target guard below. Unknown or
+-- orphaned triggers remain effective conservatively.
+create or replace function private.debt2b2_is_effective_schedule_trigger(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_trigger_event_id uuid
+)
+returns boolean
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_trigger public.debt_events%rowtype;
+  v_parent public.debt_events%rowtype;
+begin
+  if p_trigger_event_id is null then
+    return true;
+  end if;
+
+  select e.*
+    into v_trigger
+    from public.debt_events as e
+   where e.id = p_trigger_event_id
+     and e.debt_id = p_debt_id
+     and e.household_id = p_household_id;
+  if not found then
+    return true;
+  end if;
+
+  if v_trigger.event_type = 'reversal' then
+    if v_trigger.reversal_of_event_id is null then
+      return true;
+    end if;
+
+    select e.*
+      into v_parent
+      from public.debt_events as e
+     where e.id = v_trigger.reversal_of_event_id
+       and e.debt_id = p_debt_id
+       and e.household_id = p_household_id;
+    if not found then
+      return true;
+    end if;
+
+    -- A reversal schedule is an undo branch, not a new dependency root,
+    -- once its parent is demonstrably reversed (including this trigger).
+    return not exists (
+      select 1
+        from public.debt_events as parent_reversal
+       where parent_reversal.debt_id = p_debt_id
+         and parent_reversal.household_id = p_household_id
+         and parent_reversal.event_type = 'reversal'
+         and parent_reversal.reversal_of_event_id = v_parent.id
+    );
+  end if;
+
+  return not exists (
+    select 1
+      from public.debt_events as reversal
+     where reversal.debt_id = p_debt_id
+       and reversal.household_id = p_household_id
+       and reversal.event_type = 'reversal'
+       and reversal.reversal_of_event_id = v_trigger.id
+  );
+end;
+$function$;
+
+revoke all privileges on function private.debt2b2_is_effective_schedule_trigger(uuid, uuid, uuid)
+  from public, anon, authenticated, service_role;
+
+-- Every strict post-operation schedule represents the complete remaining
+-- principal. Validate its principal total against the live event ledger; this
+-- helper only rejects mismatches and never mutates financial state.
+create or replace function private.debt2b2_validate_schedule_principal_v1(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_schedule_installments jsonb
+)
+returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_schedule_principal numeric;
+  v_current_principal numeric;
+begin
+  if p_schedule_installments is null
+     or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array'
+     or pg_catalog.jsonb_array_length(p_schedule_installments) = 0
+     or exists (
+       select 1
+         from pg_catalog.jsonb_array_elements(p_schedule_installments) as item(value)
+        where item.value->'expected_principal' is null
+           or item.value->'expected_principal' = 'null'::pg_catalog.jsonb
+           or pg_catalog.jsonb_typeof(item.value->'expected_principal') <> 'number'
+     ) then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
+
+  select coalesce(pg_catalog.sum((item.value->>'expected_principal')::numeric), 0::numeric)
+    into v_schedule_principal
+    from pg_catalog.jsonb_array_elements(p_schedule_installments) as item(value);
+
+  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
+  if pg_catalog.abs(
+       pg_catalog.round(v_schedule_principal, 2)
+       - pg_catalog.round(coalesce(v_current_principal, 0::numeric), 2)
+     ) > 0.01 then
+    raise exception 'DEBT_PREPAYMENT_SCHEDULE_NOT_CURRENT';
+  end if;
+end;
+$function$;
+
+revoke all privileges on function private.debt2b2_validate_schedule_principal_v1(uuid, uuid, jsonb)
+  from public, anon, authenticated, service_role;
+
 -- Official bank schedule replacement. This RPC has no movement or principal
 -- mutation path: it attaches a contractual schedule to the original
 -- prepayment event and leaves the financial ledger untouched.
@@ -802,6 +922,7 @@ declare
   v_debt public.debts%rowtype;
   v_event public.debt_events%rowtype;
   v_contractual_schedule public.debt_schedule_versions%rowtype;
+  v_latest_later_event public.debt_events%rowtype;
   v_schedule_count integer;
 begin
   if v_user_id is null then
@@ -917,7 +1038,7 @@ begin
      where later_event.debt_id = p_debt_id
        and later_event.household_id = p_household_id
        and later_event.id is distinct from p_prepayment_event_id
-       and (
+        and (
          later_event.event_type = 'principal_prepayment'
          or (later_event.event_type = 'payment' and coalesce(later_event.extra_principal_amount, 0) > 0)
        )
@@ -937,9 +1058,9 @@ begin
              later_event.created_at > v_event.created_at
              or (later_event.created_at = v_event.created_at and later_event.id > v_event.id)
            )
-         )
-       )
-  ) then
+          )
+        )
+    ) then
     raise exception 'DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE';
   end if;
 
@@ -980,11 +1101,61 @@ begin
                and later_schedule.created_at > v_event.created_at
              )
            )
+          )
+        )
+        and private.debt2b2_is_effective_schedule_trigger(
+          p_household_id,
+          p_debt_id,
+          later_schedule.trigger_event_id
+        )
+    ) then
+     raise exception 'DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE';
+   end if;
+
+  -- Regular payments and installment advances do not make the target stale by
+  -- themselves, but the bank document must be dated no earlier than the last
+  -- effective one. Principal reconciliation below remains the authority when
+  -- events share a DATE or the document date is otherwise ambiguous.
+  select later_event.*
+    into v_latest_later_event
+    from public.debt_events as later_event
+   where later_event.debt_id = p_debt_id
+     and later_event.household_id = p_household_id
+     and later_event.event_type in ('payment', 'installment_advance', 'principal_prepayment', 'payoff')
+     and (
+       later_event.event_date > v_event.event_date
+       or (
+         later_event.event_date = v_event.event_date
+         and (
+           later_event.created_at > v_event.created_at
+           or (later_event.created_at = v_event.created_at and later_event.id > v_event.id)
          )
        )
-  ) then
-    raise exception 'DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE';
+     )
+     and not exists (
+       select 1
+         from public.debt_events as reversal
+        where reversal.debt_id = later_event.debt_id
+          and reversal.household_id = later_event.household_id
+          and reversal.event_type = 'reversal'
+          and reversal.reversal_of_event_id = later_event.id
+     )
+   order by later_event.event_date desc, later_event.created_at desc, later_event.id desc
+   limit 1;
+
+  if found
+     and v_latest_later_event.event_type in ('payment', 'installment_advance')
+     and p_effective_date < v_latest_later_event.event_date then
+    raise exception 'DEBT_PREPAYMENT_SCHEDULE_NOT_CURRENT';
   end if;
+
+  -- The official upload is schedule-only, but it must still represent the
+  -- complete live principal after all effective financial activity.
+  perform private.debt2b2_validate_schedule_principal_v1(
+    p_household_id,
+    p_debt_id,
+    p_schedule_installments
+  );
 
   select pg_catalog.count(*)
     into v_schedule_count
@@ -1024,81 +1195,6 @@ revoke all privileges on function public.update_bank_prepayment_schedule_v1(uuid
   from public, anon, service_role;
 grant execute on function public.update_bank_prepayment_schedule_v1(uuid, uuid, uuid, date, jsonb, text)
   to authenticated;
-
--- A schedule version is a dependency only while the event lineage that
--- generated it is effective. Historical versions created by a later event
--- which has since been reversed are retained for audit, but do not block an
--- older schedule-generating reversal. Reversal-triggered schedules are
--- ignored only after their parent/reversal lineage is verified; an orphaned
--- trigger remains a dependency rather than being silently discarded.
-create or replace function private.debt2b2_is_effective_schedule_trigger(
-  p_household_id uuid,
-  p_debt_id uuid,
-  p_trigger_event_id uuid
-)
-returns boolean
-language plpgsql
-security invoker
-set search_path = ''
-as $function$
-declare
-  v_trigger public.debt_events%rowtype;
-  v_parent public.debt_events%rowtype;
-begin
-  if p_trigger_event_id is null then
-    return true;
-  end if;
-
-  select e.*
-    into v_trigger
-    from public.debt_events as e
-   where e.id = p_trigger_event_id
-     and e.debt_id = p_debt_id
-     and e.household_id = p_household_id;
-  if not found then
-    return true;
-  end if;
-
-  if v_trigger.event_type = 'reversal' then
-    if v_trigger.reversal_of_event_id is null then
-      return true;
-    end if;
-
-    select e.*
-      into v_parent
-      from public.debt_events as e
-     where e.id = v_trigger.reversal_of_event_id
-       and e.debt_id = p_debt_id
-       and e.household_id = p_household_id;
-    if not found then
-      return true;
-    end if;
-
-    -- The reversal schedule is an undo branch, not a new dependency root,
-    -- once its parent is demonstrably reversed (including this trigger).
-    return not exists (
-      select 1
-        from public.debt_events as parent_reversal
-       where parent_reversal.debt_id = p_debt_id
-         and parent_reversal.household_id = p_household_id
-         and parent_reversal.event_type = 'reversal'
-         and parent_reversal.reversal_of_event_id = v_parent.id
-    );
-  end if;
-
-  return not exists (
-    select 1
-      from public.debt_events as reversal
-     where reversal.debt_id = p_debt_id
-       and reversal.household_id = p_household_id
-       and reversal.event_type = 'reversal'
-       and reversal.reversal_of_event_id = v_trigger.id
-  );
-end;
-$function$;
-
-revoke all privileges on function private.debt2b2_is_effective_schedule_trigger(uuid, uuid, uuid)
-  from public, anon, authenticated, service_role;
 
 -- Restore a schedule from the locked baseline instead of trusting the
 -- client-provided replay payload as the source of row state. The payload is
@@ -2132,3 +2228,293 @@ $function$;
 
 revoke all privileges on function private.debt2b2_validate_advance_allocations(uuid, uuid, uuid, date, numeric, numeric, numeric, numeric, numeric, numeric, jsonb)
   from public, anon, authenticated, service_role;
+
+-- Re-define the two BANK V3 operation boundaries after the shared lifecycle
+-- helpers. New operations validate the complete resulting principal before
+-- persisting a supplied schedule; exact replays return after the persisted
+-- payload comparison and never compare an old schedule with today's balance.
+create or replace function public.record_debt_payment_v3(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_event_id uuid,
+  p_movement_id text,
+  p_event_date date,
+  p_cash_amount numeric,
+  p_account_id uuid,
+  p_description text,
+  p_category text,
+  p_principal_amount numeric,
+  p_interest_paid numeric,
+  p_fees_paid numeric,
+  p_insurance_paid numeric,
+  p_other_cost_paid numeric,
+  p_extra_principal_amount numeric,
+  p_prepayment_effect text,
+  p_breakdown_complete boolean,
+  p_allocations jsonb,
+  p_schedule_installments jsonb,
+  p_schedule_notes text,
+  p_schedule_source text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_result jsonb;
+  v_schedule public.debt_schedule_versions%rowtype;
+  v_extra numeric := coalesce(p_extra_principal_amount, 0);
+  v_schedule_count integer;
+  v_is_replay boolean;
+  v_debt_kind text;
+  v_repayment_structure text;
+begin
+  v_schedule_count := case
+    when p_schedule_installments is null then -1
+    when pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' then -1
+    else pg_catalog.jsonb_array_length(p_schedule_installments)
+  end;
+
+  if p_schedule_installments is null
+     or v_schedule_count < 0
+     or (v_schedule_count = 0 and (p_schedule_source is not null or coalesce(pg_catalog.btrim(p_schedule_notes), '') <> ''))
+     or (v_schedule_count > 0 and p_schedule_source not in ('contractual', 'estimated'))
+     or v_extra < 0
+     or (v_extra > 0 and p_prepayment_effect is null)
+     or (v_extra = 0 and p_prepayment_effect is not null)
+     or (p_prepayment_effect = 'pending_bank_schedule' and (v_extra <= 0 or v_schedule_count > 0))
+     or (v_schedule_count > 0 and p_prepayment_effect = 'pending_bank_schedule') then
+    raise exception 'INVALID_DEBT_PAYMENT';
+  end if;
+
+  -- Lock the debt before validating the contract state. The delegated V2 RPC
+  -- uses the same transaction, so all new-operation checks are atomic.
+  select d.debt_kind, d.repayment_structure
+    into v_debt_kind, v_repayment_structure
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+
+  if v_debt_kind = 'bank_loan' and v_repayment_structure = 'fixed_schedule'
+     and v_extra > 0
+     and v_schedule_count = 0
+     and p_prepayment_effect is distinct from 'pending_bank_schedule' then
+    raise exception 'INVALID_DEBT_PAYMENT';
+  end if;
+
+  if v_schedule_count > 0 or p_prepayment_effect = 'pending_bank_schedule' then
+    if v_debt_kind is not null and v_debt_kind <> 'bank_loan' then
+      raise exception 'DEBT_NOT_BANK_LOAN';
+    end if;
+  end if;
+
+  if v_schedule_count > 0 then
+    perform private.debt2b2_validate_schedule_v3(
+      p_event_date,
+      'prepayment',
+      p_schedule_installments
+    );
+  end if;
+
+  v_result := public.record_debt_payment_v2(
+    p_household_id,
+    p_debt_id,
+    p_event_id,
+    p_movement_id,
+    p_event_date,
+    p_cash_amount,
+    p_account_id,
+    p_description,
+    p_category,
+    p_principal_amount,
+    p_interest_paid,
+    p_fees_paid,
+    p_insurance_paid,
+    p_other_cost_paid,
+    p_extra_principal_amount,
+    p_prepayment_effect,
+    p_breakdown_complete,
+    p_allocations
+  );
+
+  v_is_replay := coalesce((v_result->>'idempotentReplay')::boolean, false);
+
+  if v_is_replay then
+    select s.* into v_schedule
+      from public.debt_schedule_versions as s
+     where s.trigger_event_id = p_event_id
+       and s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+     order by s.version_number desc
+     limit 1;
+
+    if v_schedule_count = 0 then
+      if v_schedule.id is not null then
+        raise exception 'DEBT_EVENT_ID_CONFLICT';
+      end if;
+    elsif v_schedule.id is null
+       or private.debt2b2_canonical_schedule(p_schedule_installments)
+            is distinct from private.debt2b2_persisted_schedule(v_schedule.id)
+       or v_schedule.notes is distinct from coalesce(p_schedule_notes, '')
+       or v_schedule.schedule_source is distinct from p_schedule_source then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    return v_result;
+  end if;
+
+  if v_schedule_count > 0 then
+    if v_result->'debt'->>'status' <> 'active' then
+      raise exception 'INVALID_DEBT_SCHEDULE';
+    end if;
+
+    -- V2 has already recorded the event and movement in this transaction, so
+    -- current_principal is the principal after this payment/extra principal.
+    perform private.debt2b2_validate_schedule_principal_v1(
+      p_household_id,
+      p_debt_id,
+      p_schedule_installments
+    );
+
+    perform private.debt2b2_create_schedule_v3(
+      p_household_id,
+      p_debt_id,
+      p_event_id,
+      p_event_date,
+      'prepayment',
+      p_schedule_notes,
+      p_schedule_installments,
+      v_user_id,
+      p_schedule_source
+    );
+
+    return private.debt2b2_fund_result(p_event_id, false);
+  end if;
+
+  return v_result;
+end;
+$function$;
+
+revoke all privileges on function public.record_debt_payment_v3(uuid, uuid, uuid, text, date, numeric, uuid, text, text, numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, jsonb, jsonb, text, text)
+  from public, anon, service_role;
+grant execute on function public.record_debt_payment_v3(uuid, uuid, uuid, text, date, numeric, uuid, text, text, numeric, numeric, numeric, numeric, numeric, numeric, text, boolean, jsonb, jsonb, text, text)
+  to authenticated;
+
+create or replace function public.record_debt_prepayment_v3(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_event_id uuid,
+  p_movement_id text,
+  p_event_date date,
+  p_cash_amount numeric,
+  p_account_id uuid,
+  p_description text,
+  p_category text,
+  p_principal_amount numeric,
+  p_interest_paid numeric,
+  p_fees_paid numeric,
+  p_insurance_paid numeric,
+  p_other_cost_paid numeric,
+  p_prepayment_effect text,
+  p_breakdown_complete boolean,
+  p_schedule_installments jsonb,
+  p_schedule_notes text,
+  p_schedule_source text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_result jsonb;
+  v_schedule_count integer;
+  v_is_replay boolean;
+  v_debt_kind text;
+  v_repayment_structure text;
+  v_result_schedule_source text;
+begin
+  v_schedule_count := case
+    when p_schedule_installments is null then -1
+    when pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' then -1
+    else pg_catalog.jsonb_array_length(p_schedule_installments)
+  end;
+
+  select d.debt_kind, d.repayment_structure
+    into v_debt_kind, v_repayment_structure
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+
+  if v_debt_kind = 'bank_loan' and v_repayment_structure = 'fixed_schedule' then
+    if v_schedule_count < 0
+       or (v_schedule_count = 0 and p_prepayment_effect is distinct from 'pending_bank_schedule')
+       or (v_schedule_count = 0 and (p_schedule_source is not null or coalesce(pg_catalog.btrim(p_schedule_notes), '') <> ''))
+       or (v_schedule_count > 0 and p_prepayment_effect = 'pending_bank_schedule')
+       or (v_schedule_count > 0 and p_schedule_source not in ('contractual', 'estimated')) then
+      raise exception 'INVALID_DEBT_PREPAYMENT';
+    end if;
+
+    if v_schedule_count > 0 then
+      perform private.debt2b2_validate_schedule_v3(
+        p_event_date,
+        'prepayment',
+        p_schedule_installments
+      );
+    end if;
+  end if;
+
+  -- V2 owns the financial persistence. Its replay path compares the exact
+  -- persisted event/schedule payload before this wrapper can inspect balance.
+  v_result := public.record_debt_prepayment_v2(
+    p_household_id,
+    p_debt_id,
+    p_event_id,
+    p_movement_id,
+    p_event_date,
+    p_cash_amount,
+    p_account_id,
+    p_description,
+    p_category,
+    p_principal_amount,
+    p_interest_paid,
+    p_fees_paid,
+    p_insurance_paid,
+    p_other_cost_paid,
+    p_prepayment_effect,
+    p_breakdown_complete,
+    p_schedule_installments,
+    p_schedule_notes,
+    p_schedule_source
+  );
+
+  v_is_replay := coalesce((v_result->>'idempotentReplay')::boolean, false);
+  if v_is_replay then
+    return v_result;
+  end if;
+
+  if v_schedule_count > 0 then
+    v_result_schedule_source := v_result->'scheduleVersion'->>'schedule_source';
+    if coalesce(v_result_schedule_source, p_schedule_source) in ('contractual', 'estimated') then
+      -- V2 has already recorded the prepayment, so this is the resulting live
+      -- principal. Any mismatch rolls back the complete V2 transaction.
+      perform private.debt2b2_validate_schedule_principal_v1(
+        p_household_id,
+        p_debt_id,
+        p_schedule_installments
+      );
+    end if;
+  end if;
+
+  return v_result;
+end;
+$function$;
+
+revoke all privileges on function public.record_debt_prepayment_v3(uuid, uuid, uuid, text, date, numeric, uuid, text, text, numeric, numeric, numeric, numeric, numeric, text, boolean, jsonb, text, text)
+  from public, anon, service_role;
+grant execute on function public.record_debt_prepayment_v3(uuid, uuid, uuid, text, date, numeric, uuid, text, text, numeric, numeric, numeric, numeric, numeric, text, boolean, jsonb, text, text)
+  to authenticated;

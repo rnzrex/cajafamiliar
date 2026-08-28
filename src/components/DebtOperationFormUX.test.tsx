@@ -478,4 +478,55 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     expect(screen.queryByLabelText("Fecha cuota 1")).toBeNull();
     expect(screen.getByText("Referencia de solo lectura · Contractual")).toBeTruthy();
   });
+
+  it("warns when the official prepayment schedule has later effective fund events", () => {
+    const prepaymentEvent: DebtEvent = {
+      id: "prepayment-qapaq-warning",
+      debtId: debt.id,
+      eventDate: "2026-08-20",
+      eventType: "principal_prepayment",
+      cashAmount: 500,
+      principalDelta: -500,
+      interestPaid: 0,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "movement-qapaq-warning",
+      reversalOfEventId: null,
+      description: "Prepago con pago posterior",
+      registeredByUserId: "user-1",
+      createdAt: "2026-08-20T00:00:00Z",
+      prepaymentEffect: "pending_bank_schedule",
+    };
+    const laterPayment: DebtEvent = {
+      ...prepaymentEvent,
+      id: "payment-qapaq-warning",
+      eventDate: "2026-08-21",
+      eventType: "payment",
+      cashAmount: 100,
+      principalDelta: -80,
+      movementId: "movement-qapaq-warning-payment",
+      description: "Pago posterior",
+      createdAt: "2026-08-21T00:00:00Z",
+      prepaymentEffect: null,
+    };
+    render(
+      <DebtScheduleUpdateForm
+        debt={debt}
+        debtEvents={[prepaymentEvent, laterPayment]}
+        installments={installments}
+        scheduleVersions={[schedule]}
+        mode="prepayment_schedule"
+        prepaymentEventId={prepaymentEvent.id}
+        onSaved={vi.fn()}
+        onCancel={vi.fn()}
+        setToast={vi.fn()}
+      />
+    );
+
+    const warning = screen.getByRole("alert");
+    expect(warning.textContent).toContain("HAY PAGOS POSTERIORES A ESTE PREPAGO");
+    expect(warning.textContent).toContain("su capital pendiente debe coincidir con el saldo actual");
+  });
 });

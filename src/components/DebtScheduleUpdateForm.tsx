@@ -7,6 +7,7 @@ import { makeUuid } from "../utils/storage.js";
 import { localDateString } from "../utils/date.js";
 import { translateDebtError } from "../utils/debtViewModel.js";
 import { getDebtScheduleLifecycleState } from "../utils/debtPlanning.js";
+import { hasLaterEffectiveDebtFundEvent } from "../utils/debtCalculations.js";
 
 interface ScheduleDraftRow {
   contractualInstallmentNumber: string;
@@ -80,6 +81,9 @@ export function DebtScheduleUpdateForm({
   const prepaymentEvent = prepaymentEventId
     ? debtEvents.find((event) => event.id === prepaymentEventId) ?? null
     : null;
+  const hasLaterEffectiveFundEvent = isPrepaymentSchedule
+    && prepaymentEvent != null
+    && hasLaterEffectiveDebtFundEvent(prepaymentEvent, debtEvents);
   const [eventDate, setEventDate] = useState(
     isPrepaymentSchedule
       ? prepaymentEvent?.eventDate ?? currentSchedule?.effectiveDate ?? localDateString(new Date())
@@ -232,6 +236,11 @@ export function DebtScheduleUpdateForm({
       {isPrepaymentSchedule && (
         <div className="mb-6 space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
           <p className="font-semibold">Ingresa aquí únicamente el nuevo cronograma que te entregó el banco. La estimación anterior se muestra solo como referencia y no será convertida automáticamente en contractual.</p>
+          {hasLaterEffectiveFundEvent && (
+            <p role="alert" className="rounded-xl border border-amber-300 bg-amber-100 p-3 font-bold">
+              HAY PAGOS POSTERIORES A ESTE PREPAGO. El cronograma que cargues debe estar actualizado después de esos pagos y su capital pendiente debe coincidir con el saldo actual.
+            </p>
+          )}
           {currentSchedule && currentInstallments.length > 0 ? (
             <div className="rounded-xl border border-amber-200 bg-white/70 p-3">
               <p className="font-bold">Referencia de solo lectura · {currentSchedule.scheduleSource === "estimated" ? "Estimado" : currentSchedule.scheduleSource === "contractual" ? "Contractual" : currentSchedule.scheduleSource === "reconstructed" ? "Reconstruido" : "Manual"}</p>

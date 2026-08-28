@@ -2,14 +2,14 @@
 
 ## Objective
 
-Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility blocker on `feat/bank-prepayment-recalculation-v1`, publish the fix for PR #66 audit, and keep the pending migration unapplied to Production.
+Close the final BANK PREPAYMENT RECALCULATION V1 contractual-coherence blockers on `feat/bank-prepayment-recalculation-v1`, publish the fix for PR #66 audit, and keep the pending migration unapplied to Production.
 
 ## Repository
 
 - Branch: `feat/bank-prepayment-recalculation-v1`.
-- Expected starting HEAD: `e13e974c09fd8bd4aa88395d83a5ec894646d1d0`.
-- Implementation commit: `8a8726b53f57b9aeb0c800391c2d5d0be6b19214` (`fix(bank): preserve carried allocation lineage`).
-- The branch also contains metadata-only operational-state handoff commit(s); Git remains authoritative for the exact current tip.
+- Expected starting HEAD: `3528641bebb77aff05a2d2657f5d48d17b02b985`.
+- Implementation commit: pending; current working tree contains the contractual-coherence fix.
+- Prior carried-lineage implementation remains in history and must not be redesigned.
 - PR: #66, base `main`, must remain OPEN/DRAFT.
 - Next commit: metadata-only operational-state handoff; no implementation change.
 
@@ -27,10 +27,14 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 - Updated client types, snapshots, normalization, planning, detail/progress views, payment/advance allocation validation, and allocation UI. `is_paid_before_tracking` remains independent and direct effective allocations remain economic-only.
 - Added inverse timing, multiple-source, nested, direct-plus-carried, source-reversal, replay, and post-reversal overage SQL smoke cases in `scripts/test-bank-prepayment-lifecycle-local.mjs`.
 - Removed all stale `carried_allocated_amount` / `carriedAllocatedAmount` references from source, migration, and smoke harness.
+- Added `private.debt2b2_is_effective_schedule_trigger` before the official schedule RPC and made historical contractual versions block only while their trigger lineage is effective; unknown/orphan/null triggers remain conservative blockers.
+- Added `private.debt2b2_validate_schedule_principal_v1` with 2-decimal rounding and 0.01 tolerance, used by payment-with-extra, prepayment, and official schedule update paths without mutating financial state.
+- Added later effective payment/installment-advance date protection, client error mapping, exact Spanish translation, and a non-blocking `DebtScheduleUpdateForm` warning.
+- Corrected lifecycle smoke fixtures to reconcile complete post-operation schedule principal totals and added atomic mismatch/match, effective P2 reversal, replay, and later-payment cases.
 
 ## Validation
 
-- `npm test -- --testTimeout=15000`: PASS, 74 files / 1033 tests.
+- `npm test -- --testTimeout=15000`: PASS, 74 files / 1036 tests.
 - Focused carried/LIFO suite (`debtCalculations`, `debtViewModel`, `debtPlanning`, `debtReversalDependencies`): PASS, 4 files / 68 tests.
 - `npm run test:bank-prepayment-simulation`: PASS, 1 file / 18 tests.
 - `npm run test:bank-reconstruction-v4`: PASS, 1 file / 11 tests.
@@ -40,13 +44,15 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 - `npm run typecheck:api`: PASS.
 - `node --check scripts/test-bank-prepayment-lifecycle-local.mjs`: PASS.
 - `git diff --check`: PASS.
-- SQL smoke `npm run test:bank-prepayment-lifecycle:local`: BLOCKED before SQL because Docker API/named pipe is unavailable and `.docker/config.json` is access-denied.
-- Existing SQL smokes `npm run test:bank-loan-v3:local`, `npm run test:bank-v2-local`, and `npm run test:debt2b2`: BLOCKED for the same local Docker unavailability. No Production substitute was used.
+- `docker info` is available only with escalated Docker Desktop access; normal sandbox access cannot open the Docker named pipe.
+- `npx supabase db push --local` was not usable because the local database contains remote-only migration versions and the command suggested forbidden migration repair. The pending migration was executed directly against the local container only for smoke validation; Production was never contacted.
+- SQL smoke `npm run test:bank-prepayment-lifecycle:local`: BLOCKED by local database drift after reaching the lifecycle cases. The local DB has remote-only later migrations (`20260828100000`, `20260828120000`) and their `private.require_bank_loan_schedule` trigger rejects the legacy open-ended fixture with `BANK_SCHEDULE_REQUIRED`; no trigger was disabled and no reset/repair was used.
+- Existing SQL smokes `npm run test:bank-loan-v3:local`, `npm run test:bank-v2-local`, and `npm run test:debt2b2`: not re-approved after the local migration-history mismatch; no Production substitute was used.
 
 ## Delivery
 
 - GitHub authentication was previously verified as `rnzrex` over HTTPS with keyring-backed credentials; no token was exposed.
-- The implementation and subsequent metadata-only handoff were pushed normally to `origin/feat/bank-prepayment-recalculation-v1`.
+- The prior carried-lineage implementation and metadata handoff were pushed normally; the current contractual-coherence changes are not yet committed/pushed.
 - PR #66 body was updated while preserving `draft=true`; it documents the relational carried-lineage architecture, effective reversal behavior, validation counts, and SQL/Docker limitation.
 - Automatic Preview deployments are Git-triggered only; the final branch tip must be verified against its exact SHA before handoff.
 
@@ -57,7 +63,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 
 ## Next Step
 
-- No further engineering action is pending for this gate. The final report must include the exact remote SHA, PR #66 OPEN/DRAFT status, and the Git-triggered Preview matching that SHA.
+- Commit/push the current contractual-coherence implementation normally, update PR #66 while preserving OPEN/DRAFT, and verify the Git-triggered Preview for the new SHA. Report the SQL gate as blocked by local migration-history drift.
 - Do not apply the pending migration to Production, merge PR #66, mark it ready, add Gemini secrets, or deploy Production.
 
 ## Relevant Files
@@ -69,3 +75,5 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 - `src/components/DebtOperationForm.tsx`, `src/components/DebtDetailModal.tsx`, `src/App.tsx` — carried-aware UI and data wiring.
 - `src/services/dataRepository.ts`, `src/services/authoritativeSync.ts`, `src/utils/debtNormalizers.ts`, `src/utils/storage.ts` — remote rows, RPC result payloads, cache normalization, and idempotent overlay.
 - `scripts/test-bank-prepayment-lifecycle-local.mjs` — local-only SQL smoke harness.
+- `src/components/DebtScheduleUpdateForm.tsx` — official prepayment schedule warning.
+- `src/services/dataRepository.ts` — stable debt-operation error code mapping.
