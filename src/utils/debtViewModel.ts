@@ -1,4 +1,4 @@
-import type { Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, DebtKind, DebtStatus, DebtPaymentFrequency, Category } from "../types";
+import type { Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtScheduleVersion, DebtKind, DebtStatus, DebtPaymentFrequency, Category } from "../types";
 import { currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, totalAllocatedAmountForInstallment } from "./debtCalculations";
 
 export function translateDebtError(error: unknown): string {
@@ -124,7 +124,8 @@ export function formatEventType(eventType: string): string {
 export function getInstallmentProgress(
   installment: DebtInstallment,
   allocations: DebtEventInstallmentAllocation[],
-  events: DebtEvent[]
+  events: DebtEvent[],
+  carriedAllocations: DebtInstallmentCarriedAllocation[] = []
 ) {
   if (installment.isPaidBeforeTracking) {
     return {
@@ -134,7 +135,7 @@ export function getInstallmentProgress(
       progressPercent: 100,
     };
   }
-  const allocated = totalAllocatedAmountForInstallment(installment, allocations, events);
+  const allocated = totalAllocatedAmountForInstallment(installment, allocations, events, carriedAllocations);
   const expected = installment.expectedAmount ?? 0;
   const isPaid = expected > 0 ? allocated >= expected : allocated > 0;
   return {
@@ -334,7 +335,8 @@ export function validateDebtAllocations(
   installments: DebtInstallment[],
   cashAmount: number,
   persistedAllocations: DebtEventInstallmentAllocation[] = [],
-  debtEvents: DebtEvent[] = []
+  debtEvents: DebtEvent[] = [],
+  persistedCarriedAllocations: DebtInstallmentCarriedAllocation[] = []
 ): { valid: boolean; error?: string } {
   if (!Number.isFinite(cashAmount) || cashAmount <= 0) {
     return { valid: false, error: "El monto de efectivo debe ser un número válido mayor a cero." };
@@ -368,7 +370,7 @@ export function validateDebtAllocations(
       return { valid: false, error: `La cuota contractual #${inst.contractualInstallmentNumber ?? inst.installmentNumber} ya estaba pagada antes de Caja Familiar.` };
     }
 
-    const alreadyAllocated = totalAllocatedAmountForInstallment(inst, persistedAllocations, debtEvents);
+    const alreadyAllocated = totalAllocatedAmountForInstallment(inst, persistedAllocations, debtEvents, persistedCarriedAllocations);
     const expectedAmount = inst.expectedAmount;
     if (expectedAmount != null && Number.isFinite(expectedAmount)) {
       const remaining = Math.max(0, expectedAmount - alreadyAllocated);

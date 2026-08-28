@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtScheduleVersion } from "../types";
+import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallmentCarriedAllocation, DebtScheduleVersion } from "../types";
 import { allocatedAmountForInstallment, currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, totalAllocatedAmountForInstallment } from "./debtCalculations";
 
 function debt(overrides: Partial<Debt> = {}): Debt {
@@ -187,7 +187,29 @@ describe("effectiveInstallmentAllocations", () => {
   it("suma cobertura carried sin duplicar las allocations económicas efectivas", () => {
     const payment = event({ id: "e1", eventType: "payment", principalDelta: -40 });
     const alloc = allocation({ id: "a1", eventId: "e1", installmentId: "i1", allocatedAmount: 60 });
-    expect(totalAllocatedAmountForInstallment({ id: "i1", debtId: "d1", carriedAllocatedAmount: 40 }, [alloc], [payment])).toBe(100);
+    const carried: DebtInstallmentCarriedAllocation = {
+      id: "c1",
+      restoredInstallmentId: "i1",
+      sourceEventId: "e1",
+      sourceAllocationId: "a-carried",
+      debtId: "d1",
+      householdId: "h1",
+      allocatedAmount: 40,
+      createdByUserId: "u1",
+      createdAt: "",
+    };
+    expect(totalAllocatedAmountForInstallment({ id: "i1", debtId: "d1" }, [alloc], [payment], [carried])).toBe(100);
     expect(allocatedAmountForInstallment("i1", [alloc], [payment])).toBe(60);
+  });
+
+  it("removes carried coverage when the source event is reversed and deduplicates nested lineage", () => {
+    const payment = event({ id: "e1", eventType: "payment", principalDelta: -40 });
+    const reversal = event({ id: "e2", eventType: "reversal", reversalOfEventId: "e1", cashAmount: 0, principalDelta: 0 });
+    const carried: DebtInstallmentCarriedAllocation[] = [
+      { id: "c1", restoredInstallmentId: "i1", sourceEventId: "e1", sourceAllocationId: "a0", debtId: "d1", householdId: "h1", allocatedAmount: 40, createdByUserId: "u1", createdAt: "" },
+      { id: "c2", restoredInstallmentId: "i1", sourceEventId: "e1", sourceAllocationId: "a0", debtId: "d1", householdId: "h1", allocatedAmount: 40, createdByUserId: "u1", createdAt: "" },
+    ];
+    expect(totalAllocatedAmountForInstallment({ id: "i1", debtId: "d1" }, [], [payment], carried)).toBe(40);
+    expect(totalAllocatedAmountForInstallment({ id: "i1", debtId: "d1" }, [], [payment, reversal], carried)).toBe(0);
   });
 });

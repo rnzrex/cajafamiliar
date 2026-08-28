@@ -1,4 +1,4 @@
-import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion } from "../types.js";
+import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtScheduleVersion } from "../types.js";
 
 export function effectiveDebtEvents(events: DebtEvent[], debtId?: string): DebtEvent[] {
   const reversedIds = new Set(
@@ -56,21 +56,42 @@ export function allocatedAmountForInstallment(installmentId: string, allocations
   );
 }
 
-/**
- * Total current obligation coverage for a persisted installment.
- *
- * `carriedAllocatedAmount` is state copied onto a restored schedule row; it
- * is deliberately kept separate from effective allocation rows so economic
- * ledger totals never double-count a payment or advance.
- */
-export function totalAllocatedAmountForInstallment(
-  installment: Pick<DebtInstallment, "id" | "debtId" | "carriedAllocatedAmount">,
-  allocations: DebtEventInstallmentAllocation[],
+export function effectiveCarriedAllocationsForInstallment(
+  installment: Pick<DebtInstallment, "id" | "debtId">,
+  carriedAllocations: DebtInstallmentCarriedAllocation[],
   events: DebtEvent[]
+): DebtInstallmentCarriedAllocation[] {
+  const effectiveSourceEventIds = new Set(
+    effectiveDebtEvents(events, installment.debtId)
+      .filter((event) => event.eventType === "payment" || event.eventType === "installment_advance")
+      .map((event) => event.id)
+  );
+  const seenSourceAllocationIds = new Set<string>();
+  const result: DebtInstallmentCarriedAllocation[] = [];
+  for (const carried of carriedAllocations) {
+    if (
+      carried.restoredInstallmentId !== installment.id ||
+      carried.debtId !== installment.debtId ||
+      !effectiveSourceEventIds.has(carried.sourceEventId) ||
+      !carried.sourceAllocationId ||
+      !Number.isFinite(carried.allocatedAmount) ||
+      carried.allocatedAmount <= 0 ||
+      seenSourceAllocationIds.has(carried.sourceAllocationId)
+    ) continue;
+    seenSourceAllocationIds.add(carried.sourceAllocationId);
+    result.push(carried);
+  }
+  return result;
+}
+
+export function totalAllocatedAmountForInstallment(
+  installment: Pick<DebtInstallment, "id" | "debtId">,
+  allocations: DebtEventInstallmentAllocation[],
+  events: DebtEvent[],
+  carriedAllocations: DebtInstallmentCarriedAllocation[] = []
 ): number {
-  const carried = Number.isFinite(installment.carriedAllocatedAmount)
-    ? Math.max(0, installment.carriedAllocatedAmount ?? 0)
-    : 0;
+  const carried = effectiveCarriedAllocationsForInstallment(installment, carriedAllocations, events)
+    .reduce((sum, allocation) => sum + allocation.allocatedAmount, 0);
   return carried + effectiveInstallmentAllocations(allocations, events, installment.debtId)
     .filter((allocation) => allocation.installmentId === installment.id)
     .reduce((sum, allocation) => sum + allocation.allocatedAmount, 0);

@@ -77,6 +77,9 @@ export function mergeDebtOperationResultIntoAppData(data: AppData, result: DebtO
     debtInstallments: operation.installments
       ? upsertById(data.debtInstallments, operation.installments as DebtInstallment[])
       : data.debtInstallments,
+    debtInstallmentCarriedAllocations: operation.carriedAllocations
+      ? upsertById(data.debtInstallmentCarriedAllocations ?? [], operation.carriedAllocations)
+      : data.debtInstallmentCarriedAllocations,
   };
 }
 
@@ -87,7 +90,8 @@ export function containsDebtOperationResult(data: AppData, result: DebtOperation
     && (!operation.movement || data.movements.some((movement) => movement.id === operation.movement?.id))
     && (!operation.scheduleVersion || data.debtScheduleVersions.some((version) => version.id === operation.scheduleVersion?.id))
     && (operation.installments ?? []).every((installment) => data.debtInstallments.some((row) => row.id === installment.id))
-    && (operation.allocations ?? []).every((allocation) => data.debtEventInstallmentAllocations.some((row) => row.id === allocation.id));
+    && (operation.allocations ?? []).every((allocation) => data.debtEventInstallmentAllocations.some((row) => row.id === allocation.id))
+    && (operation.carriedAllocations ?? []).every((allocation) => (data.debtInstallmentCarriedAllocations ?? []).some((row) => row.id === allocation.id));
 }
 export function validateAuthoritativeLoadSource({
   isOnline,

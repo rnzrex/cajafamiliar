@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion } from "../types";
+import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtScheduleVersion } from "../types";
 import { buildDebtPlanningItems, getBankPrepaymentScheduleTarget, summarizeDebtPlanningAlerts, summarizeDebtPlanningMonth } from "./debtPlanning";
 import { paymentStatus, paymentAlert } from "./calculations";
 
@@ -112,9 +112,10 @@ function build(
   versions: DebtScheduleVersion[],
   installments: DebtInstallment[],
   allocs: DebtEventInstallmentAllocation[],
-  todayKey = "2026-08-21"
+  todayKey = "2026-08-21",
+  carriedAllocations: DebtInstallmentCarriedAllocation[] = []
 ) {
-  return buildDebtPlanningItems(debts, events, versions, installments, allocs, todayKey);
+  return buildDebtPlanningItems(debts, events, versions, installments, allocs, todayKey, carriedAllocations);
 }
 
 afterEach(() => vi.useRealTimers());
@@ -145,8 +146,10 @@ describe("buildDebtPlanningItems — schedule version handling", () => {
   });
 
   it("includes carried coverage in the planning read model", () => {
-    const covered = installment({ carriedAllocatedAmount: 900, expectedAmount: 900 });
-    const items = build([debt()], [], [scheduleVersion()], [covered], []);
+    const covered = installment({ expectedAmount: 900 });
+    const carried: DebtInstallmentCarriedAllocation = { id: "c1", restoredInstallmentId: covered.id, sourceEventId: "e1", sourceAllocationId: "a1", debtId: "d1", householdId: "h1", allocatedAmount: 900, createdByUserId: "u1", createdAt: "" };
+    const sourceEvent = debtEvent({ id: "e1", eventType: "payment" });
+    const items = build([debt()], [sourceEvent], [scheduleVersion()], [covered], [], "2026-08-21", [carried]);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ allocatedAmount: 900, remainingAmount: 0, isCovered: true, dueStatus: "covered" });
   });

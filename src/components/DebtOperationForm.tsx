@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { ArrowLeft, AlertCircle } from "lucide-react";
-import type { BankLoanProfile, Category, Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInsuranceTerms, DebtScheduleVersion, FinancialAccount, PrepaymentEffect } from "../types";
+import type { BankLoanProfile, Category, Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtInsuranceTerms, DebtScheduleVersion, FinancialAccount, PrepaymentEffect } from "../types";
 import { recordDebtPayment, recordDebtPrepayment, recordDebtPayoff, reverseDebtEvent, recordDebtInstallmentAdvance } from "../services/dataRepository";
 import type { DebtOperationSaveResult } from "../services/authoritativeSync";
 import { makeUuid } from "../utils/storage";
@@ -112,6 +112,7 @@ interface DebtOperationFormProps {
   debtInsuranceTerms?: DebtInsuranceTerms[];
   canWriteDebt?: boolean;
   persistedAllocations: DebtEventInstallmentAllocation[];
+  persistedCarriedAllocations?: DebtInstallmentCarriedAllocation[];
   onSaved: (result: DebtOperationSaveResult) => Promise<void> | void;
   onCancel: () => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
@@ -131,6 +132,7 @@ export function DebtOperationForm({
   debtInsuranceTerms = [],
   canWriteDebt = true,
   persistedAllocations,
+  persistedCarriedAllocations = [],
   onSaved,
   onCancel,
   setToast,
@@ -231,7 +233,7 @@ export function DebtOperationForm({
   const [allocations, setAllocations] = useState<Array<{ installmentId: string; allocatedAmount: string }>>([]);
 
   const eligibleAdvanceInstallments = currentScheduleInstallments.filter((installment) => {
-    const allocatedBefore = totalAllocatedAmountForInstallment(installment, persistedAllocations, debtEvents);
+    const allocatedBefore = totalAllocatedAmountForInstallment(installment, persistedAllocations, debtEvents, persistedCarriedAllocations);
     return installment.dueDate > eventDate && allocatedBefore <= 0.01;
   });
 
@@ -372,9 +374,9 @@ export function DebtOperationForm({
       currentScheduleSource: currentSchedule?.scheduleSource ?? null,
       currentScheduleAuthoritative: currentSchedule?.isAuthoritative === true,
       insuranceTerms: debtInsuranceTerms,
-      hasAllocatedFutureInstallments: currentScheduleInstallments.some((installment) => installment.dueDate > eventDate && totalAllocatedAmountForInstallment(installment, persistedAllocations, debtEvents) > 0.01),
+      hasAllocatedFutureInstallments: currentScheduleInstallments.some((installment) => installment.dueDate > eventDate && totalAllocatedAmountForInstallment(installment, persistedAllocations, debtEvents, persistedCarriedAllocations) > 0.01),
       hasContractualDueDateForPayment: currentScheduleInstallments.some((installment) => installment.dueDate === eventDate),
-  }), [bankLoanProfile, currentPrincipal, currentSchedule?.isAuthoritative, currentSchedule?.scheduleSource, currentScheduleInstallments, debt.originalPrincipal, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, debtEvents, eventDate, numExtraPrincipal, numPrincipal, operationType, persistedAllocations, simulationEffect]);
+  }), [bankLoanProfile, currentPrincipal, currentSchedule?.isAuthoritative, currentSchedule?.scheduleSource, currentScheduleInstallments, debt.originalPrincipal, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, debtEvents, eventDate, numExtraPrincipal, numPrincipal, operationType, persistedAllocations, persistedCarriedAllocations, simulationEffect]);
   const summary = debtEconomicSummary(
     numCash,
     operationType === "payoff" ? currentPrincipal : totalPrincipalAmount,
@@ -526,7 +528,7 @@ export function DebtOperationForm({
         installmentId,
         allocatedAmount,
       }));
-      const allocVal = validateDebtAllocations(dedupedAlloc, currentScheduleInstallments, numCash, persistedAllocations, debtEvents);
+      const allocVal = validateDebtAllocations(dedupedAlloc, currentScheduleInstallments, numCash, persistedAllocations, debtEvents, persistedCarriedAllocations);
       if (!allocVal.valid) {
         setToast({ message: allocVal.error || "Asignaciones de cuotas inválidas", type: "error" });
         return;
@@ -553,7 +555,7 @@ export function DebtOperationForm({
         setToast({ message: "Solo puedes adelantar cuotas futuras con capital, interés y total definidos.", type: "error" });
         return;
       }
-      const allocationValidation = validateDebtAllocations(selectedAllocations, eligibleAdvanceInstallments, numCash, persistedAllocations, debtEvents);
+      const allocationValidation = validateDebtAllocations(selectedAllocations, eligibleAdvanceInstallments, numCash, persistedAllocations, debtEvents, persistedCarriedAllocations);
       if (!allocationValidation.valid) {
         setToast({ message: allocationValidation.error || "Asignaciones de adelanto inválidas.", type: "error" });
         return;
@@ -1283,7 +1285,7 @@ export function DebtOperationForm({
             ) : (
               <div className="space-y-3">
                 {(operationType === "installment_advance" ? eligibleAdvanceInstallments : currentScheduleInstallments).map((inst) => {
-                const allocatedBefore = totalAllocatedAmountForInstallment(inst, persistedAllocations, debtEvents);
+                const allocatedBefore = totalAllocatedAmountForInstallment(inst, persistedAllocations, debtEvents, persistedCarriedAllocations);
                 const remaining = inst.expectedAmount == null || !Number.isFinite(inst.expectedAmount) ? null : Math.max(0, inst.expectedAmount - allocatedBefore);
                 const isPaid = remaining !== null && remaining <= 0;
                 const currentDraftAllocation = allocations.find((a) => a.installmentId === inst.id)?.allocatedAmount ?? "";

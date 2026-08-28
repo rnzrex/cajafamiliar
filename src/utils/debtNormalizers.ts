@@ -1,4 +1,4 @@
-import type { Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion } from "../types";
+import type { Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtScheduleVersion } from "../types";
 
 export function normalizeDebts(saved: Debt[]): Debt[] {
   return saved.map((debt) => ({
@@ -57,11 +57,17 @@ export function normalizeDebtInstallments(saved: DebtInstallment[]): DebtInstall
     expectedInterest: installment.expectedInterest == null ? null : Number(installment.expectedInterest),
     expectedFees: installment.expectedFees == null ? null : Number(installment.expectedFees),
     expectedInsurance: installment.expectedInsurance == null ? null : Number(installment.expectedInsurance),
-    carriedAllocatedAmount: installment.carriedAllocatedAmount == null ? 0 : Number(installment.carriedAllocatedAmount),
   }));
 }
 
 export function normalizeDebtEventInstallmentAllocations(saved: DebtEventInstallmentAllocation[]): DebtEventInstallmentAllocation[] {
+  return saved.map((allocation) => ({
+    ...allocation,
+    allocatedAmount: Number(allocation.allocatedAmount),
+  }));
+}
+
+export function normalizeDebtInstallmentCarriedAllocations(saved: DebtInstallmentCarriedAllocation[]): DebtInstallmentCarriedAllocation[] {
   return saved.map((allocation) => ({
     ...allocation,
     allocatedAmount: Number(allocation.allocatedAmount),

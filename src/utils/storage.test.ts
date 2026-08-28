@@ -244,6 +244,26 @@ describe("isAppDataSnapshot con deudas (DEBT-1B)", () => {
     expect(result?.debts).toEqual([]);
   });
 
+  it("snapshot legacy sin lineage carried usa una lista vacía y normaliza el lineage nuevo", () => {
+    const legacy = normalizeData(snapshot({}));
+    expect(legacy.debtInstallmentCarriedAllocations).toEqual([]);
+
+    const result = normalizeData(snapshot({
+      debtInstallmentCarriedAllocations: [{
+        id: "c1",
+        restoredInstallmentId: "i1",
+        sourceEventId: "e1",
+        sourceAllocationId: "a1",
+        debtId: "d1",
+        householdId: "h1",
+        allocatedAmount: "40" as unknown as number,
+        createdByUserId: "u1",
+        createdAt: "2026-08-20T00:00:00.000Z",
+      }],
+    }));
+    expect(result.debtInstallmentCarriedAllocations?.[0].allocatedAmount).toBe(40);
+  });
+
   it("rechaza Debt sin currencyCode", () => {
     expect(loadSnapshotThroughCache(snapshot({ debts: [debtSnapshot({})] }))).not.toBeNull();
 

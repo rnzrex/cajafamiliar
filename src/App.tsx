@@ -156,6 +156,7 @@ const EMPTY_APP_DATA: AppData = {
   debtScheduleVersions: [],
   debtInstallments: [],
   debtEventInstallmentAllocations: [],
+  debtInstallmentCarriedAllocations: [],
   debtCollaterals: [],
   creditCardProfiles: [],
   creditCardEntries: [],
@@ -352,9 +353,11 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
         data.debtEvents,
         data.debtScheduleVersions,
         data.debtInstallments,
-        data.debtEventInstallmentAllocations
+        data.debtEventInstallmentAllocations,
+        undefined,
+        data.debtInstallmentCarriedAllocations ?? []
       ),
-    [data.debts, data.debtEvents, data.debtScheduleVersions, data.debtInstallments, data.debtEventInstallmentAllocations]
+    [data.debts, data.debtEvents, data.debtScheduleVersions, data.debtInstallments, data.debtEventInstallmentAllocations, data.debtInstallmentCarriedAllocations]
   );
 
   const debtIntelligenceItems = useMemo(
@@ -1595,6 +1598,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 scheduleVersions={data.debtScheduleVersions}
                 installments={data.debtInstallments}
                 allocations={data.debtEventInstallmentAllocations}
+                carriedAllocations={data.debtInstallmentCarriedAllocations ?? []}
                 collaterals={data.debtCollaterals}
                 accounts={data.financialAccounts}
                 categories={data.categories}
@@ -1633,6 +1637,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 scheduleVersions={data.debtScheduleVersions}
                 installments={data.debtInstallments}
                 allocations={data.debtEventInstallmentAllocations}
+                carriedAllocations={data.debtInstallmentCarriedAllocations ?? []}
                 collaterals={data.debtCollaterals}
                 accounts={data.financialAccounts}
                 categories={data.categories}
@@ -1712,6 +1717,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               scheduleVersions={data.debtScheduleVersions}
               debtEvents={data.debtEvents}
               persistedAllocations={data.debtEventInstallmentAllocations}
+              persistedCarriedAllocations={data.debtInstallmentCarriedAllocations ?? []}
               accounts={data.financialAccounts}
               categories={data.categories}
               currentPrincipal={currentDebtPrincipal(selectedDebt, data.debtEvents)}

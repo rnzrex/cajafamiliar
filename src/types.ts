@@ -230,7 +230,6 @@ export interface DebtInstallment {
   reportedBalance?: number | null;
   contractualInstallmentNumber?: number | null;
   isPaidBeforeTracking?: boolean;
-  carriedAllocatedAmount?: number | null;
   createdByUserId: string;
   createdAt: string;
 }
@@ -240,6 +239,18 @@ export interface DebtEventInstallmentAllocation {
   eventId: string;
   installmentId: string;
   debtId: string;
+  allocatedAmount: number;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+export interface DebtInstallmentCarriedAllocation {
+  id: string;
+  restoredInstallmentId: string;
+  sourceEventId: string;
+  sourceAllocationId: string;
+  debtId: string;
+  householdId: string;
   allocatedAmount: number;
   createdByUserId: string;
   createdAt: string;
@@ -684,6 +695,7 @@ export interface AppData {
   debtScheduleVersions: DebtScheduleVersion[];
   debtInstallments: DebtInstallment[];
   debtEventInstallmentAllocations: DebtEventInstallmentAllocation[];
+  debtInstallmentCarriedAllocations?: DebtInstallmentCarriedAllocation[];
   debtCollaterals: DebtCollateral[];
   creditCardProfiles: CreditCardProfile[];
   creditCardEntries: CreditCardEntry[];

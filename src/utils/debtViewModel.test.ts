@@ -12,7 +12,7 @@ import {
   validateDebtAllocations,
   getInstallmentProgress,
 } from "./debtViewModel";
-import type { DebtInstallment, DebtEventInstallmentAllocation, DebtEvent } from "../types";
+import type { DebtInstallment, DebtEventInstallmentAllocation, DebtInstallmentCarriedAllocation, DebtEvent } from "../types";
 
 describe("debtViewModel utilities and pure helpers", () => {
   it("translates known debt errors correctly", () => {
@@ -180,7 +180,6 @@ describe("debtViewModel utilities and pure helpers", () => {
       expectedInterest: 20,
       expectedFees: 0,
       expectedInsurance: 0,
-      carriedAllocatedAmount: 40,
       createdByUserId: "u1",
       createdAt: "",
     };
@@ -211,9 +210,20 @@ describe("debtViewModel utilities and pure helpers", () => {
       createdByUserId: "u1",
       createdAt: payment.createdAt,
     };
+    const carried: DebtInstallmentCarriedAllocation = {
+      id: "c-carried",
+      restoredInstallmentId: installment.id,
+      sourceEventId: payment.id,
+      sourceAllocationId: "a-source",
+      debtId: "d1",
+      householdId: "h1",
+      allocatedAmount: 40,
+      createdByUserId: "u1",
+      createdAt: payment.createdAt,
+    };
 
-    expect(getInstallmentProgress(installment, [allocation], [payment])).toMatchObject({ allocated: 100, isPaid: true, progressPercent: 100 });
-    expect(validateDebtAllocations([{ installmentId: installment.id, allocatedAmount: 21 }], [installment], 21, [allocation], [payment]).valid).toBe(false);
+    expect(getInstallmentProgress(installment, [allocation], [payment], [carried])).toMatchObject({ allocated: 100, isPaid: true, progressPercent: 100 });
+    expect(validateDebtAllocations([{ installmentId: installment.id, allocatedAmount: 21 }], [installment], 21, [allocation], [payment], [carried]).valid).toBe(false);
   });
 
   it("allows allocation when expectedAmount is null and does not invent remaining=0", () => {

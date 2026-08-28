@@ -1,7 +1,7 @@
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardStatement, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories, AccountReconciliation, AccountReconciliationMovement, MovementCorrection } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardStatement, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories, AccountReconciliation, AccountReconciliationMovement, MovementCorrection } from "../types";
 import { localDateString } from "./date";
 import { isSupabaseConfigured } from "../services/supabaseClient";
-import { normalizeDebtCollaterals, normalizeDebtEventInstallmentAllocations, normalizeDebtEvents, normalizeDebtInstallments, normalizeDebtScheduleVersions, normalizeDebts } from "./debtNormalizers";
+import { normalizeDebtCollaterals, normalizeDebtEventInstallmentAllocations, normalizeDebtEvents, normalizeDebtInstallments, normalizeDebtInstallmentCarriedAllocations, normalizeDebtScheduleVersions, normalizeDebts } from "./debtNormalizers";
 import { normalizeCreditCardEntries, normalizeCreditCardProfiles, normalizeCreditCardStatements } from "./creditCardNormalizers";
 
 const STORAGE_KEY = "caja-familiar-data";
@@ -25,6 +25,7 @@ export interface AppDataSnapshotInput {
   debtScheduleVersions?: DebtScheduleVersion[];
   debtInstallments?: DebtInstallment[];
   debtEventInstallmentAllocations?: DebtEventInstallmentAllocation[];
+  debtInstallmentCarriedAllocations?: DebtInstallmentCarriedAllocation[];
   debtCollaterals?: DebtCollateral[];
   creditCardProfiles?: CreditCardProfile[];
   creditCardEntries?: CreditCardEntry[];
@@ -196,6 +197,7 @@ export const defaultData: AppData = {
   debtScheduleVersions: [],
   debtInstallments: [],
   debtEventInstallmentAllocations: [],
+  debtInstallmentCarriedAllocations: [],
   debtCollaterals: [],
   creditCardProfiles: [],
   creditCardEntries: [],
@@ -395,6 +397,7 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
     debtScheduleVersions: normalizeDebtScheduleVersions(data.debtScheduleVersions ?? []),
     debtInstallments: normalizeDebtInstallments(data.debtInstallments ?? []),
     debtEventInstallmentAllocations: normalizeDebtEventInstallmentAllocations(data.debtEventInstallmentAllocations ?? []),
+    debtInstallmentCarriedAllocations: normalizeDebtInstallmentCarriedAllocations(data.debtInstallmentCarriedAllocations ?? []),
     debtCollaterals: normalizeDebtCollaterals(data.debtCollaterals ?? []),
     creditCardProfiles: normalizeCreditCardProfiles(data.creditCardProfiles ?? []),
     creditCardEntries: normalizeCreditCardEntries(data.creditCardEntries ?? []),
@@ -544,6 +547,21 @@ function isAppDataSnapshot(value: unknown): value is AppDataSnapshotInput {
             typeof allocation.installmentId === "string" &&
             typeof allocation.debtId === "string" &&
             isPresentNumeric(allocation.allocatedAmount)
+        ))) &&
+    (value.debtInstallmentCarriedAllocations === undefined ||
+      (Array.isArray(value.debtInstallmentCarriedAllocations) &&
+        value.debtInstallmentCarriedAllocations.every(
+          (allocation) =>
+            isRecord(allocation) &&
+            typeof allocation.id === "string" &&
+            typeof allocation.restoredInstallmentId === "string" &&
+            typeof allocation.sourceEventId === "string" &&
+            typeof allocation.sourceAllocationId === "string" &&
+            typeof allocation.debtId === "string" &&
+            typeof allocation.householdId === "string" &&
+            isPresentNumeric(allocation.allocatedAmount) &&
+            typeof allocation.createdByUserId === "string" &&
+            typeof allocation.createdAt === "string"
         ))) &&
     (value.debtCollaterals === undefined ||
       (Array.isArray(value.debtCollaterals) &&

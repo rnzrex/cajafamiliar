@@ -5,6 +5,7 @@ import type {
   DebtEvent,
   DebtScheduleVersion,
   DebtInstallment,
+  DebtInstallmentCarriedAllocation,
   DebtEventInstallmentAllocation,
   DebtCollateral,
   FinancialAccount,
@@ -51,6 +52,7 @@ interface DebtDetailModalProps {
   scheduleVersions: DebtScheduleVersion[];
   installments: DebtInstallment[];
   allocations: DebtEventInstallmentAllocation[];
+  carriedAllocations?: DebtInstallmentCarriedAllocation[];
   collaterals: DebtCollateral[];
   accounts: FinancialAccount[];
   categories: Category[];
@@ -79,6 +81,7 @@ export function DebtDetailModal({
   scheduleVersions,
   installments,
   allocations,
+  carriedAllocations = [],
   collaterals,
   accounts,
   categories,
@@ -848,8 +851,8 @@ export function DebtDetailModal({
                     <div><p className="text-xs text-slate-500">TEA</p><p className="font-bold">{debt.teaPercent == null ? "—" : `${debt.teaPercent}%`}</p></div>
                     <div><p className="text-xs text-slate-500">TCEA</p><p className="font-bold">{debt.tceaPercent == null ? "—" : `${debt.tceaPercent}%`}</p></div>
                     <div><p className="text-xs text-slate-500">Cuotas pagadas antes</p><p className="font-bold">{bankProfile.installmentsPaidBeforeTracking ?? 0}</p></div>
-                    <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : debtInstallments.filter((installment) => !installment.isPaidBeforeTracking && !getInstallmentProgress(installment, allocations, debtEvents).isPaid).length}</p></div>
-                    <div><p className="text-xs text-slate-500">Total pendiente conocido</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : `${currencySymbol} ${debtInstallments.filter((installment) => !installment.isPaidBeforeTracking).reduce((total, installment) => Math.max(0, total + (installment.expectedAmount ?? 0) - getInstallmentProgress(installment, allocations, debtEvents).allocated), 0).toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : debtInstallments.filter((installment) => !installment.isPaidBeforeTracking && !getInstallmentProgress(installment, allocations, debtEvents, carriedAllocations).isPaid).length}</p></div>
+                    <div><p className="text-xs text-slate-500">Total pendiente conocido</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : `${currencySymbol} ${debtInstallments.filter((installment) => !installment.isPaidBeforeTracking).reduce((total, installment) => Math.max(0, total + (installment.expectedAmount ?? 0) - getInstallmentProgress(installment, allocations, debtEvents, carriedAllocations).allocated), 0).toFixed(2)}`}</p></div>
                   </div>
                   <div>
                     <p className="text-xs font-bold uppercase text-slate-500">Seguros</p>
@@ -1207,7 +1210,7 @@ export function DebtDetailModal({
                   ) : (
                     <div className="space-y-3">
                       {debtInstallments.map((inst, installmentIndex) => {
-                        const prog = getInstallmentProgress(inst, allocations, debtEvents);
+                        const prog = getInstallmentProgress(inst, allocations, debtEvents, carriedAllocations);
                         const estimatedBalance = estimatedBalanceAfterRow(debtInstallments, installmentIndex);
                         return (
                           <div

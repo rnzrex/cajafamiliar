@@ -3,6 +3,7 @@ import type {
   DebtEvent,
   DebtEventInstallmentAllocation,
   DebtInstallment,
+  DebtInstallmentCarriedAllocation,
   DebtScheduleVersion,
   DebtScheduleState,
   ScheduleSource,
@@ -171,7 +172,8 @@ export function buildDebtPlanningItems(
   scheduleVersions: DebtScheduleVersion[],
   installments: DebtInstallment[],
   allocations: DebtEventInstallmentAllocation[],
-  todayKey?: string
+  todayKey?: string,
+  carriedAllocations: DebtInstallmentCarriedAllocation[] = []
 ): DebtInstallmentPlanningItem[] {
   const items: DebtInstallmentPlanningItem[] = [];
 
@@ -258,7 +260,8 @@ export function buildDebtPlanningItems(
       const allocatedAmount = totalAllocatedAmountForInstallment(
         installment,
         allocations,
-        debtEvents
+        debtEvents,
+        carriedAllocations
       );
 
       const { amountKnown, remainingAmount, isCovered } = resolveAmounts(

@@ -2,79 +2,68 @@
 
 ## Objective
 
-Close the final BANK PREPAYMENT RECALCULATION V1 blockers on `feat/bank-prepayment-recalculation-v1`: resolve reversal dependencies from effective schedule lineage and preserve restored installment state/carry coverage. Publish the same branch for orchestrator audit while keeping PR #66 DRAFT and Production untouched.
+Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility blocker on `feat/bank-prepayment-recalculation-v1`, publish the fix for PR #66 audit, and keep the pending migration unapplied to Production.
 
 ## Repository
 
 - Branch: `feat/bank-prepayment-recalculation-v1`.
-- Expected starting HEAD: `c238edc8ddf7c0a392822c3a8885be15b2111ef1`.
-- Current remote/local HEAD: `215ddd4ef2733793b1d5cdefd2a6cbbe1b8a34d6`.
-- Implementation commit: `39271a8451d5e80f84d67d7c292e4ea3c24905ba` (`fix(bank): preserve restored installment state`), pushed normally with no force-push.
-- State-only handoff commit: `215ddd4ef2733793b1d5cdefd2a6cbbe1b8a34d6` (`chore(ai): record restored-state audit handoff`), pushed normally with no force-push. Working tree is clean.
+- Expected starting HEAD: `e13e974c09fd8bd4aa88395d83a5ec894646d1d0`.
+- Current HEAD before this checkpoint: `e13e974c09fd8bd4aa88395d83a5ec894646d1d0`; carried-lineage implementation is currently uncommitted.
 - PR: #66, base `main`, must remain OPEN/DRAFT.
+- Next implementation commit: `fix(bank): preserve carried allocation lineage`.
 
 ## Constraints
 
-- No new branch, merge, force push, Production Supabase writes/migration/manual SQL, Production frontend deploy, Vercel environment writes, Gemini key/provider, real bank documents, Production financial/test data, migration repair/reset/include-all, or destructive Docker cleanup.
+- No new branch, merge, force push, Production Supabase writes/manual SQL, Production frontend deploy, Vercel env writes, Gemini key/provider, real bank documents, Production financial/test data, migration repair/reset/include-all, or destructive Docker cleanup.
 - Modify only the existing pending migration `supabase/migrations/20260827214244_bank_prepayment_schedule_lifecycle_v1.sql`; do not modify applied historical migrations or create a second migration.
 - Local Docker diagnostics and local SQL smoke tests are allowed; Production is never a test substitute.
 
 ## Completed
 
-- Added `debt_installments.carried_allocated_amount` with a non-negative default/check in the existing pending migration.
-- Added a private SQL schedule-trigger lineage helper and changed the reversal dependency guard to ignore only verified undo branches while continuing to block effective later financial/manual/rate schedule lineage.
-- Added `private.debt2b2_restore_schedule_v1`, which copies baseline installment fields server-side, preserves `is_paid_before_tracking` and `reported_balance`, and carries effective pre-target direct allocation coverage without creating allocations, movements, or ledger rows.
-- Replaced the pending migration’s allocation and advance validators so carried coverage participates in overage/advance checks.
-- Added the client mapper/normalizer/type and `totalAllocatedAmountForInstallment`; updated progress, planning, payment allocation UI, advance eligibility, and client allocation validation. Direct effective allocations remain separate for economic ledger totals.
-- Added frontend unit coverage for nested P1/P2 LIFO (including estimated/official), same-target behavior, effective manual/rate behavior, and carried progress/overage/planning.
-- Extended `scripts/test-bank-prepayment-lifecycle-local.mjs` with nested schedule-generating LIFO, pretracking restore, full/partial/reverted carry, overage, no-duplication, and exact replay cases.
-
-## Decisions
-
-- Append-only schedule history is retained; dependency status is computed from `trigger_event_id` plus effective `DebtEvent` reversal lineage, not from version number alone.
-- Carried coverage is obligation read/validation state only. Original allocation rows remain immutable and are never copied; economic event/movement/account totals remain canonical.
-- Restore canonical-checks the client payload but copies actual baseline rows server-side. Ordinary schedule writers continue defaulting carried coverage to zero and clearing inherited pretracking flags; explicit restoration reapplies baseline state after the existing metadata trigger.
-- `supabase/schema.sql` is intentionally not hand-edited: it is the applied/local snapshot, while this migration remains pending and Docker is unavailable for a generated dump.
+- Replaced stale scalar carried coverage with `public.debt_installment_carried_allocations`, keyed to restored installment, source event, and source allocation; protected with composite FKs, source deduplication, RLS, and private effective-lineage helpers.
+- Updated the restore writer to flatten inherited lineage plus direct baseline allocations, ordered strictly before the target event and filtered by current effective source events; nested restores deduplicate by source allocation ID and do not copy economic ledger rows.
+- Updated private operation result functions and client mapping/sync so returned carried lineage is authoritative for the rendered state while a later source reversal dynamically removes effective coverage.
+- Updated client types, snapshots, normalization, planning, detail/progress views, payment/advance allocation validation, and allocation UI. `is_paid_before_tracking` remains independent and direct effective allocations remain economic-only.
+- Added inverse timing, multiple-source, nested, direct-plus-carried, source-reversal, replay, and post-reversal overage SQL smoke cases in `scripts/test-bank-prepayment-lifecycle-local.mjs`.
+- Removed all stale `carried_allocated_amount` / `carriedAllocatedAmount` references from source, migration, and smoke harness.
 
 ## Validation
 
-- `npm test -- --testTimeout=15000`: PASS, 74 files / 1031 tests.
-- Focused carry/LIFO suite (`debtCalculations.test.ts`, `debtViewModel.test.ts`, `debtPlanning.test.ts`, `debtReversalDependencies.test.ts`): PASS, 4 files / 67 tests.
-- `npm run test:bank-prepayment-simulation`: PASS, 18 tests.
-- `npm run test:bank-reconstruction-v4`: PASS, 11 tests.
-- `npm run test:bank-external-ai-import`: PASS, 29 tests.
-- `npm run test:bank-document-v5-local`: PASS, 26 tests.
+- `npm test -- --testTimeout=15000`: PASS, 74 files / 1033 tests.
+- Focused carried/LIFO suite (`debtCalculations`, `debtViewModel`, `debtPlanning`, `debtReversalDependencies`): PASS, 4 files / 68 tests.
+- `npm run test:bank-prepayment-simulation`: PASS, 1 file / 18 tests.
+- `npm run test:bank-reconstruction-v4`: PASS, 1 file / 11 tests.
+- `npm run test:bank-external-ai-import`: PASS, 3 files / 29 tests.
+- `npm run test:bank-document-v5-local`: PASS, 6 files / 26 tests.
 - `npm run build`: PASS; only existing dynamic-import and large-chunk warnings.
 - `npm run typecheck:api`: PASS.
 - `node --check scripts/test-bank-prepayment-lifecycle-local.mjs`: PASS.
 - `git diff --check`: PASS.
-- Local SQL smoke (`test:bank-prepayment-lifecycle:local`, `test:bank-loan-v3:local`, `test:bank-v2-local`, `test:debt2b2`): BLOCKED before SQL. Docker Desktop start was requested safely, but Docker API/named pipe remained unavailable and `.docker/config.json` was access-denied. No Production substitute was used.
+- SQL smoke `npm run test:bank-prepayment-lifecycle:local`: BLOCKED before SQL because Docker API/named pipe is unavailable and `.docker/config.json` is access-denied.
+- Existing SQL smokes `npm run test:bank-loan-v3:local`, `npm run test:bank-v2-local`, and `npm run test:debt2b2`: BLOCKED for the same local Docker unavailability. No Production substitute was used.
 
 ## Delivery
 
 - GitHub authentication was previously verified as `rnzrex` over HTTPS with keyring-backed credentials; no token was exposed.
-- PR #66: https://github.com/rnzrex/cajafamiliar/pull/66; keep `draft=true`.
-- Automatic Vercel Preview for final branch SHA `215ddd4ef2733793b1d5cdefd2a6cbbe1b8a34d6`: `dpl_9M8mG6BKvt3wJ3xt9j1khs2wDiE9`, `https://cajafamiliar-6zavbpbrk-renzorex.vercel.app`, READY, exact branch/SHA, Preview target `null`. Earlier implementation preview remains `dpl_EqKVejTgT6i6ovphQFu7yBDFGrjx`.
+- After commit: push normally to `origin/feat/bank-prepayment-recalculation-v1`, verify remote SHA, update PR #66 body while preserving `draft=true`, and wait for automatic Vercel Preview only.
+- Previous Preview was for the pre-fix SHA; a new Preview must be checked against the final pushed SHA and branch, with target `null`.
 
 ## Production
 
-- Production untouched. `20260827214244_bank_prepayment_schedule_lifecycle_v1.sql` exists locally but is NOT applied to Supabase Production.
+- Production untouched. `supabase/migrations/20260827214244_bank_prepayment_schedule_lifecycle_v1.sql` exists locally but is NOT applied to Supabase Production.
 - No Production schema/data write, frontend deployment, Vercel env write, Gemini key/provider, merge, real document, or financial/test/junk data was used.
 
 ## Next Step
 
-- Implementation, validation, PR update, and automatic Preview verification are complete. Stop for orchestrator restored-state SQL audit.
+- Review staged diff, commit the implementation plus this operational state, push normally, verify PR/remote SHA, update PR #66 DRAFT, and verify automatic Preview.
 - Do not apply the pending migration to Production, merge PR #66, mark it ready, add Gemini secrets, or deploy Production.
 
 ## Relevant Files
 
-- `supabase/migrations/20260827214244_bank_prepayment_schedule_lifecycle_v1.sql` — pending lifecycle migration, effective schedule dependency helper, restore writer, carried-aware allocation/advance validators.
-- `src/utils/debtReversalDependencies.ts` — pure effective schedule-lineage dependency mirror.
-- `src/utils/debtCalculations.ts` — direct effective allocation vs total obligation coverage helpers.
-- `src/utils/debtViewModel.ts` — progress and client allocation validation.
-- `src/utils/debtPlanning.ts` — planning/agenda obligation coverage.
-- `src/components/DebtOperationForm.tsx` — payment/advance allocation and eligibility UI.
-- `src/services/dataRepository.ts`, `src/utils/debtNormalizers.ts`, `src/types.ts` — carried field mapping and client model.
-- `src/utils/debtReversalDependencies.test.ts`, `src/utils/debtCalculations.test.ts`, `src/utils/debtViewModel.test.ts`, `src/utils/debtPlanning.test.ts` — focused regression tests.
+- `supabase/migrations/20260827214244_bank_prepayment_schedule_lifecycle_v1.sql` — pending lifecycle migration, relational carried lineage, restore writer, effective validators, and result payloads.
+- `src/types.ts` — carried lineage domain type and AppData field.
+- `src/utils/debtCalculations.ts` — effective carried lineage and direct-vs-total obligation helpers.
+- `src/utils/debtViewModel.ts`, `src/utils/debtPlanning.ts` — progress, validation, planning, and agenda obligation projections.
+- `src/components/DebtOperationForm.tsx`, `src/components/DebtDetailModal.tsx`, `src/App.tsx` — carried-aware UI and data wiring.
+- `src/services/dataRepository.ts`, `src/services/authoritativeSync.ts`, `src/utils/debtNormalizers.ts`, `src/utils/storage.ts` — remote rows, RPC result payloads, cache normalization, and idempotent overlay.
 - `scripts/test-bank-prepayment-lifecycle-local.mjs` — local-only SQL smoke harness.
-- `.ai/STATE.md` — this operational handoff.
