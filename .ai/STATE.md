@@ -8,9 +8,10 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 
 - Branch: `feat/bank-prepayment-recalculation-v1`.
 - Expected starting HEAD: `e13e974c09fd8bd4aa88395d83a5ec894646d1d0`.
-- Current HEAD before this checkpoint: `e13e974c09fd8bd4aa88395d83a5ec894646d1d0`; carried-lineage implementation is currently uncommitted.
+- Implementation commit: `8a8726b53f57b9aeb0c800391c2d5d0be6b19214` (`fix(bank): preserve carried allocation lineage`).
+- This file is being updated in a metadata-only handoff commit after the implementation was pushed.
 - PR: #66, base `main`, must remain OPEN/DRAFT.
-- Next implementation commit: `fix(bank): preserve carried allocation lineage`.
+- Next commit: metadata-only operational-state handoff; no implementation change.
 
 ## Constraints
 
@@ -45,8 +46,9 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 ## Delivery
 
 - GitHub authentication was previously verified as `rnzrex` over HTTPS with keyring-backed credentials; no token was exposed.
-- After commit: push normally to `origin/feat/bank-prepayment-recalculation-v1`, verify remote SHA, update PR #66 body while preserving `draft=true`, and wait for automatic Vercel Preview only.
-- Previous Preview was for the pre-fix SHA; a new Preview must be checked against the final pushed SHA and branch, with target `null`.
+- Implementation was pushed normally to `origin/feat/bank-prepayment-recalculation-v1`; remote SHA was verified as `8a8726b53f57b9aeb0c800391c2d5d0be6b19214`.
+- PR #66 body was updated while preserving `draft=true`; it documents the relational carried-lineage architecture, effective reversal behavior, validation counts, and SQL/Docker limitation.
+- Automatic Preview for implementation SHA `8a8726b53f57b9aeb0c800391c2d5d0be6b19214` is READY at `https://cajafamiliar-ovqn16gab-renzorex.vercel.app` (deployment `dpl_7UiPwuVnCt9Noe6nHo7ug4UtBCta`, target `null`). A metadata-only handoff commit below will require a final automatic Preview check for the resulting branch tip.
 
 ## Production
 
@@ -55,7 +57,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 
 ## Next Step
 
-- Review staged diff, commit the implementation plus this operational state, push normally, verify PR/remote SHA, update PR #66 DRAFT, and verify automatic Preview.
+- Commit and push this operational-state metadata update normally, then verify the resulting remote SHA, PR #66 remains OPEN/DRAFT, and the automatic Preview matches that final branch tip.
 - Do not apply the pending migration to Production, merge PR #66, mark it ready, add Gemini secrets, or deploy Production.
 
 ## Relevant Files
