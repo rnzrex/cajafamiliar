@@ -10,7 +10,7 @@ Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-r
 - Base: c46d4b6faaee1cdcb2121a53696f69f757790eb5.
 - Prior implementation was 89a562e74782f925a57b42af7caa3d53f7715ec3 (fix(bank): correct prepayment schedule semantics), followed by metadata checkpoints.
 - Current Audit Fix 2 implementation commit: 9fe9b5a191c591db3f084f9ba8acbd7ef8e50302 (fix(bank): close prepayment audit blockers), pushed normally with no force.
-- Working tree is clean; remote branch currently points to d66d87059a7b1c74e9b698dbfe845f7e66c15b6e (implementation plus required metadata checkpoint).
+- Working tree is clean; remote branch currently points to 48d94fadd232c61a3015553cde52cde92d6a091a (implementation plus final metadata checkpoint).
 
 ## Constraints
 
@@ -53,8 +53,8 @@ Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-r
 ## Delivery
 
 - gh auth status: authenticated to github.com as rnzrex via keyring/HTTPS; token not exposed.
-- PR #66: https://github.com/rnzrex/cajafamiliar/pull/66, open, draft=true, base main, head branch feat/bank-prepayment-recalculation-v1, head SHA d66d87059a7b1c74e9b698dbfe845f7e66c15b6e. Body updated for Audit Fix 2.
-- Automatic Preview: deployment dpl_2k1P5SbNsjTvGgqcnkP4gCSJbqHH, URL https://cajafamiliar-2gyy8hzr5-renzorex.vercel.app, branch alias https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app, exact Git SHA d66d87059a7b1c74e9b698dbfe845f7e66c15b6e, state READY, target null (preview).
+- PR #66: https://github.com/rnzrex/cajafamiliar/pull/66, open, draft=true, base main, head branch feat/bank-prepayment-recalculation-v1, head SHA 48d94fadd232c61a3015553cde52cde92d6a091a. Body updated for Audit Fix 2.
+- Automatic Preview: deployment dpl_BaS7CrwDUyMqUaTjDMieJP4WPQ38, URL https://cajafamiliar-jee3n351z9-renzorex.vercel.app, branch alias https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app, exact Git SHA 48d94fadd232c61a3015553cde52cde92d6a091a, state READY, target null (preview).
 - Preview metadata was verified through the read-only Vercel API; no manual deployment was run.
 
 ## Production
