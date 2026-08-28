@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtScheduleVersion } from "../types";
-import { allocatedAmountForInstallment, currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations } from "./debtCalculations";
+import { allocatedAmountForInstallment, currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, totalAllocatedAmountForInstallment } from "./debtCalculations";
 
 function debt(overrides: Partial<Debt> = {}): Debt {
   return {
@@ -182,5 +182,12 @@ describe("effectiveInstallmentAllocations", () => {
     const prepayment = event({ id: "e1", eventType: "principal_prepayment", principalDelta: -2000 });
     const alloc = allocation({ id: "a1", eventId: "e1", allocatedAmount: 500 });
     expect(effectiveInstallmentAllocations([alloc], [prepayment])).toEqual([]);
+  });
+
+  it("suma cobertura carried sin duplicar las allocations económicas efectivas", () => {
+    const payment = event({ id: "e1", eventType: "payment", principalDelta: -40 });
+    const alloc = allocation({ id: "a1", eventId: "e1", installmentId: "i1", allocatedAmount: 60 });
+    expect(totalAllocatedAmountForInstallment({ id: "i1", debtId: "d1", carriedAllocatedAmount: 40 }, [alloc], [payment])).toBe(100);
+    expect(allocatedAmountForInstallment("i1", [alloc], [payment])).toBe(60);
   });
 });

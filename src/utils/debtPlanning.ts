@@ -8,7 +8,7 @@ import type {
   ScheduleSource,
 } from "../types.js";
 import {
-  allocatedAmountForInstallment,
+  totalAllocatedAmountForInstallment,
   currentDebtPrincipal,
   currentDebtScheduleVersion,
   effectiveDebtEvents,
@@ -255,8 +255,8 @@ export function buildDebtPlanningItems(
     if (!currentSchedule) continue;
 
     for (const installment of debtInstallments) {
-      const allocatedAmount = allocatedAmountForInstallment(
-        installment.id,
+      const allocatedAmount = totalAllocatedAmountForInstallment(
+        installment,
         allocations,
         debtEvents
       );

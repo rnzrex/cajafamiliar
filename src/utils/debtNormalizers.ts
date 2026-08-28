@@ -57,6 +57,7 @@ export function normalizeDebtInstallments(saved: DebtInstallment[]): DebtInstall
     expectedInterest: installment.expectedInterest == null ? null : Number(installment.expectedInterest),
     expectedFees: installment.expectedFees == null ? null : Number(installment.expectedFees),
     expectedInsurance: installment.expectedInsurance == null ? null : Number(installment.expectedInsurance),
+    carriedAllocatedAmount: installment.carriedAllocatedAmount == null ? 0 : Number(installment.carriedAllocatedAmount),
   }));
 }
 

@@ -1,6 +1,14 @@
 -- BANK PREPAYMENT RECALCULATION V1: official post-prepayment schedule
 -- lifecycle. Forward-only additive fix; historical migrations remain immutable.
 
+-- Reversal-created schedule rows carry the obligation coverage that was
+-- already effective on the restored baseline. Financial allocations remain
+-- append-only in debt_event_installment_allocations; this column is only a
+-- read/validation carry-forward for a newly cloned installment row.
+alter table public.debt_installments
+  add column if not exists carried_allocated_amount numeric not null default 0
+  check (carried_allocated_amount >= 0);
+
 -- Strict BANK schedule validation now accepts the optional contractual number
 -- and reported balance while keeping the internal number contiguous.
 create or replace function private.debt2b2_validate_schedule_v3(
@@ -893,6 +901,232 @@ revoke all privileges on function public.update_bank_prepayment_schedule_v1(uuid
 grant execute on function public.update_bank_prepayment_schedule_v1(uuid, uuid, uuid, date, jsonb, text)
   to authenticated;
 
+-- A schedule version is a dependency only while the event lineage that
+-- generated it is effective. Historical versions created by a later event
+-- which has since been reversed are retained for audit, but do not block an
+-- older schedule-generating reversal. Reversal-triggered schedules are
+-- ignored only after their parent/reversal lineage is verified; an orphaned
+-- trigger remains a dependency rather than being silently discarded.
+create or replace function private.debt2b2_is_effective_schedule_trigger(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_trigger_event_id uuid
+)
+returns boolean
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_trigger public.debt_events%rowtype;
+  v_parent public.debt_events%rowtype;
+begin
+  if p_trigger_event_id is null then
+    return true;
+  end if;
+
+  select e.*
+    into v_trigger
+    from public.debt_events as e
+   where e.id = p_trigger_event_id
+     and e.debt_id = p_debt_id
+     and e.household_id = p_household_id;
+  if not found then
+    return true;
+  end if;
+
+  if v_trigger.event_type = 'reversal' then
+    if v_trigger.reversal_of_event_id is null then
+      return true;
+    end if;
+
+    select e.*
+      into v_parent
+      from public.debt_events as e
+     where e.id = v_trigger.reversal_of_event_id
+       and e.debt_id = p_debt_id
+       and e.household_id = p_household_id;
+    if not found then
+      return true;
+    end if;
+
+    -- The reversal schedule is an undo branch, not a new dependency root,
+    -- once its parent is demonstrably reversed (including this trigger).
+    return not exists (
+      select 1
+        from public.debt_events as parent_reversal
+       where parent_reversal.debt_id = p_debt_id
+         and parent_reversal.household_id = p_household_id
+         and parent_reversal.event_type = 'reversal'
+         and parent_reversal.reversal_of_event_id = v_parent.id
+    );
+  end if;
+
+  return not exists (
+    select 1
+      from public.debt_events as reversal
+     where reversal.debt_id = p_debt_id
+       and reversal.household_id = p_household_id
+       and reversal.event_type = 'reversal'
+       and reversal.reversal_of_event_id = v_trigger.id
+  );
+end;
+$function$;
+
+revoke all privileges on function private.debt2b2_is_effective_schedule_trigger(uuid, uuid, uuid)
+  from public, anon, authenticated, service_role;
+
+-- Restore a schedule from the locked baseline instead of trusting the
+-- client-provided replay payload as the source of row state. The payload is
+-- still canonical-checked by reverse_debt_event_v1; this helper copies the
+-- persisted baseline fields and carries only effective, pre-target direct
+-- allocations. No allocation, movement, or economic ledger row is created.
+create or replace function private.debt2b2_restore_schedule_v1(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_reversal_event_id uuid,
+  p_target_event_id uuid,
+  p_event_date date,
+  p_notes text,
+  p_baseline_schedule_id uuid,
+  p_user_id uuid,
+  p_schedule_source text,
+  p_is_authoritative boolean
+)
+returns public.debt_schedule_versions
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_schedule public.debt_schedule_versions%rowtype;
+  v_target public.debt_events%rowtype;
+  v_baseline public.debt_schedule_versions%rowtype;
+  v_baseline_installment public.debt_installments%rowtype;
+  v_carried_allocated_amount numeric;
+  v_restored_installment_id uuid;
+begin
+  select s.*
+    into v_baseline
+    from public.debt_schedule_versions as s
+   where s.id = p_baseline_schedule_id
+     and s.debt_id = p_debt_id
+     and s.household_id = p_household_id
+   for update;
+  if not found then
+    raise exception 'DEBT_REVERSAL_SCHEDULE_NOT_FOUND';
+  end if;
+
+  select e.*
+    into v_target
+    from public.debt_events as e
+   where e.id = p_target_event_id
+     and e.debt_id = p_debt_id
+     and e.household_id = p_household_id;
+  if not found then
+    raise exception 'DEBT_EVENT_NOT_FOUND';
+  end if;
+
+  insert into public.debt_schedule_versions (
+    debt_id, household_id, version_number, effective_date, reason,
+    schedule_source, is_authoritative, trigger_event_id, notes,
+    created_by_user_id
+  )
+  select
+    p_debt_id,
+    p_household_id,
+    coalesce(pg_catalog.max(s.version_number), 0) + 1,
+    p_event_date,
+    'reversal',
+    coalesce(p_schedule_source, v_baseline.schedule_source, 'manual'),
+    coalesce(p_is_authoritative, v_baseline.is_authoritative, false),
+    p_reversal_event_id,
+    coalesce(p_notes, ''),
+    p_user_id
+    from public.debt_schedule_versions as s
+   where s.debt_id = p_debt_id
+     and s.household_id = p_household_id
+  returning * into v_schedule;
+
+  for v_baseline_installment in
+    select i.*
+      from public.debt_installments as i
+     where i.schedule_version_id = v_baseline.id
+       and i.debt_id = p_debt_id
+       and i.household_id = p_household_id
+     order by i.installment_number
+  loop
+    select
+      coalesce(v_baseline_installment.carried_allocated_amount, 0::numeric)
+      + coalesce((
+          select pg_catalog.sum(a.allocated_amount)
+            from public.debt_event_installment_allocations as a
+            join public.debt_events as e
+              on e.id = a.event_id
+             and e.debt_id = a.debt_id
+             and e.household_id = a.household_id
+           where a.installment_id = v_baseline_installment.id
+             and a.debt_id = p_debt_id
+             and a.household_id = p_household_id
+             and e.event_type in ('payment', 'installment_advance')
+             and (
+               e.event_date < v_target.event_date
+               or (e.event_date = v_target.event_date and e.created_at < v_target.created_at)
+               or (e.event_date = v_target.event_date and e.created_at = v_target.created_at and e.id < v_target.id)
+             )
+             and not exists (
+               select 1
+                 from public.debt_events as r
+                where r.debt_id = e.debt_id
+                  and r.household_id = e.household_id
+                  and r.event_type = 'reversal'
+                  and r.reversal_of_event_id = e.id
+             )
+        ), 0::numeric)
+      into v_carried_allocated_amount;
+
+    insert into public.debt_installments (
+      schedule_version_id, debt_id, household_id, installment_number,
+      contractual_installment_number, is_paid_before_tracking, due_date,
+      expected_amount, expected_principal, expected_interest, expected_fees,
+      expected_insurance, reported_balance, carried_allocated_amount,
+      created_by_user_id
+    ) values (
+      v_schedule.id,
+      p_debt_id,
+      p_household_id,
+      v_baseline_installment.installment_number,
+      coalesce(v_baseline_installment.contractual_installment_number, v_baseline_installment.installment_number),
+      coalesce(v_baseline_installment.is_paid_before_tracking, false),
+      v_baseline_installment.due_date,
+      v_baseline_installment.expected_amount,
+      v_baseline_installment.expected_principal,
+      v_baseline_installment.expected_interest,
+      v_baseline_installment.expected_fees,
+      v_baseline_installment.expected_insurance,
+      v_baseline_installment.reported_balance,
+      v_carried_allocated_amount,
+      p_user_id
+    ) returning id into v_restored_installment_id;
+
+    -- The V3 metadata trigger intentionally clears pretracking flags on
+    -- ordinary later versions. A restoration is the explicit exception: its
+    -- persisted baseline state is restored immediately after insertion.
+    update public.debt_installments
+       set is_paid_before_tracking = coalesce(v_baseline_installment.is_paid_before_tracking, false),
+           carried_allocated_amount = v_carried_allocated_amount
+     where id = v_restored_installment_id
+       and debt_id = p_debt_id
+       and household_id = p_household_id;
+  end loop;
+
+  return v_schedule;
+end;
+$function$;
+
+revoke all privileges on function private.debt2b2_restore_schedule_v1(uuid, uuid, uuid, uuid, date, text, uuid, uuid, text, boolean)
+  from public, anon, authenticated, service_role;
+
 -- Final Audit 4 fix: reverse against the schedule before the first target-triggered version.
 create or replace function public.reverse_debt_event_v1(
   p_household_id uuid,
@@ -1093,6 +1327,11 @@ begin
        and later_schedule.household_id = p_household_id
        and later_schedule.version_number > v_target_schedule.version_number
        and later_schedule.trigger_event_id is distinct from p_target_event_id
+       and private.debt2b2_is_effective_schedule_trigger(
+         p_household_id,
+         p_debt_id,
+         later_schedule.trigger_event_id
+       )
   ) then
     raise exception 'DEBT_REVERSAL_HAS_LATER_DEPENDENCIES';
   end if;
@@ -1160,15 +1399,17 @@ begin
     end if;
 
     -- Restore the exact baseline metadata as well as its rows. The baseline
-    -- may be contractual, reconstructed, estimated, or legacy manual.
-    perform private.debt2b2_create_schedule_v2(
+    -- may be contractual, reconstructed, estimated, or legacy manual. The
+    -- dedicated restore writer also carries effective baseline coverage and
+    -- preserves pretracking state without duplicating financial rows.
+    perform private.debt2b2_restore_schedule_v1(
       p_household_id,
       p_debt_id,
       p_reversal_event_id,
+      p_target_event_id,
       p_event_date,
-      'reversal',
       p_schedule_notes,
-      p_schedule_installments,
+      v_previous_schedule.id,
       v_user_id,
       coalesce(v_previous_schedule.schedule_source, 'manual'),
       coalesce(v_previous_schedule.is_authoritative, false)
@@ -1190,3 +1431,320 @@ revoke all privileges on function public.reverse_debt_event_v1(uuid, uuid, uuid,
   from public, anon, service_role;
 grant execute on function public.reverse_debt_event_v1(uuid, uuid, uuid, uuid, date, text, jsonb, text)
   to authenticated;
+
+-- Restored rows have carried coverage but no duplicated allocation rows. Keep
+-- the allocation SSOT and its overage guard aware of both sources.
+create or replace function private.debt2b2_insert_allocations(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_event_id uuid,
+  p_schedule_version_id uuid,
+  p_cash_amount numeric,
+  p_allocations jsonb,
+  p_user_id uuid
+)
+returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_elem jsonb;
+  v_installment public.debt_installments%rowtype;
+  v_installment_id uuid;
+  v_allocated_amount numeric;
+  v_allocated_before numeric;
+  v_total numeric := 0;
+  v_seen_installments uuid[] := '{}'::uuid[];
+begin
+  if p_allocations is null
+     or pg_catalog.jsonb_typeof(p_allocations) <> 'array'
+     or p_cash_amount is null
+     or p_cash_amount <= 0 then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  if pg_catalog.jsonb_array_length(p_allocations) = 0 then
+    return;
+  end if;
+
+  if p_schedule_version_id is null then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  for v_elem in
+    select e.value
+      from pg_catalog.jsonb_array_elements(p_allocations) as e
+  loop
+    if pg_catalog.jsonb_typeof(v_elem) <> 'object'
+       or not (v_elem ? 'installment_id')
+       or v_elem->'installment_id' = 'null'::pg_catalog.jsonb
+       or not (v_elem ? 'allocated_amount')
+       or v_elem->'allocated_amount' = 'null'::pg_catalog.jsonb
+       or pg_catalog.jsonb_typeof(v_elem->'allocated_amount') <> 'number' then
+      raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end if;
+
+    begin
+      v_installment_id := (v_elem->>'installment_id')::uuid;
+      v_allocated_amount := (v_elem->>'allocated_amount')::numeric;
+    exception
+      when invalid_text_representation or numeric_value_out_of_range then
+        raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end;
+
+    if v_allocated_amount <= 0
+       or v_installment_id = any(v_seen_installments) then
+      raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end if;
+    v_seen_installments := pg_catalog.array_append(v_seen_installments, v_installment_id);
+
+    select i.*
+      into v_installment
+      from public.debt_installments as i
+     where i.id = v_installment_id
+       and i.debt_id = p_debt_id
+       and i.household_id = p_household_id
+       and i.schedule_version_id = p_schedule_version_id
+     for update;
+
+    if not found then
+      raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end if;
+
+    if coalesce(v_installment.is_paid_before_tracking, false) then
+      raise exception 'INVALID_DEBT_ALLOCATION';
+    end if;
+
+    select
+      coalesce(v_installment.carried_allocated_amount, 0::numeric)
+      + coalesce(pg_catalog.sum(a.allocated_amount), 0::numeric)
+      into v_allocated_before
+      from public.debt_event_installment_allocations as a
+      join public.debt_events as e
+        on e.id = a.event_id
+       and e.debt_id = a.debt_id
+       and e.household_id = a.household_id
+     where a.installment_id = v_installment_id
+       and a.debt_id = p_debt_id
+       and a.household_id = p_household_id
+       and e.event_type in ('payment', 'installment_advance')
+       and not exists (
+         select 1
+           from public.debt_events as r
+          where r.debt_id = e.debt_id
+            and r.household_id = e.household_id
+            and r.event_type = 'reversal'
+            and r.reversal_of_event_id = e.id
+       );
+
+    v_total := v_total + v_allocated_amount;
+    if v_total > p_cash_amount then
+      raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end if;
+    if v_installment.expected_amount is not null
+       and v_allocated_before + v_allocated_amount > v_installment.expected_amount then
+      raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end if;
+
+    insert into public.debt_event_installment_allocations (
+      event_id,
+      installment_id,
+      debt_id,
+      household_id,
+      allocated_amount,
+      created_by_user_id
+    ) values (
+      p_event_id,
+      v_installment_id,
+      p_debt_id,
+      p_household_id,
+      v_allocated_amount,
+      p_user_id
+    );
+  end loop;
+end;
+$function$;
+
+revoke all privileges on function private.debt2b2_insert_allocations(uuid, uuid, uuid, uuid, numeric, jsonb, uuid)
+  from public, anon, authenticated, service_role;
+
+-- Installment advances use the same carried-plus-direct coverage when
+-- locating the first unpaid installment and when rejecting a second advance.
+create or replace function private.debt2b2_validate_advance_allocations(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_schedule_version_id uuid,
+  p_event_date date,
+  p_cash_amount numeric,
+  p_principal_amount numeric,
+  p_interest_paid numeric,
+  p_fees_paid numeric,
+  p_insurance_paid numeric,
+  p_other_cost_paid numeric,
+  p_allocations jsonb
+)
+returns void
+language plpgsql
+security invoker
+set search_path = ''
+as $function$
+declare
+  v_elem jsonb;
+  v_installment_id uuid;
+  v_amount numeric;
+  v_seen uuid[] := '{}'::uuid[];
+  v_count integer;
+  v_distinct_count integer;
+  v_first_number integer;
+  v_last_number integer;
+  v_earliest_unpaid integer;
+  v_cash numeric;
+  v_principal numeric;
+  v_interest numeric;
+  v_fees numeric;
+  v_insurance numeric;
+  v_expected_amount numeric;
+begin
+  if p_schedule_version_id is null
+     or p_allocations is null
+     or pg_catalog.jsonb_typeof(p_allocations) <> 'array'
+     or pg_catalog.jsonb_array_length(p_allocations) = 0 then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  for v_elem in
+    select e.value
+      from pg_catalog.jsonb_array_elements(p_allocations) as e
+  loop
+    if pg_catalog.jsonb_typeof(v_elem) <> 'object'
+       or not (v_elem ? 'installment_id')
+       or not (v_elem ? 'allocated_amount')
+       or pg_catalog.jsonb_typeof(v_elem->'allocated_amount') <> 'number' then
+      raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end if;
+    begin
+      v_installment_id := (v_elem->>'installment_id')::uuid;
+      v_amount := (v_elem->>'allocated_amount')::numeric;
+    exception
+      when invalid_text_representation or numeric_value_out_of_range then
+        raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end;
+    if v_amount <= 0 or v_installment_id = any(v_seen) then
+      raise exception 'INVALID_DEBT_ALLOCATIONS';
+    end if;
+    v_seen := pg_catalog.array_append(v_seen, v_installment_id);
+  end loop;
+
+  select
+    pg_catalog.count(*),
+    pg_catalog.count(distinct i.id),
+    coalesce(pg_catalog.sum(i.expected_amount), 0::numeric),
+    coalesce(pg_catalog.sum(i.expected_principal), 0::numeric),
+    coalesce(pg_catalog.sum(i.expected_interest), 0::numeric),
+    coalesce(pg_catalog.sum(i.expected_fees), 0::numeric),
+    coalesce(pg_catalog.sum(i.expected_insurance), 0::numeric),
+    min(i.installment_number),
+    max(i.installment_number)
+    into v_count, v_distinct_count, v_expected_amount, v_principal,
+         v_interest, v_fees, v_insurance, v_first_number, v_last_number
+    from pg_catalog.jsonb_array_elements(p_allocations) as e
+    join public.debt_installments as i
+      on i.id = (e.value->>'installment_id')::uuid
+     and i.debt_id = p_debt_id
+     and i.household_id = p_household_id
+     and i.schedule_version_id = p_schedule_version_id
+     and i.due_date > p_event_date
+     and not coalesce(i.is_paid_before_tracking, false);
+
+  if v_count <> pg_catalog.jsonb_array_length(p_allocations)
+     or v_distinct_count <> v_count
+     or v_first_number is null
+     or v_last_number - v_first_number + 1 <> v_count then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  select coalesce(min(i.installment_number), null)
+    into v_earliest_unpaid
+    from public.debt_installments as i
+   where i.debt_id = p_debt_id
+     and i.household_id = p_household_id
+     and i.schedule_version_id = p_schedule_version_id
+     and i.due_date > p_event_date
+     and not coalesce(i.is_paid_before_tracking, false)
+     and i.expected_amount is not null
+     and i.expected_amount > coalesce(i.carried_allocated_amount, 0::numeric) + coalesce((
+       select pg_catalog.sum(a.allocated_amount)
+         from public.debt_event_installment_allocations as a
+         join public.debt_events as e2
+           on e2.id = a.event_id
+          and e2.debt_id = a.debt_id
+          and e2.household_id = a.household_id
+        where a.installment_id = i.id
+          and a.debt_id = p_debt_id
+          and a.household_id = p_household_id
+          and e2.event_type in ('payment', 'installment_advance')
+          and not exists (
+            select 1
+              from public.debt_events as r
+             where r.debt_id = e2.debt_id
+               and r.household_id = e2.household_id
+               and r.event_type = 'reversal'
+               and r.reversal_of_event_id = e2.id
+          )
+     ), 0::numeric);
+
+  if v_earliest_unpaid is null or v_first_number <> v_earliest_unpaid then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  if exists (
+    select 1
+      from pg_catalog.jsonb_array_elements(p_allocations) as e
+      join public.debt_installments as i
+        on i.id = (e.value->>'installment_id')::uuid
+       and i.debt_id = p_debt_id
+       and i.household_id = p_household_id
+       and i.schedule_version_id = p_schedule_version_id
+      where coalesce(i.carried_allocated_amount, 0::numeric) + coalesce((
+        select pg_catalog.sum(a.allocated_amount)
+          from public.debt_event_installment_allocations as a
+          join public.debt_events as e2
+            on e2.id = a.event_id
+           and e2.debt_id = a.debt_id
+           and e2.household_id = a.household_id
+         where a.installment_id = i.id
+           and a.debt_id = p_debt_id
+           and a.household_id = p_household_id
+           and e2.event_type in ('payment', 'installment_advance')
+           and not exists (
+             select 1
+               from public.debt_events as r
+              where r.debt_id = e2.debt_id
+                and r.household_id = e2.household_id
+                and r.event_type = 'reversal'
+                and r.reversal_of_event_id = e2.id
+           )
+      ), 0::numeric) <> 0
+  ) then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+
+  select coalesce(pg_catalog.sum((e.value->>'allocated_amount')::numeric), 0::numeric)
+    into v_cash
+    from pg_catalog.jsonb_array_elements(p_allocations) as e;
+
+  if v_cash <> p_cash_amount
+     or v_principal <> p_principal_amount
+     or v_interest <> p_interest_paid
+     or v_fees <> p_fees_paid
+     or v_insurance <> p_insurance_paid
+     or p_other_cost_paid <> 0
+     or v_expected_amount <> p_cash_amount then
+    raise exception 'INVALID_DEBT_ALLOCATIONS';
+  end if;
+end;
+$function$;
+
+revoke all privileges on function private.debt2b2_validate_advance_allocations(uuid, uuid, uuid, date, numeric, numeric, numeric, numeric, numeric, numeric, jsonb)
+  from public, anon, authenticated, service_role;

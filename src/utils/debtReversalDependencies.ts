@@ -21,6 +21,37 @@ function compareDebtEventOrder(left: DebtEvent, right: DebtEvent): number {
     || left.id.localeCompare(right.id);
 }
 
+function isEffectiveScheduleTrigger(version: DebtScheduleVersion, events: DebtEvent[]): boolean {
+  if (version.triggerEventId === null) return true;
+
+  const trigger = events.find((event) =>
+    event.id === version.triggerEventId && event.debtId === version.debtId
+  );
+  if (!trigger) return true;
+
+  if (trigger.eventType === "reversal") {
+    if (trigger.reversalOfEventId === null) return true;
+    const parent = events.find((event) =>
+      event.id === trigger.reversalOfEventId && event.debtId === version.debtId
+    );
+    if (!parent) return true;
+
+    // A schedule generated while undoing a parent event is historical undo
+    // lineage, not a fresh dependency root for older events.
+    return !events.some((event) =>
+      event.debtId === version.debtId
+      && event.eventType === "reversal"
+      && event.reversalOfEventId === parent.id
+    );
+  }
+
+  return !events.some((event) =>
+    event.debtId === version.debtId
+    && event.eventType === "reversal"
+    && event.reversalOfEventId === trigger.id
+  );
+}
+
 /**
  * Computes the client-side LIFO hint for reversing a schedule-generating
  * event. The server remains authoritative; this helper only prevents a
@@ -62,6 +93,7 @@ export function getDebtReversalDependencyState({
       version.debtId === targetEvent.debtId
       && version.versionNumber > latestTargetVersion.versionNumber
       && version.triggerEventId !== targetEvent.id
+      && isEffectiveScheduleTrigger(version, events)
     )
     .sort((left, right) => left.versionNumber - right.versionNumber)[0] ?? null;
 

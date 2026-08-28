@@ -144,6 +144,13 @@ describe("buildDebtPlanningItems — schedule version handling", () => {
     expect(items).toHaveLength(0);
   });
 
+  it("includes carried coverage in the planning read model", () => {
+    const covered = installment({ carriedAllocatedAmount: 900, expectedAmount: 900 });
+    const items = build([debt()], [], [scheduleVersion()], [covered], []);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ allocatedAmount: 900, remainingAmount: 0, isCovered: true, dueStatus: "covered" });
+  });
+
   it("hides the last known schedule while a bank schedule is pending", () => {
     const pendingEvent = debtEvent({
       id: "e_pending",

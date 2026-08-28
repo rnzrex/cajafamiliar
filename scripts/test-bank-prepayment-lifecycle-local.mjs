@@ -62,6 +62,29 @@ const ids = {
   dependencyReversedR2: "00000000-0000-4000-8000-000000000956",
   dependencyReversedR1: "00000000-0000-4000-8000-000000000957",
   dependencyReversedP3: "00000000-0000-4000-8000-000000000958",
+  nestedLifecycleDebt: "00000000-0000-4000-8000-000000000959",
+  nestedLifecycleP1: "00000000-0000-4000-8000-000000000960",
+  nestedLifecycleP2: "00000000-0000-4000-8000-000000000961",
+  nestedLifecycleR2: "00000000-0000-4000-8000-000000000962",
+  nestedLifecycleR1: "00000000-0000-4000-8000-000000000963",
+  nestedMetadataDebt: "00000000-0000-4000-8000-000000000964",
+  nestedMetadataP1: "00000000-0000-4000-8000-000000000965",
+  nestedMetadataP2: "00000000-0000-4000-8000-000000000966",
+  nestedMetadataR2: "00000000-0000-4000-8000-000000000967",
+  nestedMetadataR1: "00000000-0000-4000-8000-000000000968",
+  carriedFullDebt: "00000000-0000-4000-8000-000000000969",
+  carriedFullPayment: "00000000-0000-4000-8000-000000000970",
+  carriedFullP1: "00000000-0000-4000-8000-000000000971",
+  carriedFullR1: "00000000-0000-4000-8000-000000000972",
+  carriedPartialDebt: "00000000-0000-4000-8000-000000000973",
+  carriedPartialPayment: "00000000-0000-4000-8000-000000000974",
+  carriedPartialP1: "00000000-0000-4000-8000-000000000975",
+  carriedPartialR1: "00000000-0000-4000-8000-000000000976",
+  carriedRevertedDebt: "00000000-0000-4000-8000-000000000977",
+  carriedRevertedPayment: "00000000-0000-4000-8000-000000000978",
+  carriedRevertedPaymentR: "00000000-0000-4000-8000-000000000979",
+  carriedRevertedP1: "00000000-0000-4000-8000-000000000980",
+  carriedRevertedR1: "00000000-0000-4000-8000-000000000981",
 };
 
 function runSql(sql) {
@@ -106,12 +129,18 @@ function scheduleRowsWithoutContractual(count = 2) {
   })));
 }
 
-function createBaselineLoanSql(debtId, name, { trackingStartDate = '2026-08-27', firstDueDate = '2026-09-01', schedule = scheduleRows(1, 2) } = {}) {
+function createBaselineLoanSql(debtId, name, {
+  trackingStartDate = '2026-08-27',
+  firstDueDate = '2026-09-01',
+  schedule = scheduleRows(1, 2),
+  termInstallments = 2,
+  installmentsPaidBeforeTracking = 0,
+} = {}) {
   return `select public.create_bank_loan_v1(
     '${ids.household}', '${debtId}', '${name}', 'Banco lifecycle', 'bank_loan', 'PEN',
-    '2026-01-01', '${trackingStartDate}', 1000, 1000, 2, 100, 'fixed', 'monthly', null, '${firstDueDate}',
+    '2026-01-01', '${trackingStartDate}', 1000, 1000, ${termInstallments}, 100, 'fixed', 'monthly', null, '${firstDueDate}',
     0, null, '', 'fixed_schedule', 'contract_schedule', null, null,
-    jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', 2),
+    jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', ${termInstallments}, 'installments_paid_before_tracking', ${installmentsPaidBeforeTracking}),
     '[]'::jsonb, 'contractual', '${schedule}'::jsonb, '[]'::jsonb
   );`;
 }
@@ -135,11 +164,11 @@ function reverseDebtSql({ debtId, reversalEventId, targetEventId, eventDate = '2
   )->>'idempotentReplay');`;
 }
 
-function recordPaymentSql({ debtId, eventId, movementId, eventDate = '2026-08-29', cashAmount = 10, principalAmount = 10 }) {
+function recordPaymentSql({ debtId, eventId, movementId, eventDate = '2026-08-29', cashAmount = 10, principalAmount = 10, interestAmount = 0, allocations = "'[]'::jsonb" }) {
   return `select public.record_debt_payment_v3(
     '${ids.household}', '${debtId}', '${eventId}', '${movementId}',
     '${eventDate}', ${cashAmount}, '${ids.account}', 'Pago posterior reversal smoke', 'Pago de deuda',
-    ${principalAmount}, 0, 0, 0, 0, 0, null, true, '[]'::jsonb, '[]'::jsonb, null, null
+    ${principalAmount}, ${interestAmount}, 0, 0, 0, 0, null, true, ${allocations}, '[]'::jsonb, null, null
   );`;
 }
 
@@ -157,6 +186,10 @@ function recordAdvanceSql({ debtId, eventId, eventDate = '2026-08-29' }) {
 
 function mutationFingerprintSql(debtId) {
   return `select (select count(*) from public.debt_events where debt_id = '${debtId}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${debtId}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}' and description like '%reversal smoke%');`;
+}
+
+function currentScheduleIdSql(debtId) {
+  return `(select s.id from public.debt_schedule_versions as s where s.debt_id = '${debtId}' order by s.version_number desc limit 1)`;
 }
 
 async function expectSqlError(sql, expected) {
@@ -196,10 +229,10 @@ try {
   await execSql("select 1");
   const schemaCheck = await execSql(`
     select
-      (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'debt_installments' and column_name in ('contractual_installment_number', 'reported_balance', 'is_paid_before_tracking')) || '|' ||
+      (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'debt_installments' and column_name in ('contractual_installment_number', 'reported_balance', 'is_paid_before_tracking', 'carried_allocated_amount')) || '|' ||
       (select count(*) from information_schema.routines where routine_schema = 'public' and routine_name = 'update_bank_prepayment_schedule_v1');
   `);
-  if (schemaCheck !== "3|1") throw new Error(`Lifecycle schema/RPC check failed: ${schemaCheck}`);
+  if (schemaCheck !== "4|1") throw new Error(`Lifecycle schema/RPC check failed: ${schemaCheck}`);
 
   await execSql(cleanupSql);
   await execSql(`
@@ -838,7 +871,229 @@ try {
   const replayAfterLaterActivityAfter = await execSql(mutationFingerprintSql(ids.dependencyReversedDebt));
   if (replayAfterLaterActivity !== "true" || replayAfterLaterActivityAfter !== replayAfterLaterActivityBefore) throw new Error(`Reversal replay was blocked or mutated after later activity: ${replayAfterLaterActivity} ${replayAfterLaterActivityBefore} -> ${replayAfterLaterActivityAfter}`);
 
-  console.log("SUCCESS! BANK PREPAYMENT LIFECYCLE V1 local schema, metadata, numbering, replay, pending transition, stale guards, reversal baselines, late-reversal validation, LIFO dependency guards, fixed-schedule guard, and ledger-protection checks passed.");
+  console.log("22. Preserving effective nested LIFO schedule lineage across P1/P2 reversals...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.nestedLifecycleDebt, "Crédito nested lifecycle")}
+    ${recordPrepaymentSql({
+      debtId: ids.nestedLifecycleDebt,
+      eventId: ids.nestedLifecycleP1,
+      movementId: "bank-prepayment-v1-nested-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(1, 2),
+      notes: "Nested P1",
+      source: "estimated",
+    })}
+    ${recordPrepaymentSql({
+      debtId: ids.nestedLifecycleDebt,
+      eventId: ids.nestedLifecycleP2,
+      movementId: "bank-prepayment-v1-nested-p2",
+      eventDate: '2026-08-28',
+      effect: "reduce_term",
+      schedule: scheduleRows(1, 2),
+      notes: "Nested P2",
+      source: "estimated",
+    })}
+  `));
+  const nestedBefore = await execSql(`select string_agg(version_number::text, ',' order by version_number) from public.debt_schedule_versions where debt_id = '${ids.nestedLifecycleDebt}';`);
+  if (nestedBefore !== "1,2,3") throw new Error(`Nested schedule history before reversal was not V1..V3: ${nestedBefore}`);
+  await expectSqlError(withUser(reverseDebtSql({
+    debtId: ids.nestedLifecycleDebt,
+    reversalEventId: ids.nestedLifecycleR1,
+    targetEventId: ids.nestedLifecycleP1,
+    eventDate: '2026-08-29',
+    schedule: scheduleRows(1, 2),
+  })), "DEBT_REVERSAL_HAS_LATER_DEPENDENCIES");
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.nestedLifecycleDebt,
+    reversalEventId: ids.nestedLifecycleR2,
+    targetEventId: ids.nestedLifecycleP2,
+    eventDate: '2026-08-30',
+    schedule: scheduleRows(1, 2),
+  })));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.nestedLifecycleDebt,
+    reversalEventId: ids.nestedLifecycleR1,
+    targetEventId: ids.nestedLifecycleP1,
+    eventDate: '2026-08-31',
+    schedule: scheduleRows(1, 2),
+  })));
+  const nestedAfter = await execSql(`
+    select string_agg(version_number::text, ',' order by version_number) || '|' ||
+      string_agg(coalesce(trigger_event_id::text, 'initial'), ',' order by version_number) || '|' ||
+      (select count(*) from public.debt_events where debt_id = '${ids.nestedLifecycleDebt}' and event_type = 'reversal')
+      from public.debt_schedule_versions where debt_id = '${ids.nestedLifecycleDebt}';
+  `);
+  if (nestedAfter !== `1,2,3,4,5|initial,${ids.nestedLifecycleP1},${ids.nestedLifecycleP2},${ids.nestedLifecycleR2},${ids.nestedLifecycleR1}|2`) throw new Error(`Nested P1/P2 reversal did not preserve effective LIFO history: ${nestedAfter}`);
+
+  console.log("23. Releasing nested estimated/official P2 lineage only after P2 reversal...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.nestedMetadataDebt, "Crédito nested metadata")}
+    ${recordPrepaymentSql({
+      debtId: ids.nestedMetadataDebt,
+      eventId: ids.nestedMetadataP1,
+      movementId: "bank-prepayment-v1-nested-metadata-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(1, 2),
+      notes: "Nested metadata P1",
+      source: "estimated",
+    })}
+    ${recordPrepaymentSql({
+      debtId: ids.nestedMetadataDebt,
+      eventId: ids.nestedMetadataP2,
+      movementId: "bank-prepayment-v1-nested-metadata-p2",
+      eventDate: '2026-08-28',
+      effect: "reduce_term",
+      schedule: scheduleRows(1, 2),
+      notes: "Nested metadata P2 estimate",
+      source: "estimated",
+    })}
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.nestedMetadataDebt}', '${ids.nestedMetadataP2}', '2026-08-28',
+      '${scheduleRows(1, 2)}'::jsonb, 'Nested metadata P2 official'
+    );
+  `));
+  await expectSqlError(withUser(reverseDebtSql({
+    debtId: ids.nestedMetadataDebt,
+    reversalEventId: ids.nestedMetadataR1,
+    targetEventId: ids.nestedMetadataP1,
+    eventDate: '2026-08-29',
+    schedule: scheduleRows(1, 2),
+  })), "DEBT_REVERSAL_HAS_LATER_DEPENDENCIES");
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.nestedMetadataDebt,
+    reversalEventId: ids.nestedMetadataR2,
+    targetEventId: ids.nestedMetadataP2,
+    eventDate: '2026-08-30',
+    schedule: scheduleRows(1, 2),
+  })));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.nestedMetadataDebt,
+    reversalEventId: ids.nestedMetadataR1,
+    targetEventId: ids.nestedMetadataP1,
+    eventDate: '2026-08-31',
+    schedule: scheduleRows(1, 2),
+  })));
+  const nestedMetadataAfter = await execSql(`select string_agg(schedule_source || ':' || version_number::text, ',' order by version_number) from public.debt_schedule_versions where debt_id = '${ids.nestedMetadataDebt}';`);
+  if (nestedMetadataAfter !== `contractual:1,estimated:2,estimated:3,contractual:4,estimated:5,contractual:6`) throw new Error(`Nested estimated/official history was not retained: ${nestedMetadataAfter}`);
+
+  console.log("24. Carrying pretracking state and full effective allocation coverage without duplication...");
+  const fullAllocation = `jsonb_build_array(jsonb_build_object(
+    'installment_id', (select i.id from public.debt_installments as i where i.debt_id = '${ids.carriedFullDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.carriedFullDebt)} and i.installment_number = 3),
+    'allocated_amount', 100
+  ))`;
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.carriedFullDebt, "Crédito carried full", { termInstallments: 6, installmentsPaidBeforeTracking: 2, schedule: scheduleRows(1, 6) })}
+    ${recordPaymentSql({ debtId: ids.carriedFullDebt, eventId: ids.carriedFullPayment, movementId: "bank-prepayment-v1-carried-full-payment", eventDate: '2026-08-20', cashAmount: 100, principalAmount: 80, interestAmount: 20, allocations: fullAllocation })}
+    ${recordPrepaymentSql({
+      debtId: ids.carriedFullDebt,
+      eventId: ids.carriedFullP1,
+      movementId: "bank-prepayment-v1-carried-full-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(1, 6),
+      notes: "Carried full P1",
+      source: "estimated",
+    })}
+  `));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.carriedFullDebt,
+    reversalEventId: ids.carriedFullR1,
+    targetEventId: ids.carriedFullP1,
+    schedule: scheduleRows(1, 6),
+  })));
+  const carriedFullState = await execSql(`
+    select string_agg((case when is_paid_before_tracking then '1' else '0' end) || ':' || carried_allocated_amount::text, ',' order by installment_number) || '|' ||
+      (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.carriedFullDebt}') || '|' ||
+      (select count(*) from public.movements where household_id = '${ids.household}' and id in ('bank-prepayment-v1-carried-full-payment', 'bank-prepayment-v1-carried-full-p1')) || '|' ||
+      (select count(*) from public.debt_events where debt_id = '${ids.carriedFullDebt}')
+     from public.debt_installments as i
+     where i.debt_id = '${ids.carriedFullDebt}'
+       and i.schedule_version_id = ${currentScheduleIdSql(ids.carriedFullDebt)};
+  `);
+  if (carriedFullState !== "1:0,1:0,0:100,0:0,0:0,0:0|1|2|3") throw new Error(`Full carried state or ledger counts were incorrect: ${carriedFullState}`);
+  await expectSqlError(withUser(recordPaymentSql({
+    debtId: ids.carriedFullDebt,
+    eventId: "00000000-0000-4000-8000-000000000982",
+    movementId: "bank-prepayment-v1-carried-full-overage",
+    eventDate: '2026-09-01',
+    cashAmount: 1,
+    principalAmount: 1,
+    allocations: `jsonb_build_array(jsonb_build_object('installment_id', (select i.id from public.debt_installments as i where i.debt_id = '${ids.carriedFullDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.carriedFullDebt)} and i.installment_number = 3), 'allocated_amount', 1))`,
+  })), "INVALID_DEBT_ALLOCATIONS");
+  const carriedFullReplayBefore = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.carriedFullDebt}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.carriedFullDebt}') || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.carriedFullDebt}');`);
+  const carriedFullReplay = await execSql(withUser(reverseDebtSql({ debtId: ids.carriedFullDebt, reversalEventId: ids.carriedFullR1, targetEventId: ids.carriedFullP1, schedule: scheduleRows(1, 6) })));
+  const carriedFullReplayAfter = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.carriedFullDebt}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.carriedFullDebt}') || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.carriedFullDebt}');`);
+  if (carriedFullReplay !== "true" || carriedFullReplayAfter !== carriedFullReplayBefore) throw new Error(`Full carried exact replay changed state: ${carriedFullReplay} ${carriedFullReplayBefore} -> ${carriedFullReplayAfter}`);
+
+  console.log("25. Carrying partial coverage, accepting the exact remainder, and rejecting overage...");
+  const partialAllocation = `jsonb_build_array(jsonb_build_object(
+    'installment_id', (select i.id from public.debt_installments as i where i.debt_id = '${ids.carriedPartialDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.carriedPartialDebt)} and i.installment_number = 3),
+    'allocated_amount', 40
+  ))`;
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.carriedPartialDebt, "Crédito carried partial", { termInstallments: 6, schedule: scheduleRows(1, 6) })}
+    ${recordPaymentSql({ debtId: ids.carriedPartialDebt, eventId: ids.carriedPartialPayment, movementId: "bank-prepayment-v1-carried-partial-payment", eventDate: '2026-08-20', cashAmount: 40, principalAmount: 32, interestAmount: 8, allocations: partialAllocation })}
+    ${recordPrepaymentSql({
+      debtId: ids.carriedPartialDebt,
+      eventId: ids.carriedPartialP1,
+      movementId: "bank-prepayment-v1-carried-partial-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(1, 6),
+      notes: "Carried partial P1",
+      source: "estimated",
+    })}
+  `));
+  await execSql(withUser(reverseDebtSql({ debtId: ids.carriedPartialDebt, reversalEventId: ids.carriedPartialR1, targetEventId: ids.carriedPartialP1, schedule: scheduleRows(1, 6) })));
+  const partialInstallmentIdSql = `(select i.id from public.debt_installments as i where i.debt_id = '${ids.carriedPartialDebt}' order by i.installment_number offset 2 limit 1)`;
+  const carriedPartialBefore = await execSql(`select carried_allocated_amount::text || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.carriedPartialDebt}') from public.debt_installments where debt_id = '${ids.carriedPartialDebt}' and schedule_version_id = ${currentScheduleIdSql(ids.carriedPartialDebt)} and installment_number = 3;`);
+  if (carriedPartialBefore !== "40|1") throw new Error(`Partial carried coverage was not restored: ${carriedPartialBefore}`);
+  await execSql(withUser(recordPaymentSql({
+    debtId: ids.carriedPartialDebt,
+    eventId: "00000000-0000-4000-8000-000000000983",
+    movementId: "bank-prepayment-v1-carried-partial-remainder",
+    eventDate: '2026-09-01',
+    cashAmount: 60,
+    principalAmount: 48,
+    interestAmount: 12,
+    allocations: `jsonb_build_array(jsonb_build_object('installment_id', ${partialInstallmentIdSql}, 'allocated_amount', 60))`,
+  })));
+  const carriedPartialAfter = await execSql(`select carried_allocated_amount::text || '|' || (select sum(allocated_amount)::text from public.debt_event_installment_allocations where debt_id = '${ids.carriedPartialDebt}') from public.debt_installments where debt_id = '${ids.carriedPartialDebt}' and schedule_version_id = ${currentScheduleIdSql(ids.carriedPartialDebt)} and installment_number = 3;`);
+  if (carriedPartialAfter !== "40|100") throw new Error(`Partial carried plus new allocation was not exactly 100: ${carriedPartialAfter}`);
+  await expectSqlError(withUser(recordPaymentSql({
+    debtId: ids.carriedPartialDebt,
+    eventId: "00000000-0000-4000-8000-000000000984",
+    movementId: "bank-prepayment-v1-carried-partial-overage",
+    eventDate: '2026-09-02',
+    cashAmount: 1,
+    principalAmount: 1,
+    allocations: `jsonb_build_array(jsonb_build_object('installment_id', ${partialInstallmentIdSql}, 'allocated_amount', 1))`,
+  })), "INVALID_DEBT_ALLOCATIONS");
+
+  console.log("26. Excluding reverted pre-target allocations from restored carried coverage...");
+  const revertedAllocation = `jsonb_build_array(jsonb_build_object(
+    'installment_id', (select i.id from public.debt_installments as i where i.debt_id = '${ids.carriedRevertedDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.carriedRevertedDebt)} and i.installment_number = 3),
+    'allocated_amount', 40
+  ))`;
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.carriedRevertedDebt, "Crédito carried reverted", { termInstallments: 6, schedule: scheduleRows(1, 6) })}
+    ${recordPaymentSql({ debtId: ids.carriedRevertedDebt, eventId: ids.carriedRevertedPayment, movementId: "bank-prepayment-v1-carried-reverted-payment", eventDate: '2026-08-20', cashAmount: 40, principalAmount: 32, interestAmount: 8, allocations: revertedAllocation })}
+  `));
+  await execSql(withUser(reverseDebtSql({ debtId: ids.carriedRevertedDebt, reversalEventId: ids.carriedRevertedPaymentR, targetEventId: ids.carriedRevertedPayment, eventDate: '2026-08-21', schedule: "[]" })));
+  await execSql(withUser(`
+    ${recordPrepaymentSql({
+      debtId: ids.carriedRevertedDebt,
+      eventId: ids.carriedRevertedP1,
+      movementId: "bank-prepayment-v1-carried-reverted-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(1, 6),
+      notes: "Carried reverted P1",
+      source: "estimated",
+    })}
+  `));
+  await execSql(withUser(reverseDebtSql({ debtId: ids.carriedRevertedDebt, reversalEventId: ids.carriedRevertedR1, targetEventId: ids.carriedRevertedP1, schedule: scheduleRows(1, 6) })));
+  const carriedRevertedState = await execSql(`select carried_allocated_amount::text || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.carriedRevertedDebt}') from public.debt_installments where debt_id = '${ids.carriedRevertedDebt}' and schedule_version_id = ${currentScheduleIdSql(ids.carriedRevertedDebt)} and installment_number = 3;`);
+  if (carriedRevertedState !== "0|1") throw new Error(`Reverted pre-target allocation was carried or duplicated: ${carriedRevertedState}`);
+
+  console.log("SUCCESS! BANK PREPAYMENT LIFECYCLE V1 local schema, metadata, numbering, replay, pending transition, stale guards, reversal baselines, late-reversal validation, effective nested LIFO lineage, restored installment state carry, allocation overage, and ledger-protection checks passed.");
 } catch (error) {
   console.error("SQL SMOKE TEST FAILED:", error);
   process.exitCode = 1;

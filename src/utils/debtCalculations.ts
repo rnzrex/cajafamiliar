@@ -1,4 +1,4 @@
-import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtScheduleVersion } from "../types.js";
+import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion } from "../types.js";
 
 export function effectiveDebtEvents(events: DebtEvent[], debtId?: string): DebtEvent[] {
   const reversedIds = new Set(
@@ -54,4 +54,24 @@ export function allocatedAmountForInstallment(installmentId: string, allocations
     (sum, allocation) => (allocation.installmentId === installmentId ? sum + allocation.allocatedAmount : sum),
     0
   );
+}
+
+/**
+ * Total current obligation coverage for a persisted installment.
+ *
+ * `carriedAllocatedAmount` is state copied onto a restored schedule row; it
+ * is deliberately kept separate from effective allocation rows so economic
+ * ledger totals never double-count a payment or advance.
+ */
+export function totalAllocatedAmountForInstallment(
+  installment: Pick<DebtInstallment, "id" | "debtId" | "carriedAllocatedAmount">,
+  allocations: DebtEventInstallmentAllocation[],
+  events: DebtEvent[]
+): number {
+  const carried = Number.isFinite(installment.carriedAllocatedAmount)
+    ? Math.max(0, installment.carriedAllocatedAmount ?? 0)
+    : 0;
+  return carried + effectiveInstallmentAllocations(allocations, events, installment.debtId)
+    .filter((allocation) => allocation.installmentId === installment.id)
+    .reduce((sum, allocation) => sum + allocation.allocatedAmount, 0);
 }

@@ -6,7 +6,7 @@ import type { DebtOperationSaveResult } from "../services/authoritativeSync";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError, validateDebtPayment, validateDebtPrepayment, validateDebtPayoff, validateDebtAllocations, debtEconomicSummary } from "../utils/debtViewModel";
-import { allocatedAmountForInstallment } from "../utils/debtCalculations";
+import { totalAllocatedAmountForInstallment } from "../utils/debtCalculations";
 import { calculateAssistedInterestSuggestion, getLastEffectiveDebtPaymentDate } from "../utils/debtInterestEngine";
 import { calculateNextPayment } from "../utils/debtNextPayment";
 import { getCurrencySymbol } from "../utils/debtFormMode";
@@ -231,7 +231,7 @@ export function DebtOperationForm({
   const [allocations, setAllocations] = useState<Array<{ installmentId: string; allocatedAmount: string }>>([]);
 
   const eligibleAdvanceInstallments = currentScheduleInstallments.filter((installment) => {
-    const allocatedBefore = allocatedAmountForInstallment(installment.id, persistedAllocations, debtEvents);
+    const allocatedBefore = totalAllocatedAmountForInstallment(installment, persistedAllocations, debtEvents);
     return installment.dueDate > eventDate && allocatedBefore <= 0.01;
   });
 
@@ -372,7 +372,7 @@ export function DebtOperationForm({
       currentScheduleSource: currentSchedule?.scheduleSource ?? null,
       currentScheduleAuthoritative: currentSchedule?.isAuthoritative === true,
       insuranceTerms: debtInsuranceTerms,
-      hasAllocatedFutureInstallments: currentScheduleInstallments.some((installment) => installment.dueDate > eventDate && allocatedAmountForInstallment(installment.id, persistedAllocations, debtEvents) > 0.01),
+      hasAllocatedFutureInstallments: currentScheduleInstallments.some((installment) => installment.dueDate > eventDate && totalAllocatedAmountForInstallment(installment, persistedAllocations, debtEvents) > 0.01),
       hasContractualDueDateForPayment: currentScheduleInstallments.some((installment) => installment.dueDate === eventDate),
   }), [bankLoanProfile, currentPrincipal, currentSchedule?.isAuthoritative, currentSchedule?.scheduleSource, currentScheduleInstallments, debt.originalPrincipal, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, debtEvents, eventDate, numExtraPrincipal, numPrincipal, operationType, persistedAllocations, simulationEffect]);
   const summary = debtEconomicSummary(
@@ -1283,7 +1283,7 @@ export function DebtOperationForm({
             ) : (
               <div className="space-y-3">
                 {(operationType === "installment_advance" ? eligibleAdvanceInstallments : currentScheduleInstallments).map((inst) => {
-                const allocatedBefore = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
+                const allocatedBefore = totalAllocatedAmountForInstallment(inst, persistedAllocations, debtEvents);
                 const remaining = inst.expectedAmount == null || !Number.isFinite(inst.expectedAmount) ? null : Math.max(0, inst.expectedAmount - allocatedBefore);
                 const isPaid = remaining !== null && remaining <= 0;
                 const currentDraftAllocation = allocations.find((a) => a.installmentId === inst.id)?.allocatedAmount ?? "";

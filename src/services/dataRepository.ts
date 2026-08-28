@@ -1782,6 +1782,7 @@ function fromDebtInstallmentRow(row: Record<string, any>): DebtInstallment {
       ? Number(row.installment_number)
       : Number(row.contractual_installment_number),
     isPaidBeforeTracking: Boolean(row.is_paid_before_tracking),
+    carriedAllocatedAmount: row.carried_allocated_amount == null ? 0 : Number(row.carried_allocated_amount),
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
   };

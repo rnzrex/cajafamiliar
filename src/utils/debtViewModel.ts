@@ -1,5 +1,5 @@
 import type { Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, DebtKind, DebtStatus, DebtPaymentFrequency, Category } from "../types";
-import { currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, allocatedAmountForInstallment } from "./debtCalculations";
+import { currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, totalAllocatedAmountForInstallment } from "./debtCalculations";
 
 export function translateDebtError(error: unknown): string {
   if (error instanceof Error) {
@@ -134,7 +134,7 @@ export function getInstallmentProgress(
       progressPercent: 100,
     };
   }
-  const allocated = allocatedAmountForInstallment(installment.id, allocations, events);
+  const allocated = totalAllocatedAmountForInstallment(installment, allocations, events);
   const expected = installment.expectedAmount ?? 0;
   const isPaid = expected > 0 ? allocated >= expected : allocated > 0;
   return {
@@ -368,7 +368,7 @@ export function validateDebtAllocations(
       return { valid: false, error: `La cuota contractual #${inst.contractualInstallmentNumber ?? inst.installmentNumber} ya estaba pagada antes de Caja Familiar.` };
     }
 
-    const alreadyAllocated = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
+    const alreadyAllocated = totalAllocatedAmountForInstallment(inst, persistedAllocations, debtEvents);
     const expectedAmount = inst.expectedAmount;
     if (expectedAmount != null && Number.isFinite(expectedAmount)) {
       const remaining = Math.max(0, expectedAmount - alreadyAllocated);

@@ -230,6 +230,7 @@ export interface DebtInstallment {
   reportedBalance?: number | null;
   contractualInstallmentNumber?: number | null;
   isPaidBeforeTracking?: boolean;
+  carriedAllocatedAmount?: number | null;
   createdByUserId: string;
   createdAt: string;
 }
