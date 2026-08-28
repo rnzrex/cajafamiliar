@@ -9,8 +9,8 @@ Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-r
 - Branch: feat/bank-prepayment-recalculation-v1.
 - Base: c46d4b6faaee1cdcb2121a53696f69f757790eb5.
 - Prior implementation was 89a562e74782f925a57b42af7caa3d53f7715ec3 (fix(bank): correct prepayment schedule semantics), followed by metadata checkpoints.
-- Current Audit Fix 2 implementation commit: 9fe9b5a191c591db3f084f9ba8acbd7ef8e50302 (fix(bank): close prepayment audit blockers), not pushed yet at this checkpoint.
-- Working tree is clean; remote branch currently points to eec7c0f1c5ac11a13c09c89f907120431b416416.
+- Current Audit Fix 2 implementation commit: 9fe9b5a191c591db3f084f9ba8acbd7ef8e50302 (fix(bank): close prepayment audit blockers), pushed normally with no force.
+- Working tree is clean; remote branch currently points to d66d87059a7b1c74e9b698dbfe845f7e66c15b6e (implementation plus required metadata checkpoint).
 
 ## Constraints
 
@@ -53,9 +53,9 @@ Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-r
 ## Delivery
 
 - gh auth status: authenticated to github.com as rnzrex via keyring/HTTPS; token not exposed.
-- PR #66: https://github.com/rnzrex/cajafamiliar/pull/66, open, draft=true, base main, head branch feat/bank-prepayment-recalculation-v1. Body updated for Audit Fix 2; remote head remains eec7c0f1c5ac11a13c09c89f907120431b416416 until the pending push.
-- Automatic Preview for the previous pushed SHA: deployment dpl_AqNegND6ftxzntioXa68EcVcCWzk, URL https://cajafamiliar-ployeaqr6-renzorex.vercel.app, branch alias https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app, exact Git SHA eec7c0f1c5ac11a13c09c89f907120431b416416, state READY.
-- Next delivery step is a normal push of 9fe9b5a, then read-only verification of the automatic Preview exact SHA; no manual deployment.
+- PR #66: https://github.com/rnzrex/cajafamiliar/pull/66, open, draft=true, base main, head branch feat/bank-prepayment-recalculation-v1, head SHA d66d87059a7b1c74e9b698dbfe845f7e66c15b6e. Body updated for Audit Fix 2.
+- Automatic Preview: deployment dpl_2k1P5SbNsjTvGgqcnkP4gCSJbqHH, URL https://cajafamiliar-2gyy8hzr5-renzorex.vercel.app, branch alias https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app, exact Git SHA d66d87059a7b1c74e9b698dbfe845f7e66c15b6e, state READY, target null (preview).
+- Preview metadata was verified through the read-only Vercel API; no manual deployment was run.
 
 ## Production
 
@@ -64,7 +64,7 @@ Implement and publish BANK PREPAYMENT RECALCULATION V1 on feat/bank-prepayment-r
 
 ## Next Step
 
-- Push 9fe9b5a normally, verify PR #66 remains DRAFT and the automatic Preview exact SHA, then stop for orchestrator audit.
+- State checkpoint is ready; stop for orchestrator audit. No Production migration or frontend deployment is authorized by this task.
 - Do not apply 20260827214244_bank_prepayment_schedule_lifecycle_v1.sql in Production from this task.
 
 ## Relevant Files
