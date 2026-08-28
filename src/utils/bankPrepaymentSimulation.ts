@@ -402,7 +402,10 @@ export function simulateBankPrepayment(input: BankPrepaymentSimulationInput): Ba
     rows = built.rows;
     insuranceKnown = built.insuranceKnown;
     feesKnown = built.feesKnown;
-    newRegularInstallment = oldRegularInstallment;
+    // In financial_installment_plus_costs the financial portion is kept near
+    // the contractual target, but insurance/fees may be recomputed. Report
+    // the actual projected total instead of reusing the old all-in amount.
+    newRegularInstallment = round2(rows[0]?.total ?? oldRegularInstallment);
     if (rows.length === 0 || !built.exhausted) {
       return emptyResult(effect, [...warnings, "La cuota contractual conocida no permite extinguir el principal con las fechas disponibles."], principalBefore);
     }
@@ -417,7 +420,10 @@ export function simulateBankPrepayment(input: BankPrepaymentSimulationInput): Ba
     newRegularInstallment = round2(rows[0]?.total ?? built.paymentTarget);
   }
 
-  const newEstimatedInterest = insuranceKnown || rows.length > 0
+  // Unknown future costs can change principal allocation and therefore future
+  // interest. Never present an exact interest saving for a non-persistible
+  // projection.
+  const newEstimatedInterest = insuranceKnown && feesKnown
     ? round2(rows.reduce((sum, row) => sum + row.interest, 0))
     : null;
   if (!insuranceKnown) warnings.push("TOTAL ESTIMADO / SEGURO POR CONFIRMAR.");

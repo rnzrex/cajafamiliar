@@ -20,6 +20,10 @@ describe("DEBT-2C Exhaustive Hardened Invariants (32 tests)", () => {
     expect(translateDebtError(new Error("DEBT_PREPAYMENT_WOULD_PAY_OFF"))).toContain("Liquidar deuda");
   });
 
+  it("4b. translates stale prepayment schedule targets correctly", () => {
+    expect(translateDebtError(new Error("DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE"))).toBe("Este prepago ya no es el último cambio contractual del crédito. Actualiza los datos antes de cargar el cronograma del banco.");
+  });
+
   it("5. translates DEBT_REVERSAL_SCHEDULE_REQUIRED error correctly", () => {
     expect(translateDebtError(new Error("DEBT_REVERSAL_SCHEDULE_REQUIRED"))).toContain(" cronograma");
   });

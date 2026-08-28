@@ -15,6 +15,13 @@ const ids = {
   pendingEvent: "00000000-0000-4000-8000-000000000907",
   openDebt: "00000000-0000-4000-8000-000000000910",
   openEvent: "00000000-0000-4000-8000-000000000911",
+  laterScheduleEvent: "00000000-0000-4000-8000-000000000912",
+  stalePrepaymentDebt: "00000000-0000-4000-8000-000000000913",
+  stalePrepaymentP1: "00000000-0000-4000-8000-000000000914",
+  stalePrepaymentP2: "00000000-0000-4000-8000-000000000915",
+  staleScheduleDebt: "00000000-0000-4000-8000-000000000916",
+  staleScheduleP1: "00000000-0000-4000-8000-000000000917",
+  staleScheduleEvent: "00000000-0000-4000-8000-000000000918",
 };
 
 function runSql(sql) {
@@ -220,7 +227,26 @@ try {
     );
   `), "DEBT_EVENT_ID_CONFLICT");
 
-  console.log("6. Pending prepayment transitions to an official schedule without a synthetic event...");
+  console.log("6. Verifying exact official replay remains idempotent after a later contractual schedule...");
+  await execSql(withUser(`
+    select public.update_debt_contractual_schedule_v1(
+      '${ids.household}', '${ids.debt}', '${ids.laterScheduleEvent}', '2026-08-29',
+      'manual_adjustment', '${scheduleRows(20, 2)}'::jsonb, 'Cronograma contractual posterior'
+    );
+  `));
+  const latestBeforeReplay = await execSql(`select reason || '|' || version_number::text from public.debt_schedule_versions where debt_id = '${ids.debt}' order by version_number desc limit 1;`);
+  const replayAfterLaterSchedule = await execSql(withUser(`
+    select (public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.debt}', '${ids.prepaymentEvent}', '2026-08-27',
+      '${scheduleRows(7, 10, 450)}'::jsonb,
+      'Cronograma oficial local'
+    )->>'idempotentReplay');
+  `));
+  if (replayAfterLaterSchedule !== "true") throw new Error(`Exact replay was blocked by a later schedule: ${replayAfterLaterSchedule}`);
+  const latestAfterReplay = await execSql(`select reason || '|' || version_number::text from public.debt_schedule_versions where debt_id = '${ids.debt}' order by version_number desc limit 1;`);
+  if (latestAfterReplay !== latestBeforeReplay) throw new Error(`Exact replay changed the later current schedule: ${latestBeforeReplay} -> ${latestAfterReplay}`);
+
+  console.log("7. Pending prepayment transitions to an official schedule without a synthetic event...");
   await execSql(withUser(`
     select public.create_bank_loan_v1(
       '${ids.household}', '${ids.pendingDebt}', 'Crédito pending', 'Banco lifecycle', 'bank_loan', 'PEN',
@@ -250,7 +276,69 @@ try {
   const pendingEventCount = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.pendingDebt}' and event_type = 'principal_adjustment') || '|' || (select count(*) from public.debt_events where id = '${ids.pendingEvent}');`);
   if (pendingEventCount !== "0|1") throw new Error(`Pending transition created an unexpected event: ${pendingEventCount}`);
 
-  console.log("7. Verifying the fixed-schedule guard for open-ended bank loans...");
+  console.log("8. Rejecting a stale official target after a later effective prepayment...");
+  await execSql(withUser(`
+    select public.create_bank_loan_v1(
+      '${ids.household}', '${ids.stalePrepaymentDebt}', 'Crédito stale prepayment', 'Banco lifecycle', 'bank_loan', 'PEN',
+      '2026-01-01', '2026-08-27', 1000, 1000, 2, 100, 'fixed', 'monthly', null, '2026-09-01',
+      0, null, '', 'fixed_schedule', 'contract_schedule', null, null, null,
+      jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', 2),
+      '[]'::jsonb, 'contractual', '${scheduleRows(1, 2)}'::jsonb, '[]'::jsonb
+    );
+    select public.record_debt_prepayment_v3(
+      '${ids.household}', '${ids.stalePrepaymentDebt}', '${ids.stalePrepaymentP1}', 'bank-prepayment-v1-stale-p1',
+      '2026-08-27', 100, '${ids.account}', 'Prepago stale P1', 'Pago de deuda',
+      100, 0, 0, 0, 0, 'reduce_term', true,
+      '${scheduleRows(7, 2)}'::jsonb, 'Estimación stale P1', 'estimated'
+    );
+    select public.record_debt_prepayment_v3(
+      '${ids.household}', '${ids.stalePrepaymentDebt}', '${ids.stalePrepaymentP2}', 'bank-prepayment-v1-stale-p2',
+      '2026-08-28', 50, '${ids.account}', 'Prepago stale P2', 'Pago de deuda',
+      50, 0, 0, 0, 0, 'pending_bank_schedule', true,
+      '[]'::jsonb, null, null
+    );
+  `));
+  const stalePrepaymentBefore = await execSql(`select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.stalePrepaymentDebt}';`);
+  await expectSqlError(withUser(`
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.stalePrepaymentDebt}', '${ids.stalePrepaymentP1}', '2026-08-27',
+      '${scheduleRows(7, 2, 900)}'::jsonb, 'Stale P1 must fail'
+    );
+  `), "DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE");
+  const stalePrepaymentAfter = await execSql(`select count(*)::text || '|' || (select prepayment_effect from public.debt_events where id = '${ids.stalePrepaymentP2}') || '|' || (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.stalePrepaymentDebt}' and trigger_event_id = '${ids.stalePrepaymentP1}' and schedule_source = 'contractual');`);
+  if (stalePrepaymentAfter !== `${stalePrepaymentBefore}|pending_bank_schedule|0`) throw new Error(`Stale prepayment changed current state: ${stalePrepaymentBefore} -> ${stalePrepaymentAfter}`);
+
+  console.log("9. Rejecting a stale official target after a later contractual schedule...");
+  await execSql(withUser(`
+    select public.create_bank_loan_v1(
+      '${ids.household}', '${ids.staleScheduleDebt}', 'Crédito stale schedule', 'Banco lifecycle', 'bank_loan', 'PEN',
+      '2026-01-01', '2026-08-27', 1000, 1000, 2, 100, 'fixed', 'monthly', null, '2026-09-01',
+      0, null, '', 'fixed_schedule', 'contract_schedule', null, null, null,
+      jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', 2),
+      '[]'::jsonb, 'contractual', '${scheduleRows(1, 2)}'::jsonb, '[]'::jsonb
+    );
+    select public.record_debt_prepayment_v3(
+      '${ids.household}', '${ids.staleScheduleDebt}', '${ids.staleScheduleP1}', 'bank-prepayment-v1-stale-schedule-p1',
+      '2026-08-27', 100, '${ids.account}', 'Prepago stale schedule P1', 'Pago de deuda',
+      100, 0, 0, 0, 0, 'pending_bank_schedule', true,
+      '[]'::jsonb, null, null
+    );
+    select public.update_debt_contractual_schedule_v1(
+      '${ids.household}', '${ids.staleScheduleDebt}', '${ids.staleScheduleEvent}', '2026-08-29',
+      'manual_adjustment', '${scheduleRows(3, 2)}'::jsonb, 'Cronograma posterior stale test'
+    );
+  `));
+  const staleScheduleBefore = await execSql(`select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.staleScheduleDebt}';`);
+  await expectSqlError(withUser(`
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.staleScheduleDebt}', '${ids.staleScheduleP1}', '2026-08-27',
+      '${scheduleRows(1, 2, 900)}'::jsonb, 'Stale later schedule must fail'
+    );
+  `), "DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE");
+  const staleScheduleAfter = await execSql(`select count(*)::text || '|' || (select reason from public.debt_schedule_versions where debt_id = '${ids.staleScheduleDebt}' order by version_number desc limit 1) || '|' || (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.staleScheduleDebt}' and trigger_event_id = '${ids.staleScheduleP1}' and schedule_source = 'contractual');`);
+  if (staleScheduleAfter !== `${staleScheduleBefore}|manual_adjustment|0`) throw new Error(`Stale later schedule changed current state: ${staleScheduleBefore} -> ${staleScheduleAfter}`);
+
+  console.log("10. Verifying the fixed-schedule guard for open-ended bank loans...");
   await execSql(withUser(`
     select public.create_bank_loan_v1(
       '${ids.household}', '${ids.openDebt}', 'Crédito abierto', 'Banco lifecycle', 'bank_loan', 'PEN',

@@ -170,7 +170,33 @@ describe("bank prepayment UX", () => {
     const user = userEvent.setup();
     renderForm("prepayment");
     await user.click(screen.getByRole("button", { name: /^TENGO EL NUEVO CRONOGRAMA DEL BANCO/ }));
-    expect((screen.getByRole("checkbox", { name: "El acreedor me entregó un nuevo cronograma" }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByTestId("official-bank-schedule-editor")).not.toBeNull();
+    expect(screen.getByText("Ingresa únicamente las cuotas del nuevo cronograma entregado por el banco.")).not.toBeNull();
+    expect(screen.getByText("Fuente fija: Contractual / oficial del banco.")).not.toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "El acreedor me entregó un nuevo cronograma" })).toBeNull();
+    expect(screen.queryByText("Estimado por Caja Familiar")).toBeNull();
     expect(screen.getByText("Agregar cuota al nuevo cronograma")).not.toBeNull();
+  });
+
+  it("keeps the four new cards as the only prepayment SSOT", async () => {
+    const user = userEvent.setup();
+    renderForm("prepayment");
+    expect(screen.getByRole("button", { name: /^REDUCIR PLAZO/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^REDUCIR CUOTA/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^TENGO EL NUEVO CRONOGRAMA DEL BANCO/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^BANCO TODAVÍA NO ME ENTREGA/ })).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /^REDUCIR PLAZO/ }));
+    expect((screen.getByRole("button", { name: /^REDUCIR PLAZO/ }) as HTMLButtonElement).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText("Efecto solicitado al banco")).toBeNull();
+    expect(screen.queryByText("Fuente del nuevo cronograma")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /^REDUCIR CUOTA/ }));
+    expect((screen.getByRole("button", { name: /^REDUCIR CUOTA/ }) as HTMLButtonElement).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText("Efecto solicitado al banco")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /^BANCO TODAVÍA NO ME ENTREGA/ }));
+    expect(screen.queryByText("SIMULACIÓN DE CAJA FAMILIAR")).toBeNull();
+    expect(screen.queryByTestId("official-bank-schedule-editor")).toBeNull();
   });
 });

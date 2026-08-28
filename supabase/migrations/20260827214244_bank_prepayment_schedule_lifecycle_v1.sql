@@ -776,6 +776,84 @@ begin
     return private.debt2b2_schedule_result(p_prepayment_event_id, true);
   end if;
 
+  -- A stale tab must not attach an official schedule to an old prepayment
+  -- after a later effective prepayment has already changed the debt state.
+  -- Event ordering is deliberately stable: business date, creation time, id.
+  if exists (
+    select 1
+      from public.debt_events as later_event
+     where later_event.debt_id = p_debt_id
+       and later_event.household_id = p_household_id
+       and later_event.id is distinct from p_prepayment_event_id
+       and (
+         later_event.event_type = 'principal_prepayment'
+         or (later_event.event_type = 'payment' and coalesce(later_event.extra_principal_amount, 0) > 0)
+       )
+       and not exists (
+         select 1
+           from public.debt_events as reversal
+          where reversal.debt_id = later_event.debt_id
+            and reversal.household_id = later_event.household_id
+            and reversal.event_type = 'reversal'
+            and reversal.reversal_of_event_id = later_event.id
+       )
+       and (
+         later_event.event_date > v_event.event_date
+         or (
+           later_event.event_date = v_event.event_date
+           and (
+             later_event.created_at > v_event.created_at
+             or (later_event.created_at = v_event.created_at and later_event.id > v_event.id)
+           )
+         )
+       )
+  ) then
+    raise exception 'DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE';
+  end if;
+
+  -- A later contractual schedule caused by another trigger is also a newer
+  -- contractual state. Keep the same-target replay above before this guard:
+  -- an exact replay remains idempotent even when a later version exists.
+  if exists (
+    select 1
+      from public.debt_schedule_versions as later_schedule
+      left join public.debt_events as trigger_event
+        on trigger_event.id = later_schedule.trigger_event_id
+       and trigger_event.debt_id = later_schedule.debt_id
+       and trigger_event.household_id = later_schedule.household_id
+     where later_schedule.debt_id = p_debt_id
+       and later_schedule.household_id = p_household_id
+       and later_schedule.schedule_source = 'contractual'
+       and later_schedule.trigger_event_id is distinct from p_prepayment_event_id
+       and (
+         (
+           trigger_event.id is not null
+           and (
+             trigger_event.event_date > v_event.event_date
+             or (
+               trigger_event.event_date = v_event.event_date
+               and (
+                 trigger_event.created_at > v_event.created_at
+                 or (trigger_event.created_at = v_event.created_at and trigger_event.id > v_event.id)
+               )
+             )
+           )
+         )
+         or (
+           trigger_event.id is null
+           and (
+             later_schedule.effective_date > v_event.event_date
+             or (
+               later_schedule.effective_date = v_event.event_date
+               and later_schedule.created_at > v_event.created_at
+             )
+           )
+         )
+       )
+  ) then
+    raise exception 'DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE';
+  end if;
+
   select pg_catalog.count(*)
     into v_schedule_count
     from public.debt_schedule_versions as s

@@ -321,7 +321,7 @@ export function DebtOperationForm({
   const numInsurance = Number(insurancePaid || 0);
   const numOtherCost = Number(otherCostPaid || 0);
   const bankPrepaymentScenario = isBankFixedSchedule && (
-    operationType === "prepayment" || (operationType === "payment" && paymentWithExtraPrincipal && numExtraPrincipal > 0)
+    operationType === "prepayment" || (operationType === "payment" && numExtraPrincipal > 0)
   );
   const simulationEffect = prepaymentEffect === "reduce_term" || prepaymentEffect === "reduce_installment"
     ? prepaymentEffect
@@ -437,7 +437,9 @@ export function DebtOperationForm({
         expectedFees: row.fees,
         expectedInsurance: row.insurance,
       })) ?? [];
-  const scheduleSourceForSave = hasSelectedSchedule ? newScheduleSource : effectiveSimulation ? "estimated" as const : null;
+  const scheduleSourceForSave = hasSelectedSchedule
+    ? (bankPrepaymentScenario ? "contractual" as const : newScheduleSource)
+    : effectiveSimulation ? "estimated" as const : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -876,6 +878,40 @@ export function DebtOperationForm({
                 </button>
               </div>
 
+              {hasSelectedSchedule && (
+                <div className="rounded-2xl border border-emerald-200 bg-white p-4 space-y-3" data-testid="official-bank-schedule-editor">
+                  <div>
+                    <h4 className="text-base font-black text-emerald-950">NUEVO CRONOGRAMA OFICIAL DEL BANCO</h4>
+                    <p className="mt-1 text-sm font-semibold text-slate-700">Ingresa únicamente las cuotas del nuevo cronograma entregado por el banco.</p>
+                    <p className="mt-1 text-xs font-bold text-emerald-800">Fuente fija: Contractual / oficial del banco.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setScheduleInstallments([
+                      ...scheduleInstallments,
+                      { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", reportedBalance: "" },
+                    ])}
+                    className="rounded-xl bg-emerald-100 px-3 py-1.5 text-sm font-bold text-emerald-800 hover:bg-emerald-200"
+                  >
+                    {operationType === "payment" ? "Agregar cuota posterior al abono" : "Agregar cuota al nuevo cronograma"}
+                  </button>
+                  {scheduleInstallments.map((s, idx) => (
+                    <div key={idx} className="grid grid-cols-1 gap-2 rounded-xl bg-slate-50 p-3 sm:grid-cols-3 lg:grid-cols-9">
+                      <span className="text-xs font-bold text-slate-600">Cuota interna #{idx + 1}</span>
+                      <input aria-label={`Número contractual nueva cuota ${idx + 1}`} type="number" min="1" step="1" placeholder="N° contrato" value={s.contractualInstallmentNumber ?? ""} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].contractualInstallmentNumber = e.target.value.trim() === "" ? null : Number(e.target.value); setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Fecha nueva cuota ${idx + 1}`} type="date" value={s.dueDate} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].dueDate = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Total nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Total" value={s.expectedAmount} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedAmount = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Interés nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Comisiones nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Saldo reportado por el banco nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <div className="flex gap-2"><input aria-label={`Seguro nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" /><button type="button" onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))} className="text-xs font-bold text-red-600">Quitar</button></div>
+                    </div>
+                  ))}
+                  <input type="text" value={scheduleNotes} onChange={(e) => setScheduleNotes(e.target.value)} placeholder="Notas del cronograma (opcional)" className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm" />
+                </div>
+              )}
+
               {simulationEffect != null && !hasSelectedSchedule && (
                 <div className="rounded-2xl border border-indigo-200 bg-white p-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1078,7 +1114,7 @@ export function DebtOperationForm({
                 className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-slate-900"
               />
               <p className="mt-1 text-xs text-indigo-900">Se registra en la misma operación y movimiento que el pago de cuota.</p>
-              {numExtraPrincipal > 0 && (
+              {numExtraPrincipal > 0 && !bankPrepaymentScenario && (
                 <div className="mt-3">
                   <label className="block text-xs font-bold text-indigo-950">Efecto solicitado al banco</label>
                   <select value={prepaymentEffect} onChange={(e) => setPrepaymentEffect(e.target.value as PrepaymentEffect)} className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-4 py-2 text-sm text-slate-900">
@@ -1093,7 +1129,7 @@ export function DebtOperationForm({
             </div>
           )}
 
-          {operationType === "payment" && isBankFixedSchedule && numExtraPrincipal > 0 && (
+          {operationType === "payment" && isBankFixedSchedule && numExtraPrincipal > 0 && !bankPrepaymentScenario && (
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/30 p-4 sm:col-span-2 space-y-4">
               <div className="flex items-start gap-3">
                 <input
@@ -1307,7 +1343,7 @@ export function DebtOperationForm({
           </div>
         )}
 
-        {operationType === "prepayment" && (
+        {operationType === "prepayment" && !bankPrepaymentScenario && (
           <div className="rounded-2xl border border-slate-200 p-4 space-y-4">
             <div>
               <label className="block text-sm font-bold text-slate-800">¿Qué efecto esperas del abono al capital?</label>

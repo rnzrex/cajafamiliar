@@ -152,6 +152,13 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     await user.type(amounts[1], "800");
     await user.clear(amounts[2]);
     await user.type(amounts[2], "2000");
+    expect(screen.getByRole("button", { name: /^REDUCIR PLAZO/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^REDUCIR CUOTA/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^TENGO EL NUEVO CRONOGRAMA DEL BANCO/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^BANCO TODAVÍA NO ME ENTREGA/ })).not.toBeNull();
+    expect(screen.queryByText("Efecto solicitado al banco")).toBeNull();
+    expect(screen.queryByText("El banco entregó el cronograma posterior a este abono")).toBeNull();
+    expect(screen.queryByText("Estimado por Caja Familiar")).toBeNull();
     await user.clear(amounts[3]);
     await user.type(amounts[3], "350");
     await user.clear(amounts[5]);
@@ -202,7 +209,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     await user.type(amounts[1], "300");
     await user.clear(amounts[2]);
     await user.type(amounts[2], "100");
-    await user.selectOptions(screen.getAllByRole("combobox")[1], "reduce_term");
+    await user.click(screen.getByRole("button", { name: /^REDUCIR PLAZO/ }));
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
 
     expect(dataRepository.recordDebtPayment).not.toHaveBeenCalled();
@@ -221,8 +228,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     await user.type(amounts[0], "500");
     await user.clear(amounts[1]);
     await user.type(amounts[1], "500");
-    await user.selectOptions(screen.getAllByRole("combobox")[1], "reduce_installment");
-    await user.click(screen.getByRole("checkbox", { name: "El acreedor me entregó un nuevo cronograma" }));
+    await user.click(screen.getByRole("button", { name: /^TENGO EL NUEVO CRONOGRAMA DEL BANCO/ }));
     await user.click(screen.getByRole("button", { name: "Agregar cuota al nuevo cronograma" }));
 
     const dueDate = screen.getByLabelText("Fecha nueva cuota 1");
@@ -236,7 +242,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
 
     await waitFor(() => expect(dataRepository.recordDebtPrepayment).toHaveBeenCalledWith(expect.objectContaining({
-      prepaymentEffect: "reduce_installment",
+      prepaymentEffect: "other",
       scheduleInstallments: [{
         installmentNumber: 1,
         dueDate: "2026-09-01",

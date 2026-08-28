@@ -33,6 +33,7 @@ import {
 import { formatDebtMoney } from "../utils/debtPresentation";
 import { deletePristineDebt, setDebtArchived, updateDebtMetadata, updateDebtTerms } from "../services/dataRepository";
 import { buildDebtPaymentLedger } from "../utils/debtPaymentLedger";
+import { estimatedBalanceAfterRow } from "../utils/debtEstimatedBalance.js";
 import { getCurrencySymbol, formatReviewDate, validateDebtFinancialTerms } from "../utils/debtFormMode";
 import { calculateNextPayment } from "../utils/debtNextPayment";
 import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
@@ -1206,11 +1207,7 @@ export function DebtDetailModal({
                     <div className="space-y-3">
                       {debtInstallments.map((inst, installmentIndex) => {
                         const prog = getInstallmentProgress(inst, allocations, debtEvents);
-                        const estimatedBalance = debtInstallments
-                          .slice(0, installmentIndex + 1)
-                          .every((row) => row.expectedPrincipal != null && Number.isFinite(row.expectedPrincipal))
-                          ? Math.max(0, debtIntelligence.currentPrincipal - debtInstallments.slice(0, installmentIndex + 1).reduce((sum, row) => sum + Number(row.expectedPrincipal), 0))
-                          : null;
+                        const estimatedBalance = estimatedBalanceAfterRow(debtInstallments, installmentIndex);
                         return (
                           <div
                             key={inst.id}

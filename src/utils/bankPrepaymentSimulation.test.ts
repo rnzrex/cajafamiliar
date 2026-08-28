@@ -167,6 +167,8 @@ describe("bank prepayment simulation", () => {
     });
     expect(result.status).toBe("calculated_with_warnings");
     expect(result.canPersist).toBe(false);
+    expect(result.newEstimatedInterest).toBeNull();
+    expect(result.estimatedInterestSavings).toBeNull();
     expect(result.rows.every((row) => row.insurance === 0)).toBe(true);
     expect(result.warnings).toContain("El seguro futuro depende del banco; no se inventó una fórmula.");
   });
@@ -182,6 +184,8 @@ describe("bank prepayment simulation", () => {
     });
     expect(positiveFees.status).toBe("calculated_with_warnings");
     expect(positiveFees.canPersist).toBe(false);
+    expect(positiveFees.newEstimatedInterest).toBeNull();
+    expect(positiveFees.estimatedInterestSavings).toBeNull();
     expect(positiveFees.warnings).toContain("Las comisiones futuras dependen del banco y no tenemos una regla contractual suficiente para recalcularlas.");
   });
 
@@ -244,6 +248,25 @@ describe("bank prepayment simulation", () => {
     });
     expect(result.status).toBe("calculated");
     expect(result.rows[0]!.total).toBeCloseTo(result.rows[0]!.principal + result.rows[0]!.interest + result.rows[0]!.insurance + result.rows[0]!.fees, 2);
+  });
+
+  it("reports the recalculated all-in total for financial-installment-plus-costs reduce_term", () => {
+    const result = simulateBankPrepayment({
+      ...alfinInput,
+      effect: "reduce_term",
+      installmentTotalMode: "financial_installment_plus_costs",
+      insuranceTerms: [{
+        pricingMode: "percent_outstanding_balance",
+        ratePercent: 0.35,
+        fixedAmount: null,
+        rateBasis: "per_installment",
+        isRequired: true,
+      }],
+    });
+    expect(result.status).toBe("calculated");
+    expect(result.newRegularInstallment).toBe(result.rows[0]!.total);
+    expect(result.rows[0]!.insurance).toBeLessThan(alfinSchedule[6]!.expectedInsurance!);
+    expect(result.newRegularInstallment).not.toBe(result.oldRegularInstallment);
   });
 
   it("refuses unsupported amortization and incomplete future charges", () => {
