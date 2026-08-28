@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Debt, DebtEvent, DebtInstallment, DebtScheduleVersion, FinancialAccount } from "../types.js";
 import * as dataRepository from "../services/dataRepository.js";
-import { DebtOperationForm } from "./DebtOperationForm.js";
+import { DebtOperationForm, validateStrictScheduleDraft } from "./DebtOperationForm.js";
 import { DebtScheduleUpdateForm } from "./DebtScheduleUpdateForm.js";
 
 vi.mock("../services/dataRepository", async () => {
@@ -422,6 +422,22 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     expect((screen.getByLabelText("Fecha cuota restaurada 1") as HTMLInputElement).value).toBe("2026-09-01");
     expect((screen.getByLabelText("Total cuota restaurada 1") as HTMLInputElement).value).toBe("1100");
     expect((screen.getByLabelText("Capital cuota restaurada 2") as HTMLInputElement).value).toBe("700");
+  });
+
+  it("allows a restored baseline row whose due date is before the reversal date", () => {
+    const restoredRow = {
+      installmentNumber: 1,
+      dueDate: "2026-08-01",
+      expectedAmount: "1000",
+      expectedPrincipal: "800",
+      expectedInterest: "150",
+      expectedFees: "20",
+      expectedInsurance: "30",
+      reportedBalance: "",
+    };
+
+    expect(validateStrictScheduleDraft([restoredRow], "2026-08-28", "reversal")).toBeNull();
+    expect(validateStrictScheduleDraft([restoredRow], "2026-08-28", "schedule")).toContain("inválidos");
   });
 
   it("does not prefill the official form from an old contractual schedule while a bank schedule is pending", () => {

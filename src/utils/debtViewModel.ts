@@ -32,6 +32,7 @@ export function translateDebtError(error: unknown): string {
       DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE: "Este prepago ya no es el último cambio contractual del crédito. Actualiza los datos antes de cargar el cronograma del banco.",
       DEBT_SCHEDULE_NOT_FOUND: "No se encontró el cronograma generado por esta operación.",
       DEBT_EVENT_ALREADY_REVERSED: "Este registro ya ha sido revertido previamente.",
+      DEBT_REVERSAL_HAS_LATER_DEPENDENCIES: "No puedes revertir este registro porque existen operaciones posteriores que dependen de él. Revierte primero los registros más recientes.",
       DEBT_REVERSAL_SCHEDULE_REQUIRED: "La reversión de este registro requiere un nuevo cronograma de cuotas.",
       DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED: "La reversión no permite un nuevo cronograma.",
       DEBT_REVERSAL_SCHEDULE_CONFLICT: "El cronograma restaurado debe coincidir con la versión anterior registrada.",

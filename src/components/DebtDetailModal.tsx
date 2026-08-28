@@ -40,6 +40,7 @@ import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
 import { getAmortizationMethodLabel, getBankLoanSubtypeLabel } from "../utils/bankCreditFormHelper";
 import { resolveContractualDetailNextPayment } from "../utils/debtDetailNextPayment";
 import { getBankPrepaymentScheduleTarget } from "../utils/debtPlanning";
+import { getDebtReversalDependencyState } from "../utils/debtReversalDependencies.js";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 
@@ -1311,6 +1312,10 @@ export function DebtDetailModal({
                     );
                     return allEventsForDebt.map((e) => {
                       const isReversed = reversedEventIds.has(e.id);
+                      const reversalDependencyState = !isReversed && e.eventType !== "reversal"
+                        ? getDebtReversalDependencyState({ targetEvent: e, events: allEventsForDebt, scheduleVersions })
+                        : null;
+                      const reversalBlocked = reversalDependencyState?.hasDependencies === true;
                       return (
                         <div
                           key={e.id}
@@ -1333,13 +1338,22 @@ export function DebtDetailModal({
                             {e.description && <p className="mt-1 text-xs text-slate-600">{e.description}</p>}
                           </div>
                           {!isReversed && e.eventType !== "reversal" && canWriteDebt && debt.status === "active" && (
-                            <button
-                              type="button"
-                              onClick={() => onOpenOperation("reversal", e.id)}
-                              className="flex items-center gap-1 rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 shadow-sm"
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" /> Revertir
-                            </button>
+                            <div className="flex flex-col items-end gap-1">
+                              <button
+                                type="button"
+                                disabled={reversalBlocked}
+                                title={reversalBlocked ? "Revierte primero los registros posteriores." : undefined}
+                                onClick={() => onOpenOperation("reversal", e.id)}
+                                className="flex items-center gap-1 rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-500"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" /> Revertir
+                              </button>
+                              {reversalBlocked && (
+                                <span className="max-w-56 text-right text-[11px] font-semibold text-amber-700">
+                                  Revierte primero los registros posteriores.
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                       );

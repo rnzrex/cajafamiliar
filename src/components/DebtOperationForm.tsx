@@ -20,7 +20,7 @@ function assertNever(value: never): never {
   throw new Error(`Operación de deuda no soportada: ${String(value)}`);
 }
 
-type ScheduleDraftRow = {
+export type ScheduleDraftRow = {
   installmentNumber: number;
   contractualInstallmentNumber?: number | null;
   dueDate: string;
@@ -61,7 +61,7 @@ function toScheduleInstallmentInput(row: ScheduleDraftRow, index: number, includ
   };
 }
 
-function validateStrictScheduleDraft(rows: ScheduleDraftRow[], eventDate: string): string | null {
+export function validateStrictScheduleDraft(rows: ScheduleDraftRow[], eventDate: string, reason: "schedule" | "reversal" = "schedule"): string | null {
   if (rows.length === 0) return "Debe ingresar al menos una cuota en el nuevo cronograma.";
   const hasExplicitContractualNumber = rows.some((row) => row.contractualInstallmentNumber != null);
   const hasMissingContractualNumber = rows.some((row) => row.contractualInstallmentNumber == null);
@@ -79,7 +79,7 @@ function validateStrictScheduleDraft(rows: ScheduleDraftRow[], eventDate: string
     const components = numbers[1] + numbers[2] + numbers[3] + numbers[4];
     if (
       !row.dueDate ||
-      row.dueDate <= eventDate ||
+      (reason !== "reversal" && row.dueDate <= eventDate) ||
       values.some((value) => value.trim() === "") ||
       numbers.some((value) => !Number.isFinite(value)) ||
       numbers[0] <= 0 ||
@@ -488,7 +488,7 @@ export function DebtOperationForm({
         return;
       }
       if (hasNewPaymentSchedule) {
-        const scheduleError = validateStrictScheduleDraft(scheduleInstallments, eventDate);
+        const scheduleError = validateStrictScheduleDraft(scheduleInstallments, eventDate, "schedule");
         if (scheduleError) {
           setToast({ message: scheduleError, type: "error" });
           return;
@@ -597,7 +597,7 @@ export function DebtOperationForm({
         return;
       }
       if (hasNewPrepaymentSchedule) {
-        const scheduleError = validateStrictScheduleDraft(scheduleInstallments, eventDate);
+        const scheduleError = validateStrictScheduleDraft(scheduleInstallments, eventDate, "schedule");
         if (scheduleError) {
           setToast({ message: scheduleError, type: "error" });
           return;
@@ -637,7 +637,7 @@ export function DebtOperationForm({
         return;
       }
       if (targetGeneratedSchedule) {
-        const scheduleError = validateStrictScheduleDraft(scheduleInstallments, eventDate);
+        const scheduleError = validateStrictScheduleDraft(scheduleInstallments, eventDate, "reversal");
         if (scheduleError) {
           setToast({ message: scheduleError, type: "error" });
           return;

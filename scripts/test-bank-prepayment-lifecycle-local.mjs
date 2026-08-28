@@ -37,6 +37,31 @@ const ids = {
   reversalLaterDebt: "00000000-0000-4000-8000-000000000931",
   reversalLaterP1: "00000000-0000-4000-8000-000000000932",
   reversalLaterR: "00000000-0000-4000-8000-000000000933",
+  lateReversalDebt: "00000000-0000-4000-8000-000000000934",
+  lateReversalP1: "00000000-0000-4000-8000-000000000935",
+  lateReversalR: "00000000-0000-4000-8000-000000000936",
+  dependencyPaymentDebt: "00000000-0000-4000-8000-000000000937",
+  dependencyPaymentP1: "00000000-0000-4000-8000-000000000938",
+  dependencyPaymentP2: "00000000-0000-4000-8000-000000000939",
+  dependencyPaymentR: "00000000-0000-4000-8000-000000000940",
+  dependencyPrepaymentDebt: "00000000-0000-4000-8000-000000000941",
+  dependencyPrepaymentP1: "00000000-0000-4000-8000-000000000942",
+  dependencyPrepaymentP2: "00000000-0000-4000-8000-000000000943",
+  dependencyPrepaymentR: "00000000-0000-4000-8000-000000000944",
+  dependencyAdvanceDebt: "00000000-0000-4000-8000-000000000945",
+  dependencyAdvanceP1: "00000000-0000-4000-8000-000000000946",
+  dependencyAdvanceA2: "00000000-0000-4000-8000-000000000947",
+  dependencyAdvanceR: "00000000-0000-4000-8000-000000000948",
+  dependencyScheduleDebt: "00000000-0000-4000-8000-000000000949",
+  dependencyScheduleP1: "00000000-0000-4000-8000-000000000950",
+  dependencyScheduleS2: "00000000-0000-4000-8000-000000000951",
+  dependencyScheduleR: "00000000-0000-4000-8000-000000000952",
+  dependencyReversedDebt: "00000000-0000-4000-8000-000000000953",
+  dependencyReversedP1: "00000000-0000-4000-8000-000000000954",
+  dependencyReversedP2: "00000000-0000-4000-8000-000000000955",
+  dependencyReversedR2: "00000000-0000-4000-8000-000000000956",
+  dependencyReversedR1: "00000000-0000-4000-8000-000000000957",
+  dependencyReversedP3: "00000000-0000-4000-8000-000000000958",
 };
 
 function runSql(sql) {
@@ -81,13 +106,13 @@ function scheduleRowsWithoutContractual(count = 2) {
   })));
 }
 
-function createBaselineLoanSql(debtId, name) {
+function createBaselineLoanSql(debtId, name, { trackingStartDate = '2026-08-27', firstDueDate = '2026-09-01', schedule = scheduleRows(1, 2) } = {}) {
   return `select public.create_bank_loan_v1(
     '${ids.household}', '${debtId}', '${name}', 'Banco lifecycle', 'bank_loan', 'PEN',
-    '2026-01-01', '2026-08-27', 1000, 1000, 2, 100, 'fixed', 'monthly', null, '2026-09-01',
+    '2026-01-01', '${trackingStartDate}', 1000, 1000, 2, 100, 'fixed', 'monthly', null, '${firstDueDate}',
     0, null, '', 'fixed_schedule', 'contract_schedule', null, null,
     jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', 2),
-    '[]'::jsonb, 'contractual', '${scheduleRows(1, 2)}'::jsonb, '[]'::jsonb
+    '[]'::jsonb, 'contractual', '${schedule}'::jsonb, '[]'::jsonb
   );`;
 }
 
@@ -102,12 +127,36 @@ function recordPrepaymentSql({ debtId, eventId, movementId, eventDate = '2026-08
   );`;
 }
 
-function reverseDebtSql({ debtId, reversalEventId, targetEventId, schedule, description = 'Reversión reversal smoke', notes = null }) {
+function reverseDebtSql({ debtId, reversalEventId, targetEventId, eventDate = '2026-08-28', schedule, description = 'Reversión reversal smoke', notes = null }) {
   const notesSql = notes == null ? 'null' : `'${notes}'`;
   return `select (public.reverse_debt_event_v1(
     '${ids.household}', '${debtId}', '${reversalEventId}', '${targetEventId}',
-    '2026-08-28', '${description}', '${schedule}'::jsonb, ${notesSql}
+    '${eventDate}', '${description}', '${schedule}'::jsonb, ${notesSql}
   )->>'idempotentReplay');`;
+}
+
+function recordPaymentSql({ debtId, eventId, movementId, eventDate = '2026-08-29', cashAmount = 10, principalAmount = 10 }) {
+  return `select public.record_debt_payment_v3(
+    '${ids.household}', '${debtId}', '${eventId}', '${movementId}',
+    '${eventDate}', ${cashAmount}, '${ids.account}', 'Pago posterior reversal smoke', 'Pago de deuda',
+    ${principalAmount}, 0, 0, 0, 0, 0, null, true, '[]'::jsonb, '[]'::jsonb, null, null
+  );`;
+}
+
+function recordAdvanceSql({ debtId, eventId, eventDate = '2026-08-29' }) {
+  return `select public.record_debt_installment_advance_v1(
+    '${ids.household}', '${debtId}', '${eventId}', 'advance-${eventId}',
+    '${eventDate}', 100, '${ids.account}', 'Adelanto posterior reversal smoke', 'Pago de deuda',
+    80, 20, 0, 0, 0, true,
+    jsonb_build_array(jsonb_build_object(
+      'installment_id', (select i.id from public.debt_installments as i where i.debt_id = '${debtId}' order by i.installment_number limit 1),
+      'allocated_amount', 100
+    ))
+  );`;
+}
+
+function mutationFingerprintSql(debtId) {
+  return `select (select count(*) from public.debt_events where debt_id = '${debtId}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${debtId}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}' and description like '%reversal smoke%');`;
 }
 
 async function expectSqlError(sql, expected) {
@@ -135,6 +184,11 @@ const cleanupSql = `
   delete from public.households where id = '${ids.household}';
   delete from auth.users where id = '${ids.user}';
 `;
+
+const lateBaselineSchedule = JSON.stringify([
+  { installment_number: 1, contractual_installment_number: 1, due_date: '2026-08-01', expected_amount: 100, expected_principal: 80, expected_interest: 20, expected_fees: 0, expected_insurance: 0 },
+  { installment_number: 2, contractual_installment_number: 2, due_date: '2026-09-01', expected_amount: 100, expected_principal: 80, expected_interest: 20, expected_fees: 0, expected_insurance: 0 },
+]);
 
 console.log("=== RUNNING LOCAL SQL SMOKE SUITE FOR BANK PREPAYMENT LIFECYCLE V1 ===");
 
@@ -597,7 +651,194 @@ try {
   `);
   if (laterReversalFingerprint !== "3|contractual|true|true|1-2") throw new Error(`Pending -> official reversal did not restore V1: ${laterReversalFingerprint}`);
 
-  console.log("SUCCESS! BANK PREPAYMENT LIFECYCLE V1 local schema, metadata, numbering, replay, pending transition, stale guards, reversal baselines, fixed-schedule guard, and ledger-protection checks passed.");
+  console.log("16. Allowing a late reversal to restore baseline due dates before the reversal event...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.lateReversalDebt, "Crédito reversal late", {
+      trackingStartDate: '2026-01-01',
+      firstDueDate: '2026-08-01',
+      schedule: lateBaselineSchedule,
+    })}
+    ${recordPrepaymentSql({
+      debtId: ids.lateReversalDebt,
+      eventId: ids.lateReversalP1,
+      movementId: "bank-prepayment-v1-reversal-late",
+      effect: "reduce_term",
+      schedule: scheduleRows(7, 2),
+      notes: "Estimación reversal late",
+      source: "estimated",
+    })}
+  `));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.lateReversalDebt,
+    reversalEventId: ids.lateReversalR,
+    targetEventId: ids.lateReversalP1,
+    eventDate: '2026-08-28',
+    schedule: lateBaselineSchedule,
+  })));
+  const lateReversalFingerprint = await execSql(`
+    select s.effective_date::text || '|' ||
+      (select string_agg(due_date::text, ',' order by installment_number)
+         from public.debt_installments where schedule_version_id = s.id)
+      from public.debt_schedule_versions as s
+     where s.debt_id = '${ids.lateReversalDebt}'
+     order by s.version_number desc limit 1;
+  `);
+  if (lateReversalFingerprint !== "2026-08-28|2026-08-01,2026-09-01") throw new Error(`Late reversal did not preserve the baseline due dates: ${lateReversalFingerprint}`);
+
+  console.log("17. Blocking reversal when a later effective regular payment exists without mutating state...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.dependencyPaymentDebt, "Crédito dependency payment")}
+    ${recordPrepaymentSql({
+      debtId: ids.dependencyPaymentDebt,
+      eventId: ids.dependencyPaymentP1,
+      movementId: "bank-prepayment-v1-dependency-payment-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(7, 2),
+      notes: "Dependency payment P1",
+      source: "estimated",
+    })}
+    ${recordPaymentSql({ debtId: ids.dependencyPaymentDebt, eventId: ids.dependencyPaymentP2, movementId: "bank-prepayment-v1-dependency-payment-p2" })}
+  `));
+  const paymentDependencyBefore = await execSql(mutationFingerprintSql(ids.dependencyPaymentDebt));
+  await expectSqlError(withUser(reverseDebtSql({
+    debtId: ids.dependencyPaymentDebt,
+    reversalEventId: ids.dependencyPaymentR,
+    targetEventId: ids.dependencyPaymentP1,
+    schedule: scheduleRows(1, 2),
+  })), "DEBT_REVERSAL_HAS_LATER_DEPENDENCIES");
+  const paymentDependencyAfter = await execSql(mutationFingerprintSql(ids.dependencyPaymentDebt));
+  if (paymentDependencyAfter !== paymentDependencyBefore) throw new Error(`Later payment blocker mutated state: ${paymentDependencyBefore} -> ${paymentDependencyAfter}`);
+
+  console.log("18. Blocking reversal when a later effective prepayment exists without mutating state...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.dependencyPrepaymentDebt, "Crédito dependency prepayment")}
+    ${recordPrepaymentSql({
+      debtId: ids.dependencyPrepaymentDebt,
+      eventId: ids.dependencyPrepaymentP1,
+      movementId: "bank-prepayment-v1-dependency-prepayment-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(7, 2),
+      notes: "Dependency prepayment P1",
+      source: "estimated",
+    })}
+    ${recordPrepaymentSql({
+      debtId: ids.dependencyPrepaymentDebt,
+      eventId: ids.dependencyPrepaymentP2,
+      movementId: "bank-prepayment-v1-dependency-prepayment-p2",
+      eventDate: '2026-08-29',
+      effect: "pending_bank_schedule",
+      schedule: "[]",
+      notes: null,
+      source: null,
+    })}
+  `));
+  const prepaymentDependencyBefore = await execSql(mutationFingerprintSql(ids.dependencyPrepaymentDebt));
+  await expectSqlError(withUser(reverseDebtSql({
+    debtId: ids.dependencyPrepaymentDebt,
+    reversalEventId: ids.dependencyPrepaymentR,
+    targetEventId: ids.dependencyPrepaymentP1,
+    schedule: scheduleRows(1, 2),
+  })), "DEBT_REVERSAL_HAS_LATER_DEPENDENCIES");
+  const prepaymentDependencyAfter = await execSql(mutationFingerprintSql(ids.dependencyPrepaymentDebt));
+  if (prepaymentDependencyAfter !== prepaymentDependencyBefore) throw new Error(`Later prepayment blocker mutated state: ${prepaymentDependencyBefore} -> ${prepaymentDependencyAfter}`);
+
+  console.log("19. Blocking reversal when a later installment advance exists without mutating state...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.dependencyAdvanceDebt, "Crédito dependency advance")}
+    ${recordPrepaymentSql({
+      debtId: ids.dependencyAdvanceDebt,
+      eventId: ids.dependencyAdvanceP1,
+      movementId: "bank-prepayment-v1-dependency-advance-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(7, 2),
+      notes: "Dependency advance P1",
+      source: "estimated",
+    })}
+    ${recordAdvanceSql({ debtId: ids.dependencyAdvanceDebt, eventId: ids.dependencyAdvanceA2 })}
+  `));
+  const advanceDependencyBefore = await execSql(mutationFingerprintSql(ids.dependencyAdvanceDebt));
+  await expectSqlError(withUser(reverseDebtSql({
+    debtId: ids.dependencyAdvanceDebt,
+    reversalEventId: ids.dependencyAdvanceR,
+    targetEventId: ids.dependencyAdvanceP1,
+    schedule: scheduleRows(1, 2),
+  })), "DEBT_REVERSAL_HAS_LATER_DEPENDENCIES");
+  const advanceDependencyAfter = await execSql(mutationFingerprintSql(ids.dependencyAdvanceDebt));
+  if (advanceDependencyAfter !== advanceDependencyBefore) throw new Error(`Later installment advance blocker mutated state: ${advanceDependencyBefore} -> ${advanceDependencyAfter}`);
+
+  console.log("20. Blocking reversal when a later schedule has a different trigger...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.dependencyScheduleDebt, "Crédito dependency schedule")}
+    ${recordPrepaymentSql({
+      debtId: ids.dependencyScheduleDebt,
+      eventId: ids.dependencyScheduleP1,
+      movementId: "bank-prepayment-v1-dependency-schedule-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(7, 2),
+      notes: "Dependency schedule P1",
+      source: "estimated",
+    })}
+    select public.update_debt_contractual_schedule_v1(
+      '${ids.household}', '${ids.dependencyScheduleDebt}', '${ids.dependencyScheduleS2}', '2026-08-29',
+      'manual_adjustment', '${scheduleRows(20, 2)}'::jsonb, 'Dependency later schedule'
+    );
+  `));
+  const scheduleDependencyBefore = await execSql(mutationFingerprintSql(ids.dependencyScheduleDebt));
+  await expectSqlError(withUser(reverseDebtSql({
+    debtId: ids.dependencyScheduleDebt,
+    reversalEventId: ids.dependencyScheduleR,
+    targetEventId: ids.dependencyScheduleP1,
+    schedule: scheduleRows(1, 2),
+  })), "DEBT_REVERSAL_HAS_LATER_DEPENDENCIES");
+  const scheduleDependencyAfter = await execSql(mutationFingerprintSql(ids.dependencyScheduleDebt));
+  if (scheduleDependencyAfter !== scheduleDependencyBefore) throw new Error(`Later schedule blocker mutated state: ${scheduleDependencyBefore} -> ${scheduleDependencyAfter}`);
+
+  console.log("21. Reversing the later event first, then allowing the original scheduled event reversal...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.dependencyReversedDebt, "Crédito dependency reversed")}
+    ${recordPrepaymentSql({
+      debtId: ids.dependencyReversedDebt,
+      eventId: ids.dependencyReversedP1,
+      movementId: "bank-prepayment-v1-dependency-reversed-p1",
+      effect: "reduce_term",
+      schedule: scheduleRows(7, 2),
+      notes: "Dependency reversed P1",
+      source: "estimated",
+    })}
+    ${recordPaymentSql({ debtId: ids.dependencyReversedDebt, eventId: ids.dependencyReversedP2, movementId: "bank-prepayment-v1-dependency-reversed-p2" })}
+  `));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.dependencyReversedDebt,
+    reversalEventId: ids.dependencyReversedR2,
+    targetEventId: ids.dependencyReversedP2,
+    eventDate: '2026-08-30',
+    schedule: "[]",
+  })));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.dependencyReversedDebt,
+    reversalEventId: ids.dependencyReversedR1,
+    targetEventId: ids.dependencyReversedP1,
+    eventDate: '2026-08-31',
+    schedule: scheduleRows(1, 2),
+  })));
+  await execSql(withUser(recordPaymentSql({
+    debtId: ids.dependencyReversedDebt,
+    eventId: ids.dependencyReversedP3,
+    movementId: "bank-prepayment-v1-dependency-reversed-p3",
+    eventDate: '2026-09-02',
+  })));
+  const replayAfterLaterActivityBefore = await execSql(mutationFingerprintSql(ids.dependencyReversedDebt));
+  const replayAfterLaterActivity = await execSql(withUser(reverseDebtSql({
+    debtId: ids.dependencyReversedDebt,
+    reversalEventId: ids.dependencyReversedR1,
+    targetEventId: ids.dependencyReversedP1,
+    eventDate: '2026-08-31',
+    schedule: scheduleRows(1, 2),
+  })));
+  const replayAfterLaterActivityAfter = await execSql(mutationFingerprintSql(ids.dependencyReversedDebt));
+  if (replayAfterLaterActivity !== "true" || replayAfterLaterActivityAfter !== replayAfterLaterActivityBefore) throw new Error(`Reversal replay was blocked or mutated after later activity: ${replayAfterLaterActivity} ${replayAfterLaterActivityBefore} -> ${replayAfterLaterActivityAfter}`);
+
+  console.log("SUCCESS! BANK PREPAYMENT LIFECYCLE V1 local schema, metadata, numbering, replay, pending transition, stale guards, reversal baselines, late-reversal validation, LIFO dependency guards, fixed-schedule guard, and ledger-protection checks passed.");
 } catch (error) {
   console.error("SQL SMOKE TEST FAILED:", error);
   process.exitCode = 1;

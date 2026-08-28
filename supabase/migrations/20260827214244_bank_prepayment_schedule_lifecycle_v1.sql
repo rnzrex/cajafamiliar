@@ -122,7 +122,7 @@ begin
 
     if v_installment_number < 1
        or (v_previous_number is not null and v_installment_number <> v_previous_number + 1)
-       or v_due_date <= p_event_date
+      or (p_reason <> 'reversal' and v_due_date <= p_event_date)
        or (v_previous_due_date is not null and v_due_date <= v_previous_due_date)
        or v_expected_amount <= 0
        or v_expected_principal < 0
@@ -1057,6 +1057,44 @@ begin
        and r.reversal_of_event_id = p_target_event_id
   ) then
     raise exception 'DEBT_EVENT_ALREADY_REVERSED';
+  end if;
+
+  -- A schedule-generating event is a dependency root. Reversals are LIFO:
+  -- later effective financial events and later unrelated schedule versions
+  -- must be reversed/handled before this target. Exact replay stays above
+  -- this guard so a previously completed reversal remains idempotent.
+  if v_target_has_schedule and exists (
+    select 1
+      from public.debt_events as later_event
+     where later_event.debt_id = p_debt_id
+       and later_event.household_id = p_household_id
+       and later_event.event_type in ('payment', 'principal_prepayment', 'payoff', 'installment_advance')
+       and (
+         later_event.event_date > v_target.event_date
+         or (later_event.event_date = v_target.event_date and later_event.created_at > v_target.created_at)
+         or (later_event.event_date = v_target.event_date and later_event.created_at = v_target.created_at and later_event.id > v_target.id)
+       )
+       and not exists (
+         select 1
+           from public.debt_events as later_reversal
+          where later_reversal.debt_id = p_debt_id
+            and later_reversal.household_id = p_household_id
+            and later_reversal.event_type = 'reversal'
+            and later_reversal.reversal_of_event_id = later_event.id
+       )
+  ) then
+    raise exception 'DEBT_REVERSAL_HAS_LATER_DEPENDENCIES';
+  end if;
+
+  if v_target_has_schedule and exists (
+    select 1
+      from public.debt_schedule_versions as later_schedule
+     where later_schedule.debt_id = p_debt_id
+       and later_schedule.household_id = p_household_id
+       and later_schedule.version_number > v_target_schedule.version_number
+       and later_schedule.trigger_event_id is distinct from p_target_event_id
+  ) then
+    raise exception 'DEBT_REVERSAL_HAS_LATER_DEPENDENCIES';
   end if;
 
   if v_target_has_schedule and pg_catalog.jsonb_array_length(p_schedule_installments) = 0 then
