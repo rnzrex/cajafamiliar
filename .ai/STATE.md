@@ -52,9 +52,9 @@ Close the final BANK PREPAYMENT RECALCULATION V1 contractual-coherence blockers 
 ## Delivery
 
 - GitHub authentication was previously verified as `rnzrex` over HTTPS with keyring-backed credentials; no token was exposed.
-- The prior carried-lineage implementation and the contractual-coherence commit were pushed normally; remote branch SHA is `239b7f2ad001f196c1d48de33fa118f35fa4afb5`.
+- The prior carried-lineage implementation and the contractual-coherence commit (`239b7f2ad001f196c1d48de33fa118f35fa4afb5`) were pushed normally, followed by metadata-only operational handoff commits; no implementation change was made after that fix.
 - PR #66 body was updated while preserving `state=open` and `draft=true`; it documents the coherence implementation, validation counts, and SQL/Docker limitation.
-- Git-triggered Preview `dpl_2g4Zrh7fdrvVRr8754QJA6nUMXed` is `READY` at `https://cajafamiliar-69ubsst03-renzorex.vercel.app`, branch `feat/bank-prepayment-recalculation-v1`, exact SHA `239b7f2ad001f196c1d48de33fa118f35fa4afb5`, target `null`; no manual deployment was used.
+- Git-triggered Preview `dpl_6vi3kYaVZQfPoea8g4er4pQ21MnN` is `READY` at `https://cajafamiliar-8rfardtfg-renzorex.vercel.app`, branch `feat/bank-prepayment-recalculation-v1`, exact SHA `93fcba7236a4869e2f7caf5bc05c053f24f66570`, target `null`; the SHA contains only the operational metadata handoff after the implementation commit. No manual deployment was used.
 
 ## Production
 
