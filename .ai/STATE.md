@@ -9,7 +9,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 - Branch: `feat/bank-prepayment-recalculation-v1`.
 - Expected starting HEAD: `e13e974c09fd8bd4aa88395d83a5ec894646d1d0`.
 - Implementation commit: `8a8726b53f57b9aeb0c800391c2d5d0be6b19214` (`fix(bank): preserve carried allocation lineage`).
-- This file is being updated in a metadata-only handoff commit after the implementation was pushed.
+- The branch also contains metadata-only operational-state handoff commit(s); Git remains authoritative for the exact current tip.
 - PR: #66, base `main`, must remain OPEN/DRAFT.
 - Next commit: metadata-only operational-state handoff; no implementation change.
 
@@ -46,9 +46,9 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 ## Delivery
 
 - GitHub authentication was previously verified as `rnzrex` over HTTPS with keyring-backed credentials; no token was exposed.
-- Implementation was pushed normally to `origin/feat/bank-prepayment-recalculation-v1`; remote SHA was verified as `8a8726b53f57b9aeb0c800391c2d5d0be6b19214`.
+- The implementation and subsequent metadata-only handoff were pushed normally to `origin/feat/bank-prepayment-recalculation-v1`.
 - PR #66 body was updated while preserving `draft=true`; it documents the relational carried-lineage architecture, effective reversal behavior, validation counts, and SQL/Docker limitation.
-- Automatic Preview for implementation SHA `8a8726b53f57b9aeb0c800391c2d5d0be6b19214` is READY at `https://cajafamiliar-ovqn16gab-renzorex.vercel.app` (deployment `dpl_7UiPwuVnCt9Noe6nHo7ug4UtBCta`, target `null`). A metadata-only handoff commit below will require a final automatic Preview check for the resulting branch tip.
+- Automatic Preview deployments are Git-triggered only; the final branch tip must be verified against its exact SHA before handoff.
 
 ## Production
 
@@ -57,7 +57,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 carried-lineage reversibility b
 
 ## Next Step
 
-- Commit and push this operational-state metadata update normally, then verify the resulting remote SHA, PR #66 remains OPEN/DRAFT, and the automatic Preview matches that final branch tip.
+- No further engineering action is pending for this gate. The final report must include the exact remote SHA, PR #66 OPEN/DRAFT status, and the Git-triggered Preview matching that SHA.
 - Do not apply the pending migration to Production, merge PR #66, mark it ready, add Gemini secrets, or deploy Production.
 
 ## Relevant Files
