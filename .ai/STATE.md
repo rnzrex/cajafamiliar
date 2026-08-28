@@ -43,7 +43,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 reversal-lifecycle blockers on 
 
 ## Delivery
 
-- GitHub connector successfully read and updated PR #66; local `gh auth status` reports its stored CLI token invalid, so no token was exposed and no PAT was requested. Normal Git pushes previously succeeded using the configured Git credential.
+- GitHub connector successfully read and updated PR #66. Final local `gh auth status` is authenticated as `rnzrex` over HTTPS with keyring-backed credentials; no token was exposed and no PAT was requested.
 - PR #66: https://github.com/rnzrex/cajafamiliar/pull/66
 - PR state before this metadata refresh: OPEN, `draft=true`, base `main`, head branch `feat/bank-prepayment-recalculation-v1`, head `d988db647ec8393619fa4ab5cd8a990f4d0b53b2`.
 - PR body still needs the final late-reversal/dependency-guard details and current SQL-blocked status.
