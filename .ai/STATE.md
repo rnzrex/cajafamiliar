@@ -10,7 +10,8 @@ Close the final BANK PREPAYMENT RECALCULATION V1 reversal-lifecycle blocker on `
 - Base: `main`.
 - Expected HEAD before this gate: `7f298bf47961a08405956fbfafca552e02d98cd7`.
 - Latest code-affecting implementation commit: `27aafcead8f79a2301e38af010af3cde47d21b7b` (`fix(bank): restore pre-prepayment schedule on reversal`).
-- The implementation commit and metadata-only state checkpoint were pushed normally without force.
+- The implementation commit and successive metadata-only state checkpoints were pushed normally without force.
+- Git is authoritative for the exact current branch SHA after any future metadata-only checkpoint.
 - Working tree is clean.
 
 ## Constraints
@@ -47,7 +48,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 reversal-lifecycle blocker on `
 
 - GitHub connector successfully read and updated PR #66; the local `gh auth status` command currently reports its stored CLI token invalid, so no token was exposed and no PAT was requested. Normal Git pushes succeeded using the configured Git credential.
 - PR #66: https://github.com/rnzrex/cajafamiliar/pull/66
-- PR state: OPEN, `draft=true`, base `main`, head branch `feat/bank-prepayment-recalculation-v1`, head SHA `4c804c9f6890148511cb0585fbeb64a3a8bef5cf`.
+- PR state: OPEN, `draft=true`, base `main`, head branch `feat/bank-prepayment-recalculation-v1`; GitHub currently reports the head at the latest metadata checkpoint.
 - PR body updated for the reversal lifecycle blocker, including baseline algorithm, all reversal scenarios, SQL smoke BLOCKED status, and Production safety restrictions.
 - Automatic Vercel Preview for the implementation commit:
   - Deployment: `dpl_6aZZGm3xPgpJeRurNe257GXntfdw`
@@ -55,13 +56,13 @@ Close the final BANK PREPAYMENT RECALCULATION V1 reversal-lifecycle blocker on `
   - Branch alias: https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app
   - Exact Git SHA: `27aafcead8f79a2301e38af010af3cde47d21b7b`
   - State: READY; target: null (Preview)
-- Automatic Vercel Preview for the final metadata checkpoint:
+- Most recently verified automatic Vercel Preview before this final state checkpoint:
   - Deployment: `dpl_CwZz6r2BF4cuXAreNjXMFHz7ABQ4`
   - URL: https://cajafamiliar-1a0qomcmf-renzorex.vercel.app
   - Branch alias: https://cajafamiliar-git-feat-bank-prepayment-recalculation-v1-renzorex.vercel.app
   - Exact Git SHA: `4c804c9f6890148511cb0585fbeb64a3a8bef5cf`
   - State: READY; target: null (Preview)
-- `git ls-remote` verified remote branch SHA `4c804c9f6890148511cb0585fbeb64a3a8bef5cf`.
+- `git ls-remote` verified the remote branch after the prior metadata checkpoint; re-run it after this state checkpoint for the final exact SHA.
 
 ## Production
 
@@ -71,7 +72,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 reversal-lifecycle blocker on `
 
 ## Next Step
 
-- Stop for orchestrator reversal audit; the implementation is published and the PR remains DRAFT.
+- Stop for orchestrator reversal audit after the final state checkpoint is pushed; the implementation is published and the PR remains DRAFT.
 - Do not apply `20260827214244_bank_prepayment_schedule_lifecycle_v1.sql` to Production from this task.
 - Do not merge PR #66 or mark it ready.
 
