@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BankLoanProfile, Debt, DebtInstallment, DebtScheduleVersion, FinancialAccount } from "../types.js";
@@ -140,7 +140,7 @@ describe("bank prepayment UX", () => {
     Object.defineProperty(window.navigator, "onLine", { configurable: true, value: true });
   });
 
-  it("calculates and saves an estimated reduce-term schedule after explicit confirmation", async () => {
+  it("refuses to synthesize a schedule for a standalone principal prepayment", async () => {
     const user = userEvent.setup();
     renderForm("prepayment");
     const amounts = screen.getAllByRole("spinbutton");
@@ -154,15 +154,10 @@ describe("bank prepayment UX", () => {
     await user.click(screen.getByRole("button", { name: /^REDUCIR PLAZO/ }));
     await user.click(screen.getByRole("button", { name: "CALCULAR SIMULACIÓN" }));
     expect(screen.getByText("SIMULACIÓN DE CAJA FAMILIAR")).not.toBeNull();
-    expect(screen.getByText("ESTIMACIÓN — EL BANCO PUEDE ENTREGAR IMPORTES DIFERENTES")).not.toBeNull();
-    await user.click(screen.getByRole("checkbox", { name: /Confirmo que esto es una estimación/ }));
+    expect(screen.getByText("Un prepago independiente puede cambiar el tratamiento del interés del período. Registra el abono y espera/carga el cronograma actualizado del banco.")).not.toBeNull();
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
 
-    await waitFor(() => expect(dataRepository.recordDebtPrepayment).toHaveBeenCalledWith(expect.objectContaining({
-      prepaymentEffect: "reduce_term",
-      scheduleSource: "estimated",
-      scheduleInstallments: [expect.objectContaining({ contractualInstallmentNumber: 1, reportedBalance: expect.any(Number) })],
-    })));
+    expect(dataRepository.recordDebtPrepayment).not.toHaveBeenCalled();
   });
 
   it("keeps installment advance separate from prepayment choices", () => {

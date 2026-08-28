@@ -20,6 +20,8 @@ declare
   v_previous_number integer;
   v_contractual_number integer;
   v_previous_contractual_number integer;
+  v_has_contractual_number boolean := false;
+  v_has_missing_contractual_number boolean := false;
   v_due_date date;
   v_previous_due_date date;
   v_expected_amount numeric;
@@ -98,6 +100,11 @@ begin
           raise exception 'INVALID_DEBT_SCHEDULE';
       end;
     end if;
+    if v_contractual_number is null then
+      v_has_missing_contractual_number := true;
+    else
+      v_has_contractual_number := true;
+    end if;
 
     v_reported_balance := null;
     if v_elem ? 'reported_balance'
@@ -143,6 +150,9 @@ begin
   if v_previous_number <> v_count then
     raise exception 'INVALID_DEBT_SCHEDULE';
   end if;
+  if v_has_contractual_number and v_has_missing_contractual_number then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
 end;
 $function$;
 
@@ -184,6 +194,8 @@ declare
   v_expected_fees numeric;
   v_expected_insurance numeric;
   v_reported_balance numeric;
+  v_has_contractual_number boolean := false;
+  v_has_missing_contractual_number boolean := false;
   v_source text := coalesce(p_schedule_source, 'manual');
   v_authoritative boolean := coalesce(p_is_authoritative, false);
   v_strict boolean := coalesce(p_strict, false) or v_source in ('contractual', 'estimated');
@@ -254,6 +266,11 @@ begin
         raise exception 'INVALID_DEBT_SCHEDULE';
       end if;
       v_previous_contractual_number := v_contractual_number;
+    end if;
+    if v_contractual_number is null then
+      v_has_missing_contractual_number := true;
+    else
+      v_has_contractual_number := true;
     end if;
 
     v_expected_amount := null;
@@ -369,6 +386,9 @@ begin
     select pg_catalog.max((e.value->>'installment_number')::integer)
       from pg_catalog.jsonb_array_elements(p_schedule_installments) as e
   ) <> v_count then
+    raise exception 'INVALID_DEBT_SCHEDULE';
+  end if;
+  if v_has_contractual_number and v_has_missing_contractual_number then
     raise exception 'INVALID_DEBT_SCHEDULE';
   end if;
 
@@ -547,7 +567,7 @@ begin
     p_schedule_installments,
     p_user_id,
     coalesce(v_source, 'manual'),
-    coalesce(v_authoritative, false)
+    coalesce(v_authoritative, true)
   );
 end;
 $function$;
@@ -688,6 +708,9 @@ begin
   end if;
   if v_debt.debt_kind <> 'bank_loan' then
     raise exception 'DEBT_NOT_BANK_LOAN';
+  end if;
+  if v_debt.repayment_structure <> 'fixed_schedule' then
+    raise exception 'DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED';
   end if;
   if v_debt.is_archived then
     raise exception 'DEBT_ARCHIVED';

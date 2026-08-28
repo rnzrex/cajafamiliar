@@ -45,7 +45,7 @@ function toScheduleDraftRow(installment: DebtInstallment): ScheduleDraftRow {
   };
 }
 
-function toScheduleInstallmentInput(row: ScheduleDraftRow, index: number) {
+function toScheduleInstallmentInput(row: ScheduleDraftRow, index: number, includeReportedBalance = true) {
   const numberOrNull = (value: string) => value.trim() === "" ? null : Number(value);
   return {
     installmentNumber: index + 1,
@@ -56,12 +56,17 @@ function toScheduleInstallmentInput(row: ScheduleDraftRow, index: number) {
     expectedInterest: numberOrNull(row.expectedInterest),
     expectedFees: numberOrNull(row.expectedFees),
     expectedInsurance: numberOrNull(row.expectedInsurance),
-    ...(row.reportedBalance.trim() !== "" ? { reportedBalance: numberOrNull(row.reportedBalance) } : {}),
+    ...(includeReportedBalance && row.reportedBalance.trim() !== "" ? { reportedBalance: numberOrNull(row.reportedBalance) } : {}),
   };
 }
 
 function validateStrictScheduleDraft(rows: ScheduleDraftRow[], eventDate: string): string | null {
   if (rows.length === 0) return "Debe ingresar al menos una cuota en el nuevo cronograma.";
+  const hasExplicitContractualNumber = rows.some((row) => row.contractualInstallmentNumber != null);
+  const hasMissingContractualNumber = rows.some((row) => row.contractualInstallmentNumber == null);
+  if (hasExplicitContractualNumber && hasMissingContractualNumber) {
+    return "Todas las cuotas deben tener número contractual, o ninguna debe tenerlo.";
+  }
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
@@ -344,8 +349,10 @@ export function DebtOperationForm({
         expectedInsurance: row.expectedInsurance,
         reportedBalance: row.reportedBalance,
       })),
+      currentScheduleSource: currentSchedule?.scheduleSource ?? null,
+      currentScheduleAuthoritative: currentSchedule?.isAuthoritative === true,
     }),
-    [bankLoanProfile, currentPrincipal, currentScheduleInstallments, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, eventDate, numExtraPrincipal, numPrincipal, operationType, simulationEffect],
+    [bankLoanProfile, currentPrincipal, currentSchedule?.isAuthoritative, currentSchedule?.scheduleSource, currentScheduleInstallments, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, eventDate, numExtraPrincipal, numPrincipal, operationType, simulationEffect],
   );
   const simulationIsCurrent = simulation != null && calculatedSimulationFingerprint === simulationFingerprint;
   const simulationInput = useMemo(() => simulationEffect == null ? null : ({
@@ -362,11 +369,14 @@ export function DebtOperationForm({
       originalTermInstallments: bankLoanProfile?.termInstallments,
       installmentTotalMode: bankLoanProfile?.installmentTotalMode,
     dueDateAdjustmentRule: bankLoanProfile?.dueDateAdjustmentRule,
-    amortizationMethod: bankLoanProfile?.amortizationMethod,
+      amortizationMethod: bankLoanProfile?.amortizationMethod,
       currentSchedule: currentScheduleInstallments,
+      currentScheduleSource: currentSchedule?.scheduleSource ?? null,
+      currentScheduleAuthoritative: currentSchedule?.isAuthoritative === true,
       insuranceTerms: debtInsuranceTerms,
       hasAllocatedFutureInstallments: currentScheduleInstallments.some((installment) => installment.dueDate > eventDate && allocatedAmountForInstallment(installment.id, persistedAllocations, debtEvents) > 0.01),
-  }), [bankLoanProfile, currentPrincipal, currentScheduleInstallments, debt.originalPrincipal, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, debtEvents, eventDate, numExtraPrincipal, numPrincipal, operationType, persistedAllocations, simulationEffect]);
+      hasContractualDueDateForPayment: currentScheduleInstallments.some((installment) => installment.dueDate === eventDate),
+  }), [bankLoanProfile, currentPrincipal, currentSchedule?.isAuthoritative, currentSchedule?.scheduleSource, currentScheduleInstallments, debt.originalPrincipal, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, debtEvents, eventDate, numExtraPrincipal, numPrincipal, operationType, persistedAllocations, simulationEffect]);
   const summary = debtEconomicSummary(
     numCash,
     operationType === "payoff" ? currentPrincipal : totalPrincipalAmount,
@@ -416,7 +426,7 @@ export function DebtOperationForm({
   const effectiveSimulation = bankPrepaymentScenario && simulationEffect != null && simulationIsCurrent ? simulation : null;
   const hasSelectedSchedule = operationType === "payment" ? hasNewPaymentSchedule : hasNewPrepaymentSchedule;
   const scheduleForSave = hasSelectedSchedule
-    ? scheduleInstallments.map(toScheduleInstallmentInput)
+    ? scheduleInstallments.map((row, index) => toScheduleInstallmentInput(row, index, newScheduleSource === "contractual"))
     : effectiveSimulation?.rows.map((row) => ({
         installmentNumber: row.installmentNumber,
         contractualInstallmentNumber: row.contractualInstallmentNumber,
@@ -426,9 +436,8 @@ export function DebtOperationForm({
         expectedInterest: row.interest,
         expectedFees: row.fees,
         expectedInsurance: row.insurance,
-        reportedBalance: row.remainingPrincipalBalance,
       })) ?? [];
-  const scheduleSourceForSave = hasSelectedSchedule ? "contractual" as const : effectiveSimulation ? "estimated" as const : null;
+  const scheduleSourceForSave = hasSelectedSchedule ? newScheduleSource : effectiveSimulation ? "estimated" as const : null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -737,7 +746,7 @@ export function DebtOperationForm({
             targetEventId,
             eventDate,
             description: description.trim(),
-            scheduleInstallments: targetGeneratedSchedule ? scheduleInstallments.map(toScheduleInstallmentInput) : [],
+            scheduleInstallments: targetGeneratedSchedule ? scheduleInstallments.map((row, index) => toScheduleInstallmentInput(row, index)) : [],
             scheduleNotes: scheduleNotes || null,
           });
           break;
@@ -1110,6 +1119,7 @@ export function DebtOperationForm({
                       <option value="contractual">Contractual / oficial del banco</option>
                       <option value="estimated">Estimado por Caja Familiar</option>
                     </select>
+                    <p className="mt-1 text-xs text-slate-500">El saldo reportado por el banco no siempre corresponde al saldo de capital.</p>
                   </div>
                   <button
                     type="button"
@@ -1127,7 +1137,7 @@ export function DebtOperationForm({
                       <input aria-label={`Capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Interés nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Comisiones nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
-                      <input aria-label={`Saldo capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo capital" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Saldo reportado por el banco nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <div className="flex gap-2"><input aria-label={`Seguro nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" /><button type="button" onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))} className="text-xs font-bold text-red-600">Quitar</button></div>
                     </div>
                   ))}
@@ -1329,6 +1339,7 @@ export function DebtOperationForm({
                     <option value="contractual">Contractual / oficial del banco</option>
                     <option value="estimated">Estimado por Caja Familiar</option>
                   </select>
+                  <p className="mt-1 text-xs text-slate-500">El saldo reportado por el banco no siempre corresponde al saldo de capital.</p>
                 </div>
                 <button
                   type="button"
@@ -1351,7 +1362,7 @@ export function DebtOperationForm({
                     <input aria-label={`Capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <input aria-label={`Interés nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <input aria-label={`Comisiones nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
-                    <input aria-label={`Saldo capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo capital" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                    <input aria-label={`Saldo reportado por el banco nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <div className="flex gap-2"><input aria-label={`Seguro nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" /><button type="button" onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))} className="text-sm font-bold text-red-600">Eliminar</button></div>
                   </div>
                 ))}
@@ -1394,7 +1405,7 @@ export function DebtOperationForm({
                 <input aria-label={`Capital cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Interés cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Comisiones cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
-                <input aria-label={`Saldo capital cuota restaurada ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo capital" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                <input aria-label={`Saldo reportado por el banco cuota restaurada ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <div className="flex justify-end">
                   <input aria-label={`Seguro cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                   <button

@@ -7,6 +7,7 @@ import type {
   AmortizationMethod,
   PeriodicRateBasis,
   PrepaymentEffect,
+  ScheduleSource,
 } from "../types.js";
 
 export type BankPrepaymentSimulationEffect = Extract<PrepaymentEffect, "reduce_term" | "reduce_installment">;
@@ -30,9 +31,14 @@ export interface BankPrepaymentSimulationInput {
   dueDateAdjustmentRule?: BankDueDateAdjustmentRule | null;
   amortizationMethod?: AmortizationMethod | null;
   currentSchedule: Array<Pick<DebtInstallment, "installmentNumber" | "contractualInstallmentNumber" | "dueDate" | "expectedAmount" | "expectedPrincipal" | "expectedInterest" | "expectedFees" | "expectedInsurance">>;
+  /** Automatic simulations may only start from the authoritative bank schedule. */
+  currentScheduleSource?: ScheduleSource | null;
+  currentScheduleAuthoritative?: boolean;
   insuranceTerms?: Array<Pick<DebtInsuranceTerms, "pricingMode" | "ratePercent" | "fixedAmount" | "rateBasis" | "isRequired">>;
   /** Effective allocations on future rows make the bank's post-prepayment treatment ambiguous. */
   hasAllocatedFutureInstallments?: boolean;
+  /** Optional explicit signal for payment + extra principal off-cycle validation. */
+  hasContractualDueDateForPayment?: boolean;
 }
 
 export interface BankPrepaymentSimulationRow {
@@ -74,7 +80,9 @@ type FutureRow = BankPrepaymentSimulationInput["currentSchedule"][number];
 
 const UNKNOWN_INSURANCE_WARNING = "El seguro futuro depende del banco; no se inventó una fórmula.";
 const UNKNOWN_FEES_WARNING = "Las comisiones futuras dependen del banco y no tenemos una regla contractual suficiente para recalcularlas.";
-const MID_PERIOD_WARNING = "El prepago ocurrió entre vencimientos y no conocemos con certeza cómo el banco tratará el interés del período. Usa el nuevo cronograma del banco.";
+const STANDALONE_PREPAYMENT_WARNING = "Un prepago independiente puede cambiar el tratamiento del interés del período. Registra el abono y espera/carga el cronograma actualizado del banco.";
+const PAYMENT_OFF_CYCLE_WARNING = "El pago con abono al capital ocurrió fuera del vencimiento contractual y no conocemos con certeza cómo el banco tratará el interés del período. Usa el nuevo cronograma del banco.";
+const NON_CONTRACTUAL_SCHEDULE_WARNING = "El cronograma vigente todavía no es contractual del banco. Carga el cronograma oficial antes de generar una nueva simulación de prepago.";
 const FUTURE_ALLOCATION_WARNING = "Hay cuotas futuras adelantadas. Necesitamos confirmar cómo el banco las tratará junto con el prepago.";
 
 function round2(value: number): number {
@@ -173,8 +181,11 @@ function insuranceForRow(
         }
       } else if (term.rateBasis === "total_credit_unknown") {
         known = false;
-      } else {
+      } else if (term.rateBasis === "per_installment") {
         amount += round2(term.fixedAmount);
+      } else {
+        // A missing or unsupported basis is not permission to invent a charge.
+        known = false;
       }
     } else {
       known = false;
@@ -324,6 +335,7 @@ function validateInput(input: BankPrepaymentSimulationInput): string[] {
   if (totalMode(input) == null) warnings.push("Falta conocer cómo se define el total de la cuota.");
   if ((input.teaPercent == null || !Number.isFinite(input.teaPercent)) && (input.periodicRatePercent == null || !Number.isFinite(input.periodicRatePercent))) warnings.push("Falta una tasa contractual utilizable.");
   if (input.teaPercent != null && input.dayCountBasis == null && input.periodicRatePercent == null) warnings.push("Falta la base de conteo de días de la tasa contractual.");
+  if (input.currentScheduleSource !== "contractual" || input.currentScheduleAuthoritative !== true) warnings.push(NON_CONTRACTUAL_SCHEDULE_WARNING);
   return warnings;
 }
 
@@ -346,11 +358,14 @@ export function simulateBankPrepayment(input: BankPrepaymentSimulationInput): Ba
     .map((row) => row.dueDate)
     .filter((date) => parseIsoDate(date) != null)
     .sort();
-  const hasPreviousDueDate = dates.some((date) => date < input.operationDate);
-  const hasNextDueDate = dates.some((date) => date > input.operationDate);
-  const isDueDate = dates.includes(input.operationDate);
-  if (isStandalonePrepayment && !isDueDate && hasPreviousDueDate && hasNextDueDate) {
-    return emptyResult(effect, [MID_PERIOD_WARNING], principalBefore);
+  if (isStandalonePrepayment) {
+    return emptyResult(effect, [STANDALONE_PREPAYMENT_WARNING], principalBefore);
+  }
+  const isPaymentWithExtraPrincipal = (input.principalPaid ?? 0) > 0.01 && (input.extraPrincipalPaid ?? 0) > 0.01;
+  const hasContractualDueDateForPayment = input.hasContractualDueDateForPayment
+    ?? dates.includes(input.operationDate);
+  if (isPaymentWithExtraPrincipal && !hasContractualDueDateForPayment) {
+    return emptyResult(effect, [PAYMENT_OFF_CYCLE_WARNING], principalBefore);
   }
   if (input.hasAllocatedFutureInstallments) {
     return emptyResult(effect, [FUTURE_ALLOCATION_WARNING], principalBefore);

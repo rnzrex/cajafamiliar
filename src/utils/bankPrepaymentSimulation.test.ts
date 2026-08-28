@@ -25,6 +25,8 @@ const alfinInput = {
   installmentTotalMode: "total_installment_including_costs" as const,
   dueDateAdjustmentRule: "sunday_to_monday" as const,
   amortizationMethod: "fixed_installment" as const,
+  currentScheduleSource: "contractual" as const,
+  currentScheduleAuthoritative: true,
   currentSchedule: alfinSchedule,
   insuranceTerms: [{
     pricingMode: "percent_outstanding_balance" as const,
@@ -109,10 +111,13 @@ describe("bank prepayment simulation", () => {
     expect(noDates.status).toBe("insufficient_data");
   });
 
-  it("supports standalone principal prepayment without a regular installment", () => {
+  it("refuses standalone principal prepayment without a regular installment", () => {
     const result = simulateBankPrepayment({ ...alfinInput, effect: "reduce_term", principalPaid: 0, extraPrincipalPaid: 500 });
-    expect(result.principalAfter).toBe(2794.39);
-    expect(result.status).toBe("calculated");
+    expect(result.principalAfter).toBeNull();
+    expect(result.status).toBe("insufficient_data");
+    expect(result.rows).toEqual([]);
+    expect(result.canPersist).toBe(false);
+    expect(result.warnings).toContain("Un prepago independiente puede cambiar el tratamiento del interés del período. Registra el abono y espera/carga el cronograma actualizado del banco.");
   });
 
   it("applies known fixed insurance rules without inventing a schedule", () => {
@@ -154,6 +159,18 @@ describe("bank prepayment simulation", () => {
     expect(result.rows.every((row) => row.insurance === 7)).toBe(true);
   });
 
+  it("does not invent a fixed insurance charge when the basis is unknown", () => {
+    const result = simulateBankPrepayment({
+      ...alfinInput,
+      effect: "reduce_term",
+      insuranceTerms: [{ pricingMode: "fixed_amount", ratePercent: null, fixedAmount: 7, rateBasis: null, isRequired: true }],
+    });
+    expect(result.status).toBe("calculated_with_warnings");
+    expect(result.canPersist).toBe(false);
+    expect(result.rows.every((row) => row.insurance === 0)).toBe(true);
+    expect(result.warnings).toContain("El seguro futuro depende del banco; no se inventó una fórmula.");
+  });
+
   it("allows zero future fees but refuses positive unknown fees", () => {
     const zeroFees = simulateBankPrepayment({ ...alfinInput, effect: "reduce_term" });
     expect(zeroFees.status).toBe("calculated");
@@ -178,7 +195,7 @@ describe("bank prepayment simulation", () => {
     });
     expect(midPeriod.status).toBe("insufficient_data");
     expect(midPeriod.canPersist).toBe(false);
-    expect(midPeriod.warnings).toContain("El prepago ocurrió entre vencimientos y no conocemos con certeza cómo el banco tratará el interés del período. Usa el nuevo cronograma del banco.");
+    expect(midPeriod.warnings).toContain("Un prepago independiente puede cambiar el tratamiento del interés del período. Registra el abono y espera/carga el cronograma actualizado del banco.");
 
     const allocated = simulateBankPrepayment({
       ...alfinInput,
@@ -187,6 +204,36 @@ describe("bank prepayment simulation", () => {
     });
     expect(allocated.status).toBe("insufficient_data");
     expect(allocated.warnings).toContain("Hay cuotas futuras adelantadas. Necesitamos confirmar cómo el banco las tratará junto con el prepago.");
+  });
+
+  it("blocks an off-cycle payment with extra principal but accepts the contractual due date", () => {
+    const offCycle = simulateBankPrepayment({
+      ...alfinInput,
+      effect: "reduce_term",
+      principalPaid: 184.92,
+      extraPrincipalPaid: 500,
+      operationDate: "2026-11-15",
+      hasContractualDueDateForPayment: false,
+    });
+    expect(offCycle.status).toBe("insufficient_data");
+    expect(offCycle.canPersist).toBe(false);
+    expect(offCycle.warnings).toContain("El pago con abono al capital ocurrió fuera del vencimiento contractual y no conocemos con certeza cómo el banco tratará el interés del período. Usa el nuevo cronograma del banco.");
+
+    const dueDate = simulateBankPrepayment({ ...alfinInput, effect: "reduce_term", hasContractualDueDateForPayment: true });
+    expect(dueDate.status).toBe("calculated");
+  });
+
+  it("does not chain a simulation from an estimated or non-authoritative schedule", () => {
+    const result = simulateBankPrepayment({
+      ...alfinInput,
+      effect: "reduce_term",
+      currentScheduleSource: "estimated",
+      currentScheduleAuthoritative: false,
+    });
+    expect(result.status).toBe("insufficient_data");
+    expect(result.canPersist).toBe(false);
+    expect(result.rows).toEqual([]);
+    expect(result.warnings).toContain("El cronograma vigente todavía no es contractual del banco. Carga el cronograma oficial antes de generar una nueva simulación de prepago.");
   });
 
   it("keeps financial-installment-plus-costs distinct from total-installment mode", () => {

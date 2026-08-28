@@ -1204,8 +1204,13 @@ export function DebtDetailModal({
                     <p className="text-sm text-slate-500 italic">No hay cuotas registradas en el cronograma actual.</p>
                   ) : (
                     <div className="space-y-3">
-                      {debtInstallments.map((inst) => {
+                      {debtInstallments.map((inst, installmentIndex) => {
                         const prog = getInstallmentProgress(inst, allocations, debtEvents);
+                        const estimatedBalance = debtInstallments
+                          .slice(0, installmentIndex + 1)
+                          .every((row) => row.expectedPrincipal != null && Number.isFinite(row.expectedPrincipal))
+                          ? Math.max(0, debtIntelligence.currentPrincipal - debtInstallments.slice(0, installmentIndex + 1).reduce((sum, row) => sum + Number(row.expectedPrincipal), 0))
+                          : null;
                         return (
                           <div
                             key={inst.id}
@@ -1234,7 +1239,7 @@ export function DebtDetailModal({
                               </p>
                               {currentSchedule?.scheduleSource === "estimated" && (
                                 <p className="mt-1 text-xs font-semibold text-indigo-700">
-                                  Saldo de capital estimado: {inst.reportedBalance == null ? "Por confirmar" : `${currencySymbol} ${inst.reportedBalance.toFixed(2)}`}
+                                  Saldo de capital estimado: {estimatedBalance == null ? "Por confirmar" : `${currencySymbol} ${estimatedBalance.toFixed(2)}`}
                                 </p>
                               )}
                             </div>

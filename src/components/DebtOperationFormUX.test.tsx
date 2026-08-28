@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Debt, DebtEvent, DebtInstallment, DebtScheduleVersion, FinancialAccount } from "../types.js";
 import * as dataRepository from "../services/dataRepository.js";
 import { DebtOperationForm } from "./DebtOperationForm.js";
+import { DebtScheduleUpdateForm } from "./DebtScheduleUpdateForm.js";
 
 vi.mock("../services/dataRepository", async () => {
   const actual = await vi.importActual<typeof dataRepository>("../services/dataRepository.js");
@@ -295,7 +296,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     })));
   });
 
-  it("routes an official post-prepayment schedule to the dedicated RPC", async () => {
+  it("starts the official post-prepayment form empty and routes an explicitly entered schedule to the dedicated RPC", async () => {
     const user = userEvent.setup();
     const prepaymentEvent: DebtEvent = {
       id: "prepayment-qapaq-1",
@@ -345,7 +346,20 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "Guardar cronograma oficial del prepago" }));
+    const saveButton = screen.getByRole("button", { name: "Guardar cronograma oficial del prepago" });
+    expect((saveButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Ingresa aquí únicamente el nuevo cronograma que te entregó el banco. La estimación anterior se muestra solo como referencia y no será convertida automáticamente en contractual.")).toBeTruthy();
+    expect(screen.getByText("Referencia de solo lectura · Estimado")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Agregar cuota" }));
+    await user.clear(screen.getByLabelText("Fecha cuota 1"));
+    await user.type(screen.getByLabelText("Fecha cuota 1"), "2026-09-01");
+    await user.type(screen.getByLabelText("Total cuota 1"), "1100");
+    await user.type(screen.getByLabelText("Capital cuota 1"), "800");
+    await user.type(screen.getByLabelText("Interés cuota 1"), "250");
+    await user.type(screen.getByLabelText("Comisiones cuota 1"), "0");
+    await user.type(screen.getByLabelText("Seguro cuota 1"), "50");
+    await user.click(saveButton);
 
     await waitFor(() => expect(dataRepository.updateBankPrepaymentSchedule).toHaveBeenCalledWith(expect.objectContaining({
       debtId: debt.id,
@@ -353,5 +367,44 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
       effectiveDate: prepaymentEvent.eventDate,
     })));
     expect(dataRepository.updateDebtContractualSchedule).not.toHaveBeenCalled();
+  });
+
+  it("does not prefill the official form from an old contractual schedule while a bank schedule is pending", () => {
+    const pendingEvent: DebtEvent = {
+      id: "prepayment-qapaq-pending",
+      debtId: debt.id,
+      eventDate: "2026-08-20",
+      eventType: "principal_prepayment",
+      cashAmount: 500,
+      principalDelta: -500,
+      interestPaid: 0,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "movement-qapaq-pending",
+      reversalOfEventId: null,
+      description: "Prepago pendiente",
+      registeredByUserId: "user-1",
+      createdAt: "2026-08-21T00:00:00Z",
+      prepaymentEffect: "pending_bank_schedule",
+    };
+    render(
+      <DebtScheduleUpdateForm
+        debt={debt}
+        debtEvents={[pendingEvent]}
+        installments={installments}
+        scheduleVersions={[schedule]}
+        mode="prepayment_schedule"
+        prepaymentEventId={pendingEvent.id}
+        onSaved={vi.fn()}
+        onCancel={vi.fn()}
+        setToast={vi.fn()}
+      />
+    );
+
+    expect((screen.getByRole("button", { name: "Guardar cronograma oficial del prepago" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText("Fecha cuota 1")).toBeNull();
+    expect(screen.getByText("Referencia de solo lectura · Contractual")).toBeTruthy();
   });
 });

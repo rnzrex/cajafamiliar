@@ -9,8 +9,12 @@ const ids = {
   account: "00000000-0000-4000-8000-000000000903",
   debt: "00000000-0000-4000-8000-000000000904",
   prepaymentEvent: "00000000-0000-4000-8000-000000000905",
+  mixedEvent: "00000000-0000-4000-8000-000000000908",
+  fallbackEvent: "00000000-0000-4000-8000-000000000909",
   pendingDebt: "00000000-0000-4000-8000-000000000906",
   pendingEvent: "00000000-0000-4000-8000-000000000907",
+  openDebt: "00000000-0000-4000-8000-000000000910",
+  openEvent: "00000000-0000-4000-8000-000000000911",
 };
 
 function runSql(sql) {
@@ -40,6 +44,18 @@ function scheduleRows(contractualStart, count, reportedBalanceStart = null, amou
     expected_fees: 0,
     expected_insurance: 0,
     ...(reportedBalanceStart == null ? {} : { reported_balance: reportedBalanceStart - index }),
+  })));
+}
+
+function scheduleRowsWithoutContractual(count = 2) {
+  return JSON.stringify(Array.from({ length: count }, (_, index) => ({
+    installment_number: index + 1,
+    due_date: new Date(Date.UTC(2026, 8 + index, 1)).toISOString().slice(0, 10),
+    expected_amount: 100,
+    expected_principal: 80,
+    expected_interest: 20,
+    expected_fees: 0,
+    expected_insurance: 0,
   })));
 }
 
@@ -95,7 +111,7 @@ try {
       '${ids.household}', '${ids.debt}', 'Crédito lifecycle', 'Banco lifecycle', 'bank_loan', 'PEN',
       '2026-01-01', '2026-08-27', 1000, 1000, 10, 100, 'fixed', 'monthly', null, '2026-09-01',
       0, null, '', 'fixed_schedule', 'contract_schedule', null, null, null,
-      jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', 2),
+      jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', 10),
       '[]'::jsonb, 'contractual',
       '${scheduleRows(1, 10)}'::jsonb,
       '[]'::jsonb
@@ -108,7 +124,7 @@ try {
       '${ids.household}', '${ids.debt}', '${ids.prepaymentEvent}', 'bank-prepayment-v1-movement',
       '2026-08-27', 100, '${ids.account}', 'Prepago lifecycle', 'Pago de deuda',
       100, 0, 0, 0, 0, 'reduce_term', true,
-      '${scheduleRows(7, 10, 500)}'::jsonb,
+      '${scheduleRows(7, 10)}'::jsonb,
       'Estimación local', 'estimated'
     );
   `));
@@ -116,12 +132,12 @@ try {
     select s.schedule_source || '|' || s.is_authoritative::text || '|' ||
       (select string_agg(installment_number::text, ',' order by installment_number) from public.debt_installments where schedule_version_id = s.id) || '|' ||
       (select string_agg(contractual_installment_number::text, ',' order by installment_number) from public.debt_installments where schedule_version_id = s.id) || '|' ||
-      (select string_agg(reported_balance::text, ',' order by installment_number) from public.debt_installments where schedule_version_id = s.id) || '|' ||
+      coalesce((select string_agg(reported_balance::text, ',' order by installment_number) from public.debt_installments where schedule_version_id = s.id), 'NULL') || '|' ||
       (select bool_and(not is_paid_before_tracking)::text from public.debt_installments where schedule_version_id = s.id)
       from public.debt_schedule_versions as s
      where s.trigger_event_id = '${ids.prepaymentEvent}';
   `);
-  if (estimatedMetadata !== "estimated|false|1,2,3,4,5,6,7,8,9,10|7,8,9,10,11,12,13,14,15,16|500,499,498,497,496,495,494,493,492,491|true") throw new Error(`Estimated metadata was not preserved: ${estimatedMetadata}`);
+  if (estimatedMetadata !== "estimated|false|1,2,3,4,5,6,7,8,9,10|7,8,9,10,11,12,13,14,15,16|NULL|true") throw new Error(`Estimated metadata was not preserved: ${estimatedMetadata}`);
 
   const beforeOfficial = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.debt}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select opening_principal_balance + coalesce((select sum(principal_delta) from public.debt_events where debt_id = '${ids.debt}'), 0) from public.debts where id = '${ids.debt}');`);
   console.log("3. Replacing the estimate with one official contractual schedule...");
@@ -145,7 +161,40 @@ try {
   const history = await execSql(`select string_agg(schedule_source, ',' order by version_number) from public.debt_schedule_versions where trigger_event_id = '${ids.prepaymentEvent}';`);
   if (history !== "estimated,contractual") throw new Error(`Estimated schedule was not preserved: ${history}`);
 
-  console.log("4. Verifying idempotent replay, no extra event/movement, and conflict protection...");
+  console.log("4. Verifying contractual-number fallback and mixed-number rejection...");
+  await execSql(withUser(`
+    insert into public.debt_events (
+      id, household_id, debt_id, event_date, event_type, cash_amount, principal_delta,
+      interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete, registered_by_user_id
+    ) values
+      ('${ids.mixedEvent}', '${ids.household}', '${ids.debt}', '2026-08-27', 'principal_prepayment', 100, -100, 0, 0, 0, 0, true, '${ids.user}'),
+      ('${ids.fallbackEvent}', '${ids.household}', '${ids.debt}', '2026-08-27', 'principal_prepayment', 100, -100, 0, 0, 0, 0, true, '${ids.user}');
+  `));
+  const mixedRows = JSON.stringify([
+    { installment_number: 1, contractual_installment_number: 7, due_date: "2026-09-01", expected_amount: 100, expected_principal: 80, expected_interest: 20, expected_fees: 0, expected_insurance: 0 },
+    { installment_number: 2, contractual_installment_number: null, due_date: "2026-10-01", expected_amount: 100, expected_principal: 80, expected_interest: 20, expected_fees: 0, expected_insurance: 0 },
+  ]);
+  await expectSqlError(withUser(`
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.debt}', '${ids.mixedEvent}', '2026-08-27',
+      '${mixedRows}'::jsonb, 'Mixed numbering must fail'
+    );
+  `), "INVALID_DEBT_SCHEDULE");
+  await execSql(withUser(`
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.debt}', '${ids.fallbackEvent}', '2026-08-27',
+      '${scheduleRowsWithoutContractual()}'::jsonb, 'Fallback numbering local'
+    );
+  `));
+  const fallbackNumbers = await execSql(`
+    select string_agg(i.contractual_installment_number::text, ',' order by i.installment_number)
+      from public.debt_installments as i
+      join public.debt_schedule_versions as s on s.id = i.schedule_version_id
+     where s.trigger_event_id = '${ids.fallbackEvent}';
+  `);
+  if (fallbackNumbers !== "1,2") throw new Error(`Absent contractual numbers did not fall back to internal numbers: ${fallbackNumbers}`);
+
+  console.log("5. Verifying idempotent replay, no extra event/movement, and conflict protection...");
   const replay = await execSql(withUser(`
     select (public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.debt}', '${ids.prepaymentEvent}', '2026-08-27',
@@ -171,7 +220,7 @@ try {
     );
   `), "DEBT_EVENT_ID_CONFLICT");
 
-  console.log("5. Pending prepayment transitions to an official schedule without a synthetic event...");
+  console.log("6. Pending prepayment transitions to an official schedule without a synthetic event...");
   await execSql(withUser(`
     select public.create_bank_loan_v1(
       '${ids.household}', '${ids.pendingDebt}', 'Crédito pending', 'Banco lifecycle', 'bank_loan', 'PEN',
@@ -201,7 +250,30 @@ try {
   const pendingEventCount = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.pendingDebt}' and event_type = 'principal_adjustment') || '|' || (select count(*) from public.debt_events where id = '${ids.pendingEvent}');`);
   if (pendingEventCount !== "0|1") throw new Error(`Pending transition created an unexpected event: ${pendingEventCount}`);
 
-  console.log("SUCCESS! BANK PREPAYMENT LIFECYCLE V1 local schema, metadata, replay, pending transition, and ledger-protection checks passed.");
+  console.log("7. Verifying the fixed-schedule guard for open-ended bank loans...");
+  await execSql(withUser(`
+    select public.create_bank_loan_v1(
+      '${ids.household}', '${ids.openDebt}', 'Crédito abierto', 'Banco lifecycle', 'bank_loan', 'PEN',
+      '2026-01-01', '2026-08-27', 1000, 1000, null, null, 'unknown', 'monthly', null, null,
+      null, null, 'Open-ended guard fixture', 'open_ended', 'unknown', null, null, null,
+      null, '[]'::jsonb, 'manual', '[]'::jsonb, '[]'::jsonb
+    );
+    insert into public.debt_events (
+      id, household_id, debt_id, event_date, event_type, cash_amount, principal_delta,
+      interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete, registered_by_user_id
+    ) values (
+      '${ids.openEvent}', '${ids.household}', '${ids.openDebt}', '2026-08-27', 'principal_prepayment',
+      100, -100, 0, 0, 0, 0, true, '${ids.user}'
+    );
+  `));
+  await expectSqlError(withUser(`
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.openDebt}', '${ids.openEvent}', '2026-08-27',
+      '${scheduleRows(1, 1)}'::jsonb, 'Open-ended must fail'
+    );
+  `), "DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED");
+
+  console.log("SUCCESS! BANK PREPAYMENT LIFECYCLE V1 local schema, metadata, numbering, replay, pending transition, fixed-schedule guard, and ledger-protection checks passed.");
 } catch (error) {
   console.error("SQL SMOKE TEST FAILED:", error);
   process.exitCode = 1;

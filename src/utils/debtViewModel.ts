@@ -28,6 +28,7 @@ export function translateDebtError(error: unknown): string {
       DEBT_EVENT_NOT_FOUND: "El registro de deuda especificado no existe.",
       DEBT_EVENT_TYPE_UNSUPPORTED: "Tipo de registro de deuda no soportado.",
       DEBT_NOT_BANK_LOAN: "Esta actualización solo está disponible para créditos bancarios.",
+      DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED: "Esta acción solo está disponible para créditos bancarios con cronograma fijo.",
       DEBT_SCHEDULE_NOT_FOUND: "No se encontró el cronograma generado por esta operación.",
       DEBT_EVENT_ALREADY_REVERSED: "Este registro ya ha sido revertido previamente.",
       DEBT_REVERSAL_SCHEDULE_REQUIRED: "La reversión de este registro requiere un nuevo cronograma de cuotas.",

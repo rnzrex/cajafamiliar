@@ -86,7 +86,7 @@ export function DebtScheduleUpdateForm({
       : localDateString(new Date())
   );
   const [reason, setReason] = useState<"rate_change" | "manual_adjustment">("manual_adjustment");
-  const [rows, setRows] = useState<ScheduleDraftRow[]>(() => currentInstallments.map(asDraftRow));
+  const [rows, setRows] = useState<ScheduleDraftRow[]>(() => isPrepaymentSchedule ? [] : currentInstallments.map(asDraftRow));
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [eventId] = useState(() => makeUuid());
@@ -129,6 +129,13 @@ export function DebtScheduleUpdateForm({
 
     if (isPrepaymentSchedule && !prepaymentEventId) {
       setToast({ message: "No se encontró el prepago asociado al cronograma oficial.", type: "error" });
+      return;
+    }
+
+    const hasExplicitContractualNumber = normalized.some((row) => row.contractualInstallmentNumber != null);
+    const hasMissingContractualNumber = normalized.some((row) => row.contractualInstallmentNumber == null);
+    if (hasExplicitContractualNumber && hasMissingContractualNumber) {
+      setToast({ message: "Todas las cuotas deben tener número contractual, o ninguna debe tenerlo.", type: "error" });
       return;
     }
 
@@ -222,6 +229,24 @@ export function DebtScheduleUpdateForm({
           </p>
         </div>
 
+      {isPrepaymentSchedule && (
+        <div className="mb-6 space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-semibold">Ingresa aquí únicamente el nuevo cronograma que te entregó el banco. La estimación anterior se muestra solo como referencia y no será convertida automáticamente en contractual.</p>
+          {currentSchedule && currentInstallments.length > 0 ? (
+            <div className="rounded-xl border border-amber-200 bg-white/70 p-3">
+              <p className="font-bold">Referencia de solo lectura · {currentSchedule.scheduleSource === "estimated" ? "Estimado" : currentSchedule.scheduleSource === "contractual" ? "Contractual" : currentSchedule.scheduleSource === "reconstructed" ? "Reconstruido" : "Manual"}</p>
+              <div className="mt-2 space-y-1 text-xs text-slate-700">
+                {currentInstallments.map((installment) => (
+                  <p key={installment.id}>Cuota #{installment.contractualInstallmentNumber ?? installment.installmentNumber} · vence {installment.dueDate} · total {installment.expectedAmount == null ? "Por confirmar" : installment.expectedAmount.toFixed(2)}</p>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs">No hay un cronograma anterior disponible para mostrar como referencia.</p>
+          )}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className={`grid grid-cols-1 gap-4 ${isPrepaymentSchedule ? "" : "sm:grid-cols-2"}`}>
           <div>
@@ -241,7 +266,8 @@ export function DebtScheduleUpdateForm({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-lg font-bold text-slate-900">Cuotas contractuales</h3>
-            <p className="text-xs text-slate-500">La suma de capital, interés, comisiones y seguros debe coincidir con el total. Los campos contractuales permiten conservar el número de cuota del banco y el saldo de capital reportado.</p>
+            <p className="text-xs text-slate-500">La suma de capital, interés, comisiones y seguros debe coincidir con el total. Los campos contractuales permiten conservar el número de cuota del banco y el saldo reportado por el banco.</p>
+            <p className="text-xs text-slate-500">No siempre corresponde al saldo de capital.</p>
             </div>
             <button type="button" onClick={() => setRows((current) => [...current, blankRow()])} className="rounded-xl bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100">
               Agregar cuota
@@ -259,7 +285,7 @@ export function DebtScheduleUpdateForm({
               <input aria-label={`Capital cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={row.expectedPrincipal} onChange={(event) => updateRow(index, "expectedPrincipal", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
               <input aria-label={`Interés cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={row.expectedInterest} onChange={(event) => updateRow(index, "expectedInterest", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
               <input aria-label={`Comisiones cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={row.expectedFees} onChange={(event) => updateRow(index, "expectedFees", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
-              <input aria-label={`Saldo capital cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Saldo capital" value={row.reportedBalance} onChange={(event) => updateRow(index, "reportedBalance", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
+              <input aria-label={`Saldo reportado por el banco cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={row.reportedBalance} onChange={(event) => updateRow(index, "reportedBalance", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
               <div className="flex gap-2">
                 <input aria-label={`Seguro cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={row.expectedInsurance} onChange={(event) => updateRow(index, "expectedInsurance", event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
                 <button type="button" onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="rounded-lg px-2 text-sm font-bold text-red-600 hover:bg-red-50" aria-label={`Eliminar cuota ${index + 1}`}>Quitar</button>
@@ -275,7 +301,7 @@ export function DebtScheduleUpdateForm({
 
         <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
           <button type="button" onClick={onCancel} className="rounded-xl px-5 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Cancelar</button>
-          <button type="submit" disabled={submitting || !canWriteDebt} className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50">
+          <button type="submit" disabled={submitting || !canWriteDebt || rows.length === 0} className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50">
             {submitting ? "Guardando..." : isPrepaymentSchedule ? "Guardar cronograma oficial del prepago" : "Guardar cronograma oficial"}
           </button>
         </div>
