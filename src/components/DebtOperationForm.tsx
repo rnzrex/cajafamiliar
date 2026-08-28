@@ -11,6 +11,7 @@ import { calculateAssistedInterestSuggestion, getLastEffectiveDebtPaymentDate } 
 import { calculateNextPayment } from "../utils/debtNextPayment";
 import { getCurrencySymbol } from "../utils/debtFormMode";
 import { getDebtScheduleLifecycleState } from "../utils/debtPlanning.js";
+import { getDebtReversalScheduleBaseline } from "../utils/debtReversalSchedule.js";
 import { DebtScheduleUpdateForm } from "./DebtScheduleUpdateForm.js";
 import { BankSchedulePreview } from "./BankSchedulePreview.js";
 import { simulateBankPrepayment } from "../utils/bankPrepaymentSimulation.js";
@@ -262,11 +263,8 @@ export function DebtOperationForm({
         .sort((a, b) => a.versionNumber - b.versionNumber)
         .at(-1) ?? null
     : null;
-  const previousScheduleVersion = targetScheduleVersion
-    ? scheduleVersions
-        .filter((version) => version.debtId === debt.id && version.versionNumber < targetScheduleVersion.versionNumber)
-        .sort((a, b) => a.versionNumber - b.versionNumber)
-        .at(-1) ?? null
+  const previousScheduleVersion = targetEventId
+    ? getDebtReversalScheduleBaseline({ debtId: debt.id, targetEventId, scheduleVersions })
     : null;
   const previousScheduleInstallments = previousScheduleVersion
     ? installments

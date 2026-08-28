@@ -22,6 +22,21 @@ const ids = {
   staleScheduleDebt: "00000000-0000-4000-8000-000000000916",
   staleScheduleP1: "00000000-0000-4000-8000-000000000917",
   staleScheduleEvent: "00000000-0000-4000-8000-000000000918",
+  reversalEstimatedDebt: "00000000-0000-4000-8000-000000000919",
+  reversalEstimatedP1: "00000000-0000-4000-8000-000000000920",
+  reversalEstimatedR: "00000000-0000-4000-8000-000000000921",
+  reversalOfficialDebt: "00000000-0000-4000-8000-000000000922",
+  reversalOfficialP1: "00000000-0000-4000-8000-000000000923",
+  reversalOfficialR: "00000000-0000-4000-8000-000000000924",
+  reversalCriticalDebt: "00000000-0000-4000-8000-000000000925",
+  reversalCriticalP1: "00000000-0000-4000-8000-000000000926",
+  reversalCriticalR: "00000000-0000-4000-8000-000000000927",
+  reversalPendingDebt: "00000000-0000-4000-8000-000000000928",
+  reversalPendingP1: "00000000-0000-4000-8000-000000000929",
+  reversalPendingR: "00000000-0000-4000-8000-000000000930",
+  reversalLaterDebt: "00000000-0000-4000-8000-000000000931",
+  reversalLaterP1: "00000000-0000-4000-8000-000000000932",
+  reversalLaterR: "00000000-0000-4000-8000-000000000933",
 };
 
 function runSql(sql) {
@@ -64,6 +79,35 @@ function scheduleRowsWithoutContractual(count = 2) {
     expected_fees: 0,
     expected_insurance: 0,
   })));
+}
+
+function createBaselineLoanSql(debtId, name) {
+  return `select public.create_bank_loan_v1(
+    '${ids.household}', '${debtId}', '${name}', 'Banco lifecycle', 'bank_loan', 'PEN',
+    '2026-01-01', '2026-08-27', 1000, 1000, 2, 100, 'fixed', 'monthly', null, '2026-09-01',
+    0, null, '', 'fixed_schedule', 'contract_schedule', null, null,
+    jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', 2),
+    '[]'::jsonb, 'contractual', '${scheduleRows(1, 2)}'::jsonb, '[]'::jsonb
+  );`;
+}
+
+function recordPrepaymentSql({ debtId, eventId, movementId, eventDate = '2026-08-27', effect, schedule, notes, source }) {
+  const notesSql = notes == null ? 'null' : `'${notes}'`;
+  const sourceSql = source == null ? 'null' : `'${source}'`;
+  return `select public.record_debt_prepayment_v3(
+    '${ids.household}', '${debtId}', '${eventId}', '${movementId}',
+    '${eventDate}', 100, '${ids.account}', 'Prepago reversal smoke', 'Pago de deuda',
+    100, 0, 0, 0, 0, '${effect}', true,
+    '${schedule}'::jsonb, ${notesSql}, ${sourceSql}
+  );`;
+}
+
+function reverseDebtSql({ debtId, reversalEventId, targetEventId, schedule, description = 'Reversión reversal smoke', notes = null }) {
+  const notesSql = notes == null ? 'null' : `'${notes}'`;
+  return `select (public.reverse_debt_event_v1(
+    '${ids.household}', '${debtId}', '${reversalEventId}', '${targetEventId}',
+    '2026-08-28', '${description}', '${schedule}'::jsonb, ${notesSql}
+  )->>'idempotentReplay');`;
 }
 
 async function expectSqlError(sql, expected) {
@@ -361,7 +405,199 @@ try {
     );
   `), "DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED");
 
-  console.log("SUCCESS! BANK PREPAYMENT LIFECYCLE V1 local schema, metadata, numbering, replay, pending transition, fixed-schedule guard, and ledger-protection checks passed.");
+  console.log("11. Reversing an estimated-only prepayment to the original contractual baseline...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.reversalEstimatedDebt, "Crédito reversal estimated")}
+    ${recordPrepaymentSql({
+      debtId: ids.reversalEstimatedDebt,
+      eventId: ids.reversalEstimatedP1,
+      movementId: "bank-prepayment-v1-reversal-estimated",
+      effect: "reduce_term",
+      schedule: scheduleRows(7, 2),
+      notes: "Estimación reversal",
+      source: "estimated",
+    })}
+  `));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.reversalEstimatedDebt,
+    reversalEventId: ids.reversalEstimatedR,
+    targetEventId: ids.reversalEstimatedP1,
+    schedule: scheduleRows(1, 2),
+  })));
+  const estimatedReversalFingerprint = await execSql(`
+    select s.version_number::text || '|' || s.schedule_source || '|' || s.is_authoritative::text || '|' ||
+      (s.trigger_event_id = '${ids.reversalEstimatedR}')::text || '|' ||
+      (select min(contractual_installment_number)::text || '-' || max(contractual_installment_number)::text from public.debt_installments where schedule_version_id = s.id) || '|' ||
+      (select string_agg(expected_principal::text, ',' order by installment_number) from public.debt_installments where schedule_version_id = s.id)
+      from public.debt_schedule_versions as s
+     where s.debt_id = '${ids.reversalEstimatedDebt}'
+     order by s.version_number desc limit 1;
+  `);
+  if (estimatedReversalFingerprint !== "3|contractual|true|true|1-2|80,80") throw new Error(`Estimated-only reversal did not restore V1: ${estimatedReversalFingerprint}`);
+  const estimatedReversalEffect = await execSql(`
+    select
+      (select count(*) from public.debt_events as target where target.id = '${ids.reversalEstimatedP1}' and not exists (select 1 from public.debt_events as reversal where reversal.reversal_of_event_id = target.id)) || '|' ||
+      (select ((d.opening_principal_balance + coalesce((select sum(case when exists (select 1 from public.debt_events as reversal where reversal.reversal_of_event_id = e.id) then 0::numeric else e.principal_delta end) from public.debt_events as e where e.debt_id = d.id), 0)) = d.opening_principal_balance)::text from public.debts as d where d.id = '${ids.reversalEstimatedDebt}');
+  `);
+  if (estimatedReversalEffect !== "0|true") throw new Error(`Estimated-only reversal did not restore effective principal: ${estimatedReversalEffect}`);
+  const estimatedReplayBefore = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.reversalEstimatedDebt}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.reversalEstimatedDebt}');`);
+  const estimatedReplay = await execSql(withUser(reverseDebtSql({
+    debtId: ids.reversalEstimatedDebt,
+    reversalEventId: ids.reversalEstimatedR,
+    targetEventId: ids.reversalEstimatedP1,
+    schedule: scheduleRows(1, 2),
+  })));
+  const estimatedReplayAfter = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.reversalEstimatedDebt}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.reversalEstimatedDebt}');`);
+  if (estimatedReplay !== "true" || estimatedReplayAfter !== estimatedReplayBefore) throw new Error(`Reversal replay was not idempotent: ${estimatedReplay} ${estimatedReplayBefore} -> ${estimatedReplayAfter}`);
+  await expectSqlError(withUser(reverseDebtSql({
+    debtId: ids.reversalEstimatedDebt,
+    reversalEventId: ids.reversalEstimatedR,
+    targetEventId: ids.reversalEstimatedP1,
+    schedule: scheduleRows(1, 2, 900),
+  })), "DEBT_EVENT_ID_CONFLICT");
+
+  console.log("12. Reversing an official-only prepayment to the original contractual baseline...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.reversalOfficialDebt, "Crédito reversal official")}
+    ${recordPrepaymentSql({
+      debtId: ids.reversalOfficialDebt,
+      eventId: ids.reversalOfficialP1,
+      movementId: "bank-prepayment-v1-reversal-official",
+      effect: "other",
+      schedule: scheduleRows(7, 2, 900),
+      notes: "Cronograma oficial reversal",
+      source: "contractual",
+    })}
+  `));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.reversalOfficialDebt,
+    reversalEventId: ids.reversalOfficialR,
+    targetEventId: ids.reversalOfficialP1,
+    schedule: scheduleRows(1, 2),
+  })));
+  const officialReversalFingerprint = await execSql(`
+    select s.version_number::text || '|' || s.schedule_source || '|' || s.is_authoritative::text || '|' ||
+      (s.trigger_event_id = '${ids.reversalOfficialR}')::text || '|' ||
+      (select min(contractual_installment_number)::text || '-' || max(contractual_installment_number)::text from public.debt_installments where schedule_version_id = s.id)
+      from public.debt_schedule_versions as s
+     where s.debt_id = '${ids.reversalOfficialDebt}'
+     order by s.version_number desc limit 1;
+  `);
+  if (officialReversalFingerprint !== "3|contractual|true|true|1-2") throw new Error(`Official-only reversal did not restore V1: ${officialReversalFingerprint}`);
+
+  console.log("13. Reversing estimated -> official while skipping every schedule generated by the same prepayment...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.reversalCriticalDebt, "Crédito reversal critical")}
+    ${recordPrepaymentSql({
+      debtId: ids.reversalCriticalDebt,
+      eventId: ids.reversalCriticalP1,
+      movementId: "bank-prepayment-v1-reversal-critical",
+      effect: "reduce_term",
+      schedule: scheduleRows(7, 2),
+      notes: "Estimación critical",
+      source: "estimated",
+    })}
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.reversalCriticalDebt}', '${ids.reversalCriticalP1}', '2026-08-27',
+      '${scheduleRows(7, 2, 900)}'::jsonb, 'Cronograma oficial critical'
+    );
+  `));
+  const criticalBeforeReversal = await execSql(`select (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.reversalCriticalDebt}');`);
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.reversalCriticalDebt,
+    reversalEventId: ids.reversalCriticalR,
+    targetEventId: ids.reversalCriticalP1,
+    schedule: scheduleRows(1, 2),
+  })));
+  const criticalAfterReversal = await execSql(`
+    select s.version_number::text || '|' || s.schedule_source || '|' || s.is_authoritative::text || '|' ||
+      (s.trigger_event_id = '${ids.reversalCriticalR}')::text || '|' ||
+      (select min(contractual_installment_number)::text || '-' || max(contractual_installment_number)::text from public.debt_installments where schedule_version_id = s.id) || '|' ||
+      (select count(*) from public.movements where household_id = '${ids.household}') || '|' ||
+      (select string_agg(schedule_source, ',' order by version_number) from public.debt_schedule_versions where debt_id = '${ids.reversalCriticalDebt}')
+      from public.debt_schedule_versions as s
+     where s.debt_id = '${ids.reversalCriticalDebt}'
+     order by s.version_number desc limit 1;
+  `);
+  const [criticalMovementCount, criticalScheduleCount] = criticalBeforeReversal.split('|');
+  if (criticalAfterReversal !== `4|contractual|true|true|1-2|${criticalMovementCount}|contractual,estimated,contractual,contractual`) throw new Error(`Estimated -> official reversal did not restore V1 or preserve history: ${criticalAfterReversal}`);
+  const criticalReversalEffect = await execSql(`
+    select
+      (select count(*) from public.debt_events as target where target.id = '${ids.reversalCriticalP1}' and not exists (select 1 from public.debt_events as reversal where reversal.reversal_of_event_id = target.id)) || '|' ||
+      (select ((d.opening_principal_balance + coalesce((select sum(case when exists (select 1 from public.debt_events as reversal where reversal.reversal_of_event_id = e.id) then 0::numeric else e.principal_delta end) from public.debt_events as e where e.debt_id = d.id), 0)) = d.opening_principal_balance)::text from public.debts as d where d.id = '${ids.reversalCriticalDebt}');
+  `);
+  if (criticalReversalEffect !== "0|true") throw new Error(`Critical reversal did not make P1 ineffective: ${criticalReversalEffect}`);
+  const criticalReplayBefore = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.reversalCriticalDebt}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.reversalCriticalDebt}');`);
+  const criticalReplay = await execSql(withUser(reverseDebtSql({
+    debtId: ids.reversalCriticalDebt,
+    reversalEventId: ids.reversalCriticalR,
+    targetEventId: ids.reversalCriticalP1,
+    schedule: scheduleRows(1, 2),
+  })));
+  const criticalReplayAfter = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.reversalCriticalDebt}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.reversalCriticalDebt}');`);
+  if (criticalReplay !== "true" || criticalReplayAfter !== criticalReplayBefore) throw new Error(`Critical reversal replay was not idempotent: ${criticalReplay} ${criticalReplayBefore} -> ${criticalReplayAfter}`);
+
+  console.log("14. Preserving pending prepayment reversal behavior without synthetic schedule restoration...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.reversalPendingDebt, "Crédito reversal pending")}
+    ${recordPrepaymentSql({
+      debtId: ids.reversalPendingDebt,
+      eventId: ids.reversalPendingP1,
+      movementId: "bank-prepayment-v1-reversal-pending",
+      effect: "pending_bank_schedule",
+      schedule: "[]",
+      notes: null,
+      source: null,
+    })}
+  `));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.reversalPendingDebt,
+    reversalEventId: ids.reversalPendingR,
+    targetEventId: ids.reversalPendingP1,
+    schedule: "[]",
+  })));
+  const pendingReversalState = await execSql(`
+    select
+      (select count(*) from public.debt_schedule_versions where debt_id = '${ids.reversalPendingDebt}' and trigger_event_id = '${ids.reversalPendingR}') || '|' ||
+      (select max(version_number)::text || '|' || max(schedule_source) from public.debt_schedule_versions where debt_id = '${ids.reversalPendingDebt}') || '|' ||
+      (select count(*) from public.debt_events as target where target.id = '${ids.reversalPendingP1}' and not exists (select 1 from public.debt_events as reversal where reversal.reversal_of_event_id = target.id));
+  `);
+  if (pendingReversalState !== "0|1|contractual|0") throw new Error(`Pending reversal changed schedule state unexpectedly: ${pendingReversalState}`);
+
+  console.log("15. Reversing a pending prepayment after its later official schedule...");
+  await execSql(withUser(`
+    ${createBaselineLoanSql(ids.reversalLaterDebt, "Crédito reversal later official")}
+    ${recordPrepaymentSql({
+      debtId: ids.reversalLaterDebt,
+      eventId: ids.reversalLaterP1,
+      movementId: "bank-prepayment-v1-reversal-later",
+      effect: "pending_bank_schedule",
+      schedule: "[]",
+      notes: null,
+      source: null,
+    })}
+    select public.update_bank_prepayment_schedule_v1(
+      '${ids.household}', '${ids.reversalLaterDebt}', '${ids.reversalLaterP1}', '2026-08-27',
+      '${scheduleRows(7, 2, 900)}'::jsonb, 'Cronograma posterior reversal'
+    );
+  `));
+  await execSql(withUser(reverseDebtSql({
+    debtId: ids.reversalLaterDebt,
+    reversalEventId: ids.reversalLaterR,
+    targetEventId: ids.reversalLaterP1,
+    schedule: scheduleRows(1, 2),
+  })));
+  const laterReversalFingerprint = await execSql(`
+    select s.version_number::text || '|' || s.schedule_source || '|' || s.is_authoritative::text || '|' ||
+      (s.trigger_event_id = '${ids.reversalLaterR}')::text || '|' ||
+      (select min(contractual_installment_number)::text || '-' || max(contractual_installment_number)::text from public.debt_installments where schedule_version_id = s.id)
+      from public.debt_schedule_versions as s
+     where s.debt_id = '${ids.reversalLaterDebt}'
+     order by s.version_number desc limit 1;
+  `);
+  if (laterReversalFingerprint !== "3|contractual|true|true|1-2") throw new Error(`Pending -> official reversal did not restore V1: ${laterReversalFingerprint}`);
+
+  console.log("SUCCESS! BANK PREPAYMENT LIFECYCLE V1 local schema, metadata, numbering, replay, pending transition, stale guards, reversal baselines, fixed-schedule guard, and ledger-protection checks passed.");
 } catch (error) {
   console.error("SQL SMOKE TEST FAILED:", error);
   process.exitCode = 1;

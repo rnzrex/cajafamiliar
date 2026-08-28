@@ -15,6 +15,7 @@ vi.mock("../services/dataRepository", async () => {
     recordDebtPayment: vi.fn().mockResolvedValue({}),
     recordDebtPrepayment: vi.fn().mockResolvedValue({}),
     recordDebtInstallmentAdvance: vi.fn().mockResolvedValue({}),
+    reverseDebtEvent: vi.fn().mockResolvedValue({}),
     updateDebtContractualSchedule: vi.fn().mockResolvedValue({}),
     updateBankPrepaymentSchedule: vi.fn().mockResolvedValue({}),
   };
@@ -106,7 +107,7 @@ const installments: DebtInstallment[] = [
 ];
 
 function renderOperation(
-  operationType: "payment" | "prepayment" | "installment_advance" | "schedule_update",
+  operationType: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance" | "schedule_update",
   paymentWithExtraPrincipal = false,
   setToast = vi.fn(),
   targetEventId?: string,
@@ -373,6 +374,54 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
       effectiveDate: prepaymentEvent.eventDate,
     })));
     expect(dataRepository.updateDebtContractualSchedule).not.toHaveBeenCalled();
+  });
+
+  it("restores the schedule before the first target version when estimated and official versions share the trigger", () => {
+    const targetEvent: DebtEvent = {
+      id: "prepayment-qapaq-reversal-target",
+      debtId: debt.id,
+      eventDate: "2026-08-20",
+      eventType: "principal_prepayment",
+      cashAmount: 500,
+      principalDelta: -500,
+      interestPaid: 0,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "movement-qapaq-reversal-target",
+      reversalOfEventId: null,
+      description: "Prepago para reversión",
+      registeredByUserId: "user-1",
+      createdAt: "2026-08-20T00:00:00Z",
+      prepaymentEffect: "reduce_term",
+    };
+    const estimatedSchedule: DebtScheduleVersion = {
+      ...schedule,
+      id: "schedule-qapaq-reversal-estimated",
+      versionNumber: 2,
+      effectiveDate: "2026-08-20",
+      reason: "prepayment",
+      scheduleSource: "estimated",
+      isAuthoritative: false,
+      triggerEventId: targetEvent.id,
+    };
+    const officialSchedule: DebtScheduleVersion = {
+      ...schedule,
+      id: "schedule-qapaq-reversal-official",
+      versionNumber: 3,
+      effectiveDate: "2026-08-20",
+      reason: "prepayment",
+      scheduleSource: "contractual",
+      isAuthoritative: true,
+      triggerEventId: targetEvent.id,
+    };
+
+    renderOperation("reversal", false, vi.fn(), targetEvent.id, [schedule, estimatedSchedule, officialSchedule], [targetEvent]);
+
+    expect((screen.getByLabelText("Fecha cuota restaurada 1") as HTMLInputElement).value).toBe("2026-09-01");
+    expect((screen.getByLabelText("Total cuota restaurada 1") as HTMLInputElement).value).toBe("1100");
+    expect((screen.getByLabelText("Capital cuota restaurada 2") as HTMLInputElement).value).toBe("700");
   });
 
   it("does not prefill the official form from an old contractual schedule while a bank schedule is pending", () => {

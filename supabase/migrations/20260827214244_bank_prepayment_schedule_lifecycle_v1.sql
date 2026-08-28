@@ -892,3 +892,263 @@ revoke all privileges on function public.update_bank_prepayment_schedule_v1(uuid
   from public, anon, service_role;
 grant execute on function public.update_bank_prepayment_schedule_v1(uuid, uuid, uuid, date, jsonb, text)
   to authenticated;
+
+-- Final Audit 4 fix: reverse against the schedule before the first target-triggered version.
+create or replace function public.reverse_debt_event_v1(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_reversal_event_id uuid,
+  p_target_event_id uuid,
+  p_event_date date,
+  p_description text,
+  p_schedule_installments jsonb,
+  p_schedule_notes text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_person text;
+  v_debt public.debts%rowtype;
+  v_target public.debt_events%rowtype;
+  v_existing_reversal public.debt_events%rowtype;
+  v_existing_schedule public.debt_schedule_versions%rowtype;
+  v_target_schedule public.debt_schedule_versions%rowtype;
+  v_previous_schedule public.debt_schedule_versions%rowtype;
+  v_first_target_schedule_version integer;
+  v_target_has_schedule boolean := false;
+  v_reversal public.debt_events%rowtype;
+  v_description text := pg_catalog.btrim(p_description);
+  v_current_principal numeric;
+begin
+  if v_user_id is null then
+    raise exception 'AUTH_REQUIRED';
+  end if;
+
+  select hm.display_name into v_person
+    from public.household_members as hm
+   where hm.household_id = p_household_id
+     and hm.user_id = v_user_id;
+  if not found or v_person is null or pg_catalog.btrim(v_person) = '' then
+    raise exception 'HOUSEHOLD_ACCESS_DENIED';
+  end if;
+
+  if p_household_id is null
+     or p_debt_id is null
+     or p_reversal_event_id is null
+     or p_target_event_id is null
+     or p_event_date is null
+     or v_description is null
+     or v_description = ''
+     or p_schedule_installments is null
+     or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' then
+    raise exception 'INVALID_DEBT_REVERSAL';
+  end if;
+
+  -- Locate target first, lock both advisory keys, then re-read the target.
+  select e.* into v_target
+    from public.debt_events as e
+   where e.id = p_target_event_id
+     and e.debt_id = p_debt_id
+     and e.household_id = p_household_id;
+  if not found then
+    raise exception 'DEBT_EVENT_NOT_FOUND';
+  end if;
+
+  perform private.debt2b2_lock_operation(v_target.movement_id, p_reversal_event_id);
+
+  select d.* into v_debt
+    from public.debts as d
+   where d.id = p_debt_id
+     and d.household_id = p_household_id
+   for update;
+  if not found then
+    raise exception 'DEBT_NOT_FOUND';
+  end if;
+
+  select e.* into v_target
+    from public.debt_events as e
+   where e.id = p_target_event_id
+     and e.debt_id = p_debt_id
+     and e.household_id = p_household_id
+   for update;
+  if not found then
+    raise exception 'DEBT_EVENT_NOT_FOUND';
+  end if;
+  if v_target.event_type not in ('payment', 'principal_prepayment', 'payoff', 'installment_advance') then
+    raise exception 'DEBT_EVENT_TYPE_UNSUPPORTED';
+  end if;
+  if p_event_date < v_target.event_date then
+    raise exception 'INVALID_DEBT_REVERSAL';
+  end if;
+
+  select s.* into v_target_schedule
+    from public.debt_schedule_versions as s
+   where s.debt_id = p_debt_id
+     and s.household_id = p_household_id
+     and s.trigger_event_id = p_target_event_id
+   order by s.version_number desc
+   limit 1
+   for update;
+  v_target_has_schedule := found;
+
+  select e.* into v_existing_reversal
+    from public.debt_events as e
+   where e.id = p_reversal_event_id
+   for update;
+
+  if found then
+    if v_existing_reversal.household_id is distinct from p_household_id
+       or v_existing_reversal.debt_id is distinct from p_debt_id
+       or v_existing_reversal.event_type is distinct from 'reversal'
+       or v_existing_reversal.reversal_of_event_id is distinct from p_target_event_id
+       or v_existing_reversal.event_date is distinct from p_event_date
+       or v_existing_reversal.cash_amount is distinct from 0::numeric
+       or v_existing_reversal.principal_delta is distinct from 0::numeric
+       or v_existing_reversal.interest_paid is distinct from 0::numeric
+       or v_existing_reversal.fees_paid is distinct from 0::numeric
+       or v_existing_reversal.insurance_paid is distinct from 0::numeric
+       or v_existing_reversal.other_cost_paid is distinct from 0::numeric
+       or v_existing_reversal.breakdown_complete is distinct from false
+       or v_existing_reversal.movement_id is not null
+       or v_existing_reversal.description is distinct from v_description then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    select s.* into v_existing_schedule
+      from public.debt_schedule_versions as s
+     where s.trigger_event_id = p_reversal_event_id
+       and s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+     order by s.version_number desc
+     limit 1;
+
+    if v_target_has_schedule then
+      if not found
+         or pg_catalog.jsonb_array_length(p_schedule_installments) = 0
+         or private.debt2b2_canonical_schedule(p_schedule_installments)
+              is distinct from private.debt2b2_persisted_schedule(v_existing_schedule.id)
+         or v_existing_schedule.notes is distinct from coalesce(p_schedule_notes, '') then
+        raise exception 'DEBT_EVENT_ID_CONFLICT';
+      end if;
+    elsif pg_catalog.jsonb_array_length(p_schedule_installments) <> 0
+       or coalesce(p_schedule_notes, '') <> '' then
+      raise exception 'DEBT_EVENT_ID_CONFLICT';
+    end if;
+
+    return private.debt2b2_reversal_result(p_reversal_event_id, true);
+  end if;
+
+  if v_debt.is_archived then
+    raise exception 'DEBT_ARCHIVED';
+  end if;
+  if v_debt.status = 'refinanced' then
+    raise exception 'DEBT_NOT_ACTIVE';
+  end if;
+  if exists (
+    select 1
+      from public.debt_events as r
+     where r.debt_id = p_debt_id
+       and r.household_id = p_household_id
+       and r.event_type = 'reversal'
+       and r.reversal_of_event_id = p_target_event_id
+  ) then
+    raise exception 'DEBT_EVENT_ALREADY_REVERSED';
+  end if;
+
+  if v_target_has_schedule and pg_catalog.jsonb_array_length(p_schedule_installments) = 0 then
+    raise exception 'DEBT_REVERSAL_SCHEDULE_REQUIRED';
+  end if;
+  if not v_target_has_schedule and pg_catalog.jsonb_array_length(p_schedule_installments) > 0 then
+    raise exception 'DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED';
+  end if;
+  if not v_target_has_schedule and coalesce(p_schedule_notes, '') <> '' then
+    raise exception 'DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED';
+  end if;
+
+  if v_target.movement_id is not null then
+    perform 1
+      from public.movements as m
+     where m.id = v_target.movement_id
+       and m.household_id = p_household_id
+     for update;
+    if not found then
+      raise exception 'DEBT_MOVEMENT_CONFLICT';
+    end if;
+  end if;
+
+  insert into public.debt_events (
+    id, debt_id, household_id, event_date, event_type, cash_amount,
+    principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid,
+    breakdown_complete, movement_id, reversal_of_event_id, description,
+    registered_by_user_id
+  ) values (
+    p_reversal_event_id, p_debt_id, p_household_id, p_event_date, 'reversal',
+    0, 0, 0, 0, 0, 0, false, null, p_target_event_id, v_description, v_user_id
+  ) returning * into v_reversal;
+
+  if v_target_has_schedule then
+    select pg_catalog.min(s.version_number)
+      into v_first_target_schedule_version
+      from public.debt_schedule_versions as s
+     where s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+       and s.trigger_event_id = p_target_event_id;
+
+    select s.* into v_previous_schedule
+      from public.debt_schedule_versions as s
+     where s.debt_id = p_debt_id
+       and s.household_id = p_household_id
+       and s.version_number < v_first_target_schedule_version
+     order by s.version_number desc
+     limit 1
+     for update;
+    if not found then
+      raise exception 'DEBT_REVERSAL_SCHEDULE_NOT_FOUND';
+    end if;
+
+    perform private.debt2b2_validate_schedule_v3(
+      p_event_date,
+      'reversal',
+      p_schedule_installments
+    );
+    if private.debt2b2_canonical_schedule(p_schedule_installments)
+         is distinct from private.debt2b2_persisted_schedule(v_previous_schedule.id)
+       then
+      raise exception 'DEBT_REVERSAL_SCHEDULE_CONFLICT';
+    end if;
+
+    -- Restore the exact baseline metadata as well as its rows. The baseline
+    -- may be contractual, reconstructed, estimated, or legacy manual.
+    perform private.debt2b2_create_schedule_v2(
+      p_household_id,
+      p_debt_id,
+      p_reversal_event_id,
+      p_event_date,
+      'reversal',
+      p_schedule_notes,
+      p_schedule_installments,
+      v_user_id,
+      coalesce(v_previous_schedule.schedule_source, 'manual'),
+      coalesce(v_previous_schedule.is_authoritative, false)
+    );
+  end if;
+
+  v_current_principal := private.debt2b2_current_principal(p_household_id, p_debt_id);
+  perform private.debt2b2_reconcile_status(
+    p_household_id,
+    p_debt_id,
+    v_current_principal
+  );
+
+  return private.debt2b2_reversal_result(p_reversal_event_id, false);
+end;
+$function$;
+
+revoke all privileges on function public.reverse_debt_event_v1(uuid, uuid, uuid, uuid, date, text, jsonb, text)
+  from public, anon, service_role;
+grant execute on function public.reverse_debt_event_v1(uuid, uuid, uuid, uuid, date, text, jsonb, text)
+  to authenticated;
