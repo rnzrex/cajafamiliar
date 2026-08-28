@@ -8,10 +8,10 @@ Close the final BANK PREPAYMENT RECALCULATION V1 contractual-coherence blockers 
 
 - Branch: `feat/bank-prepayment-recalculation-v1`.
 - Expected starting HEAD: `3528641bebb77aff05a2d2657f5d48d17b02b985`.
-- Implementation commit: pending; current working tree contains the contractual-coherence fix.
+- Implementation commit: `239b7f2ad001f196c1d48de33fa118f35fa4afb5` (`fix(bank): enforce post-prepayment schedule coherence`), pushed normally.
 - Prior carried-lineage implementation remains in history and must not be redesigned.
 - PR: #66, base `main`, must remain OPEN/DRAFT.
-- Next commit: metadata-only operational-state handoff; no implementation change.
+- Any further commit must be metadata-only operational-state handoff; no implementation change.
 
 ## Constraints
 
@@ -35,7 +35,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 contractual-coherence blockers 
 ## Validation
 
 - `npm test -- --testTimeout=15000`: PASS, 74 files / 1036 tests.
-- Focused carried/LIFO suite (`debtCalculations`, `debtViewModel`, `debtPlanning`, `debtReversalDependencies`): PASS, 4 files / 68 tests.
+- Focused contractual-coherence/client suite (`debtCalculations`, `debtHardened`, `DebtOperationFormUX`, `debtViewModel`): PASS, 4 files / 80 tests.
 - `npm run test:bank-prepayment-simulation`: PASS, 1 file / 18 tests.
 - `npm run test:bank-reconstruction-v4`: PASS, 1 file / 11 tests.
 - `npm run test:bank-external-ai-import`: PASS, 3 files / 29 tests.
@@ -52,9 +52,9 @@ Close the final BANK PREPAYMENT RECALCULATION V1 contractual-coherence blockers 
 ## Delivery
 
 - GitHub authentication was previously verified as `rnzrex` over HTTPS with keyring-backed credentials; no token was exposed.
-- The prior carried-lineage implementation and metadata handoff were pushed normally; the current contractual-coherence changes are not yet committed/pushed.
-- PR #66 body was updated while preserving `draft=true`; it documents the relational carried-lineage architecture, effective reversal behavior, validation counts, and SQL/Docker limitation.
-- Automatic Preview deployments are Git-triggered only; the final branch tip must be verified against its exact SHA before handoff.
+- The prior carried-lineage implementation and the contractual-coherence commit were pushed normally; remote branch SHA is `239b7f2ad001f196c1d48de33fa118f35fa4afb5`.
+- PR #66 body was updated while preserving `state=open` and `draft=true`; it documents the coherence implementation, validation counts, and SQL/Docker limitation.
+- Git-triggered Preview `dpl_2g4Zrh7fdrvVRr8754QJA6nUMXed` is `READY` at `https://cajafamiliar-69ubsst03-renzorex.vercel.app`, branch `feat/bank-prepayment-recalculation-v1`, exact SHA `239b7f2ad001f196c1d48de33fa118f35fa4afb5`, target `null`; no manual deployment was used.
 
 ## Production
 
@@ -63,7 +63,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 contractual-coherence blockers 
 
 ## Next Step
 
-- Commit/push the current contractual-coherence implementation normally, update PR #66 while preserving OPEN/DRAFT, and verify the Git-triggered Preview for the new SHA. Report the SQL gate as blocked by local migration-history drift.
+- Handoff is complete for code publication, PR metadata, and exact-SHA Preview verification. The SQL gate remains blocked by local migration-history drift and must be rerun in a clean/intended SQL execution environment before any Production decision.
 - Do not apply the pending migration to Production, merge PR #66, mark it ready, add Gemini secrets, or deploy Production.
 
 ## Relevant Files
