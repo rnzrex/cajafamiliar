@@ -8,9 +8,9 @@ Close the final BANK PREPAYMENT RECALCULATION V1 reversal-lifecycle blockers on 
 
 - Branch: `feat/bank-prepayment-recalculation-v1`.
 - Base: `main`.
-- HEAD before this fix: `e78baa7126657eaee69f4955bccd074cf7671ebb`.
-- This working tree contains the final blocker implementation on top of that published checkpoint; commit and push are still pending.
-- Working tree was clean before this fix; Git is authoritative for the final SHA.
+- HEAD: `d988db647ec8393619fa4ab5cd8a990f4d0b53b2` (`fix(bank): guard dependent and late reversals`).
+- The implementation commit was pushed normally to `origin/feat/bank-prepayment-recalculation-v1`; no force push.
+- Working tree is clean before this metadata checkpoint.
 
 ## Constraints
 
@@ -45,9 +45,9 @@ Close the final BANK PREPAYMENT RECALCULATION V1 reversal-lifecycle blockers on 
 
 - GitHub connector successfully read and updated PR #66; local `gh auth status` reports its stored CLI token invalid, so no token was exposed and no PAT was requested. Normal Git pushes previously succeeded using the configured Git credential.
 - PR #66: https://github.com/rnzrex/cajafamiliar/pull/66
-- PR state before this uncommitted fix: OPEN, `draft=true`, base `main`, head branch `feat/bank-prepayment-recalculation-v1`, head `e78baa7126657eaee69f4955bccd074cf7671ebb`.
-- PR body already describes the reversal lifecycle blocker; update it after the final commit with the late-reversal and dependency-guard details and current SQL-blocked status.
-- Verify the automatic Vercel Preview after push against the final branch SHA; do not deploy Production manually.
+- PR state before this metadata refresh: OPEN, `draft=true`, base `main`, head branch `feat/bank-prepayment-recalculation-v1`, head `d988db647ec8393619fa4ab5cd8a990f4d0b53b2`.
+- PR body still needs the final late-reversal/dependency-guard details and current SQL-blocked status.
+- Verify the automatic Vercel Preview against `d988db647ec8393619fa4ab5cd8a990f4d0b53b2`; do not deploy Production manually.
 
 ## Production
 
@@ -57,7 +57,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 reversal-lifecycle blockers on 
 
 ## Next Step
 
-- Inspect final diff, commit as `fix(bank): guard dependent and late reversals`, push normally, update PR #66 while keeping it DRAFT, and verify the automatic Preview SHA.
+- Refresh `.ai/STATE.md` metadata, commit it without code changes, push normally, update PR #66 while keeping it DRAFT, and verify the automatic Preview SHA.
 - Do not apply `20260827214244_bank_prepayment_schedule_lifecycle_v1.sql` to Production from this task.
 - Do not merge PR #66 or mark it ready.
 
