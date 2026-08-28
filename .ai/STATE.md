@@ -9,7 +9,8 @@ Close the final BANK PREPAYMENT RECALCULATION V1 blockers on `feat/bank-prepayme
 - Branch: `feat/bank-prepayment-recalculation-v1`.
 - Expected starting HEAD: `c238edc8ddf7c0a392822c3a8885be15b2111ef1`.
 - Current starting remote/local HEAD: `c238edc8ddf7c0a392822c3a8885be15b2111ef1`.
-- Working tree has the uncommitted effective-lineage, carried-state, and regression-test changes for this gate; commit and push normally after validation. Never force-push.
+- Implementation commit: `39271a8451d5e80f84d67d7c292e4ea3c24905ba` (`fix(bank): preserve restored installment state`), pushed normally with no force-push.
+- Working tree is clean before this state-only checkpoint; this metadata update will be committed and pushed normally. Never force-push.
 - PR: #66, base `main`, must remain OPEN/DRAFT.
 
 ## Constraints
@@ -53,7 +54,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 blockers on `feat/bank-prepayme
 
 - GitHub authentication was previously verified as `rnzrex` over HTTPS with keyring-backed credentials; no token was exposed.
 - PR #66: https://github.com/rnzrex/cajafamiliar/pull/66; keep `draft=true`.
-- Previous preview before this gate: `dpl_6LwRTd5j2HMPd1hZ21YAXSzMmsVr`, `https://cajafamiliar-we2kezmn6-renzorex.vercel.app`, READY for the prior pushed SHA. After commit/push, wait for the automatic preview and verify the new exact SHA.
+- Automatic Vercel Preview for implementation SHA `39271a8451d5e80f84d67d7c292e4ea3c24905ba`: `dpl_EqKVejTgT6i6ovphQFu7yBDFGrjx`, `https://cajafamiliar-m8kns2n8l-renzorex.vercel.app`, READY, exact branch/SHA, Preview target `null`.
 
 ## Production
 
@@ -62,7 +63,7 @@ Close the final BANK PREPAYMENT RECALCULATION V1 blockers on `feat/bank-prepayme
 
 ## Next Step
 
-- Review the SQL statically, commit the implementation, update/push operational state and PR #66 body, then verify the automatic Vercel Preview exact branch/SHA. Stop for orchestrator restored-state SQL audit.
+- Implementation, validation, PR update, and automatic Preview verification are complete. Stop for orchestrator restored-state SQL audit.
 - Do not apply the pending migration to Production, merge PR #66, mark it ready, add Gemini secrets, or deploy Production.
 
 ## Relevant Files
