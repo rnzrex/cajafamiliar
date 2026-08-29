@@ -590,14 +590,34 @@ try {
   if (staleScheduleAfter !== `${staleScheduleBefore}|manual_adjustment|0`) throw new Error(`Stale later schedule changed current state: ${staleScheduleBefore} -> ${staleScheduleAfter}`);
 
   console.log("10. Verifying the fixed-schedule guard for open-ended bank loans...");
-  await execSql(withUser(`
-    select public.create_bank_loan_v1(
-      '${ids.household}', '${ids.openDebt}', 'Crédito abierto', 'Banco lifecycle', 'bank_loan', 'PEN',
-      '2026-01-01', '2026-08-27', 1000, 1000, null, null, 'unknown', 'monthly', null, null,
-      null, null, 'Open-ended guard fixture', 'open_ended', 'unknown', null, null, null,
-      jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'unknown', 'financed_amount', 1000), '[]'::jsonb, 'manual', '[]'::jsonb, '[]'::jsonb
-    );
-  `));
+  await execSql(withUser(createBaselineLoanSql(ids.openDebt, "Crédito abierto", {
+    schedule: scheduleRowsForPrincipal(1, 2, 1000),
+    termInstallments: 2,
+  })));
+  const openFixtureBefore = await execSql(`
+    select d.repayment_structure || '|' ||
+           (select count(*)::text from public.bank_loan_profiles p where p.debt_id = '${ids.openDebt}') || '|' ||
+           (select count(*)::text from public.debt_schedule_versions s where s.debt_id = '${ids.openDebt}') || '|' ||
+           (select count(*)::text from public.debt_installments i where i.debt_id = '${ids.openDebt}')
+      from public.debts d
+     where d.id = '${ids.openDebt}';
+  `);
+  if (openFixtureBefore !== "fixed_schedule|1|1|2") throw new Error(`Canonical open-ended fixture was not created intact: ${openFixtureBefore}`);
+  await execSql(`
+    update public.debts
+       set repayment_structure = 'open_ended'
+     where id = '${ids.openDebt}'
+       and household_id = '${ids.household}';
+  `);
+  const openFixtureAfter = await execSql(`
+    select d.repayment_structure || '|' ||
+           (select count(*)::text from public.bank_loan_profiles p where p.debt_id = '${ids.openDebt}') || '|' ||
+           (select count(*)::text from public.debt_schedule_versions s where s.debt_id = '${ids.openDebt}') || '|' ||
+           (select count(*)::text from public.debt_installments i where i.debt_id = '${ids.openDebt}')
+      from public.debts d
+     where d.id = '${ids.openDebt}';
+  `);
+  if (openFixtureAfter !== "open_ended|1|1|2") throw new Error(`Open-ended fixture mutation changed contractual state: ${openFixtureAfter}`);
   await execSql(`
     insert into public.debt_events (
       id, household_id, debt_id, event_date, event_type, cash_amount, principal_delta,
