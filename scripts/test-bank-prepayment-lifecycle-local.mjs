@@ -226,7 +226,7 @@ function createBaselineLoanSql(debtId, name, {
   return `select public.create_bank_loan_v1(
     '${ids.household}', '${debtId}', '${name}', 'Banco lifecycle', 'bank_loan', 'PEN',
     '2026-01-01', '${trackingStartDate}', 1000, 1000, ${termInstallments}, 100, 'fixed', 'monthly', null, '${firstDueDate}',
-    0, null, '', 'fixed_schedule', 'contract_schedule', null, null,
+    0, null, '', 'fixed_schedule', 'contract_schedule', null, null, null,
     jsonb_build_object('loan_subtype', 'personal', 'amortization_method', 'fixed_installment', 'financed_amount', 1000, 'term_installments', ${termInstallments}, 'installments_paid_before_tracking', ${installmentsPaidBeforeTracking}),
     '[]'::jsonb, 'contractual', '${schedule}'::jsonb, '[]'::jsonb
   );`;
