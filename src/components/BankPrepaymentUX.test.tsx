@@ -155,6 +155,9 @@ describe("bank prepayment UX", () => {
     await user.click(screen.getByRole("button", { name: "CALCULAR SIMULACIÓN" }));
     expect(screen.getByText("SIMULACIÓN DE CAJA FAMILIAR")).not.toBeNull();
     expect(screen.getByText("Un prepago independiente puede cambiar el tratamiento del interés del período. Registra el abono y espera/carga el cronograma actualizado del banco.")).not.toBeNull();
+    expect(screen.getByText("Principal después").parentElement?.textContent).toContain("Por confirmar");
+    expect(screen.getByText("Cuotas restantes").parentElement?.textContent).toContain("Por confirmar");
+    expect(screen.queryByLabelText("Vista previa del cronograma estimado después del prepago")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
 
     expect(dataRepository.recordDebtPrepayment).not.toHaveBeenCalled();

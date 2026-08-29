@@ -926,16 +926,18 @@ export function DebtOperationForm({
                     <>
                       <div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-3 text-sm sm:grid-cols-4">
                         <div><p className="text-xs text-slate-500">Principal antes</p><p className="font-black text-slate-900">{currencySymbol} {effectiveSimulation.principalBefore.toFixed(2)}</p></div>
-                        <div><p className="text-xs text-slate-500">Principal después</p><p className="font-black text-emerald-700">{currencySymbol} {(effectiveSimulation.principalAfter ?? 0).toFixed(2)}</p></div>
-                        <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-black text-slate-900">{effectiveSimulation.oldRemainingInstallments} → {effectiveSimulation.newRemainingInstallments}</p></div>
+                        <div><p className="text-xs text-slate-500">Principal después</p><p className="font-black text-emerald-700">{effectiveSimulation.principalAfter == null ? "Por confirmar" : `${currencySymbol} ${effectiveSimulation.principalAfter.toFixed(2)}`}</p></div>
+                        <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-black text-slate-900">{effectiveSimulation.status === "insufficient_data" ? "Por confirmar" : `${effectiveSimulation.oldRemainingInstallments} → ${effectiveSimulation.newRemainingInstallments}`}</p></div>
                         <div><p className="text-xs text-slate-500">Interés estimado</p><p className="font-black text-indigo-800">{effectiveSimulation.estimatedInterestSavings == null ? "Por confirmar" : `${currencySymbol} ${effectiveSimulation.newEstimatedInterest?.toFixed(2)} (ahorro ${effectiveSimulation.estimatedInterestSavings.toFixed(2)})`}</p></div>
                       </div>
-                      <BankSchedulePreview
-                        rows={effectiveSimulation.rows.map((row) => ({ contractualInstallmentNumber: row.contractualInstallmentNumber, dueDate: row.dueDate, principal: row.principal, interest: row.interest, insurance: row.insurance, fees: row.fees, total: row.total, reportedBalance: row.remainingPrincipalBalance }))}
-                        compact
-                        balanceLabel="Saldo de capital estimado"
-                        ariaLabel="Vista previa del cronograma estimado después del prepago"
-                      />
+                      {effectiveSimulation.rows.length > 0 && (
+                        <BankSchedulePreview
+                          rows={effectiveSimulation.rows.map((row) => ({ contractualInstallmentNumber: row.contractualInstallmentNumber, dueDate: row.dueDate, principal: row.principal, interest: row.interest, insurance: row.insurance, fees: row.fees, total: row.total, reportedBalance: row.remainingPrincipalBalance }))}
+                          compact
+                          balanceLabel="Saldo de capital estimado"
+                          ariaLabel="Vista previa del cronograma estimado después del prepago"
+                        />
+                      )}
                       {effectiveSimulation.warnings.length > 0 && <div className="space-y-1 rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-900">{effectiveSimulation.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
                       <label className="flex items-start gap-2 text-sm font-bold text-slate-800">
                         <input type="checkbox" checked={simulationAccepted} onChange={(event) => setSimulationAccepted(event.target.checked)} disabled={!effectiveSimulation.canPersist} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600" />
