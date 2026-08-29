@@ -704,14 +704,14 @@ try {
       debtId: ids.coherenceDebt,
       eventId: ids.coherenceP2Again,
       movementId: "bank-prepayment-v1-coherence-p2-again",
-      eventDate: '2026-09-01',
+      eventDate: '2026-08-31',
       effect: "reduce_term",
       schedule: scheduleRowsForPrincipal(1, 2, 800),
       notes: "Coherence P2 again",
       source: "estimated",
     })}
     select public.update_bank_prepayment_schedule_v1(
-      '${ids.household}', '${ids.coherenceDebt}', '${ids.coherenceP2Again}', '2026-09-01',
+      '${ids.household}', '${ids.coherenceDebt}', '${ids.coherenceP2Again}', '2026-08-31',
       '${scheduleRowsForPrincipal(1, 2, 800)}'::jsonb, 'Coherence P2 again official'
     );
   `));
