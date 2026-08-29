@@ -1,5 +1,5 @@
-import type { Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion, DebtKind, DebtStatus, DebtPaymentFrequency, Category } from "../types";
-import { currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, allocatedAmountForInstallment } from "./debtCalculations";
+import type { Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtScheduleVersion, DebtKind, DebtStatus, DebtPaymentFrequency, Category } from "../types";
+import { currentDebtPrincipal, currentDebtScheduleVersion, effectiveDebtEvents, effectiveInstallmentAllocations, totalAllocatedAmountForInstallment } from "./debtCalculations";
 
 export function translateDebtError(error: unknown): string {
   if (error instanceof Error) {
@@ -28,8 +28,12 @@ export function translateDebtError(error: unknown): string {
       DEBT_EVENT_NOT_FOUND: "El registro de deuda especificado no existe.",
       DEBT_EVENT_TYPE_UNSUPPORTED: "Tipo de registro de deuda no soportado.",
       DEBT_NOT_BANK_LOAN: "Esta actualización solo está disponible para créditos bancarios.",
+      DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED: "Esta acción solo está disponible para créditos bancarios con cronograma fijo.",
+      DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE: "Este prepago ya no es el último cambio contractual del crédito. Actualiza los datos antes de cargar el cronograma del banco.",
+      DEBT_PREPAYMENT_SCHEDULE_NOT_CURRENT: "El cronograma del banco no coincide con el principal actual del crédito. Carga una versión vigente que incorpore los pagos posteriores.",
       DEBT_SCHEDULE_NOT_FOUND: "No se encontró el cronograma generado por esta operación.",
       DEBT_EVENT_ALREADY_REVERSED: "Este registro ya ha sido revertido previamente.",
+      DEBT_REVERSAL_HAS_LATER_DEPENDENCIES: "No puedes revertir este registro porque existen operaciones posteriores que dependen de él. Revierte primero los registros más recientes.",
       DEBT_REVERSAL_SCHEDULE_REQUIRED: "La reversión de este registro requiere un nuevo cronograma de cuotas.",
       DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED: "La reversión no permite un nuevo cronograma.",
       DEBT_REVERSAL_SCHEDULE_CONFLICT: "El cronograma restaurado debe coincidir con la versión anterior registrada.",
@@ -121,7 +125,8 @@ export function formatEventType(eventType: string): string {
 export function getInstallmentProgress(
   installment: DebtInstallment,
   allocations: DebtEventInstallmentAllocation[],
-  events: DebtEvent[]
+  events: DebtEvent[],
+  carriedAllocations: DebtInstallmentCarriedAllocation[] = []
 ) {
   if (installment.isPaidBeforeTracking) {
     return {
@@ -131,7 +136,7 @@ export function getInstallmentProgress(
       progressPercent: 100,
     };
   }
-  const allocated = allocatedAmountForInstallment(installment.id, allocations, events);
+  const allocated = totalAllocatedAmountForInstallment(installment, allocations, events, carriedAllocations);
   const expected = installment.expectedAmount ?? 0;
   const isPaid = expected > 0 ? allocated >= expected : allocated > 0;
   return {
@@ -331,7 +336,8 @@ export function validateDebtAllocations(
   installments: DebtInstallment[],
   cashAmount: number,
   persistedAllocations: DebtEventInstallmentAllocation[] = [],
-  debtEvents: DebtEvent[] = []
+  debtEvents: DebtEvent[] = [],
+  persistedCarriedAllocations: DebtInstallmentCarriedAllocation[] = []
 ): { valid: boolean; error?: string } {
   if (!Number.isFinite(cashAmount) || cashAmount <= 0) {
     return { valid: false, error: "El monto de efectivo debe ser un número válido mayor a cero." };
@@ -365,7 +371,7 @@ export function validateDebtAllocations(
       return { valid: false, error: `La cuota contractual #${inst.contractualInstallmentNumber ?? inst.installmentNumber} ya estaba pagada antes de Caja Familiar.` };
     }
 
-    const alreadyAllocated = allocatedAmountForInstallment(inst.id, persistedAllocations, debtEvents);
+    const alreadyAllocated = totalAllocatedAmountForInstallment(inst, persistedAllocations, debtEvents, persistedCarriedAllocations);
     const expectedAmount = inst.expectedAmount;
     if (expectedAmount != null && Number.isFinite(expectedAmount)) {
       const remaining = Math.max(0, expectedAmount - alreadyAllocated);

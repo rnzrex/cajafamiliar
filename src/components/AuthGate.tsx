@@ -10,6 +10,23 @@ type MembershipState = "idle" | "checking" | "authorized" | "denied" | "provisio
 type RemoteStatus = "connected" | "problem" | null;
 
 const offlineAccessMessage = "Este dispositivo todavía no tiene una copia verificada para usar Caja Familiar sin conexión. Conéctate a internet al menos una vez.";
+const authRequestTimeoutMs = 15_000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  return new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => reject(new Error("AUTH_REQUEST_TIMEOUT")), timeoutMs);
+    void promise.then(
+      (value) => {
+        window.clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error: unknown) => {
+        window.clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
 
 export function AuthGate() {
   if (!isSupabaseConfigured || !supabase) return <App />;
@@ -229,7 +246,10 @@ function ConfiguredAuthGate({ client }: { client: SupabaseClient }) {
     setIsSubmitting(true);
     setLoginError(null);
     try {
-      const { data, error } = await client.auth.signInWithPassword({ email, password });
+      const { data, error } = await withTimeout(
+        client.auth.signInWithPassword({ email, password }),
+        authRequestTimeoutMs,
+      );
       if (error || !data.session) {
         setLoginError("No se pudo iniciar sesión. Revisa tu correo y contraseña.");
         return;

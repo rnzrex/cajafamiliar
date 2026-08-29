@@ -1,19 +1,23 @@
 import { useState } from "react";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 import type { Debt, DebtEvent, DebtInstallment, DebtScheduleVersion } from "../types.js";
-import { updateDebtContractualSchedule } from "../services/dataRepository.js";
+import { updateBankPrepaymentSchedule, updateDebtContractualSchedule } from "../services/dataRepository.js";
+import type { DebtScheduleUpdateResult } from "../services/dataRepository.js";
 import { makeUuid } from "../utils/storage.js";
 import { localDateString } from "../utils/date.js";
 import { translateDebtError } from "../utils/debtViewModel.js";
 import { getDebtScheduleLifecycleState } from "../utils/debtPlanning.js";
+import { hasLaterEffectiveDebtFundEvent } from "../utils/debtCalculations.js";
 
 interface ScheduleDraftRow {
+  contractualInstallmentNumber: string;
   dueDate: string;
   expectedAmount: string;
   expectedPrincipal: string;
   expectedInterest: string;
   expectedFees: string;
   expectedInsurance: string;
+  reportedBalance: string;
 }
 
 interface DebtScheduleUpdateFormProps {
@@ -21,31 +25,37 @@ interface DebtScheduleUpdateFormProps {
   debtEvents: DebtEvent[];
   installments: DebtInstallment[];
   scheduleVersions: DebtScheduleVersion[];
+  mode?: "generic" | "prepayment_schedule";
+  prepaymentEventId?: string | null;
   canWriteDebt?: boolean;
-  onSaved: () => Promise<void>;
+  onSaved: (result: DebtScheduleUpdateResult) => Promise<void> | void;
   onCancel: () => void;
   setToast: (toast: { message: string; type: "success" | "error" }) => void;
 }
 
 function asDraftRow(installment: DebtInstallment): ScheduleDraftRow {
   return {
+    contractualInstallmentNumber: installment.contractualInstallmentNumber == null ? "" : String(installment.contractualInstallmentNumber),
     dueDate: installment.dueDate,
     expectedAmount: installment.expectedAmount == null ? "" : String(installment.expectedAmount),
     expectedPrincipal: installment.expectedPrincipal == null ? "" : String(installment.expectedPrincipal),
     expectedInterest: installment.expectedInterest == null ? "" : String(installment.expectedInterest),
     expectedFees: installment.expectedFees == null ? "" : String(installment.expectedFees),
     expectedInsurance: installment.expectedInsurance == null ? "" : String(installment.expectedInsurance),
+    reportedBalance: installment.reportedBalance == null ? "" : String(installment.reportedBalance),
   };
 }
 
 function blankRow(): ScheduleDraftRow {
   return {
+    contractualInstallmentNumber: "",
     dueDate: "",
     expectedAmount: "",
     expectedPrincipal: "",
     expectedInterest: "",
     expectedFees: "",
     expectedInsurance: "",
+    reportedBalance: "",
   };
 }
 
@@ -54,20 +64,33 @@ export function DebtScheduleUpdateForm({
   debtEvents,
   installments,
   scheduleVersions,
+  mode = "generic",
+  prepaymentEventId = null,
   canWriteDebt = true,
   onSaved,
   onCancel,
   setToast,
 }: DebtScheduleUpdateFormProps) {
+  const isPrepaymentSchedule = mode === "prepayment_schedule";
   const scheduleLifecycle = getDebtScheduleLifecycleState(debt.id, debtEvents, scheduleVersions);
   const hasPendingBankSchedule = debt.debtKind === "bank_loan" && scheduleLifecycle.pendingBankSchedule;
   const currentSchedule = scheduleLifecycle.currentSchedule;
   const currentInstallments = installments
     .filter((installment) => installment.debtId === debt.id && installment.scheduleVersionId === currentSchedule?.id)
     .sort((a, b) => a.installmentNumber - b.installmentNumber);
-  const [eventDate, setEventDate] = useState(localDateString(new Date()));
+  const prepaymentEvent = prepaymentEventId
+    ? debtEvents.find((event) => event.id === prepaymentEventId) ?? null
+    : null;
+  const hasLaterEffectiveFundEvent = isPrepaymentSchedule
+    && prepaymentEvent != null
+    && hasLaterEffectiveDebtFundEvent(prepaymentEvent, debtEvents);
+  const [eventDate, setEventDate] = useState(
+    isPrepaymentSchedule
+      ? prepaymentEvent?.eventDate ?? currentSchedule?.effectiveDate ?? localDateString(new Date())
+      : localDateString(new Date())
+  );
   const [reason, setReason] = useState<"rate_change" | "manual_adjustment">("manual_adjustment");
-  const [rows, setRows] = useState<ScheduleDraftRow[]>(() => currentInstallments.map(asDraftRow));
+  const [rows, setRows] = useState<ScheduleDraftRow[]>(() => isPrepaymentSchedule ? [] : currentInstallments.map(asDraftRow));
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [eventId] = useState(() => makeUuid());
@@ -97,19 +120,38 @@ export function DebtScheduleUpdateForm({
       ].map(Number);
       return {
         installmentNumber: index + 1,
+        ...(row.contractualInstallmentNumber.trim() === "" ? {} : { contractualInstallmentNumber: Number(row.contractualInstallmentNumber) }),
         dueDate: row.dueDate,
         expectedAmount: values[0],
         expectedPrincipal: values[1],
         expectedInterest: values[2],
         expectedFees: values[3],
         expectedInsurance: values[4],
+        ...(row.reportedBalance.trim() === "" ? {} : { reportedBalance: Number(row.reportedBalance) }),
       };
     });
+
+    if (isPrepaymentSchedule && !prepaymentEventId) {
+      setToast({ message: "No se encontró el prepago asociado al cronograma oficial.", type: "error" });
+      return;
+    }
+
+    const hasExplicitContractualNumber = normalized.some((row) => row.contractualInstallmentNumber != null);
+    const hasMissingContractualNumber = normalized.some((row) => row.contractualInstallmentNumber == null);
+    if (hasExplicitContractualNumber && hasMissingContractualNumber) {
+      setToast({ message: "Todas las cuotas deben tener número contractual, o ninguna debe tenerlo.", type: "error" });
+      return;
+    }
+
+    const seenContractualNumbers = new Set<number>();
+    let lastContractualNumber: number | null = null;
 
     for (let index = 0; index < normalized.length; index += 1) {
       const row = normalized[index];
       const components = row.expectedPrincipal + row.expectedInterest + row.expectedFees + row.expectedInsurance;
       const draft = rows[index];
+      const contractualNumber = row.contractualInstallmentNumber ?? null;
+      const reportedBalance = row.reportedBalance ?? null;
       const hasAllAmounts = [
         draft.expectedAmount,
         draft.expectedPrincipal,
@@ -127,26 +169,40 @@ export function DebtScheduleUpdateForm({
         row.expectedInterest < 0 ||
         row.expectedFees < 0 ||
         row.expectedInsurance < 0 ||
+        (contractualNumber != null && (!Number.isInteger(contractualNumber) || contractualNumber <= 0 || seenContractualNumbers.has(contractualNumber) || (lastContractualNumber != null && contractualNumber <= lastContractualNumber))) ||
+        (reportedBalance != null && (!Number.isFinite(reportedBalance) || reportedBalance < 0)) ||
         Math.abs(components - row.expectedAmount) > 0.01 ||
         (index > 0 && row.dueDate <= normalized[index - 1].dueDate)
       ) {
         setToast({ message: `La cuota #${index + 1} tiene importes o fecha inválidos.`, type: "error" });
         return;
       }
+      if (contractualNumber != null) {
+        seenContractualNumbers.add(contractualNumber);
+        lastContractualNumber = contractualNumber;
+      }
     }
 
     setSubmitting(true);
     try {
-      await updateDebtContractualSchedule({
-        debtId: debt.id,
-        eventId,
-        eventDate,
-        reason,
-        scheduleInstallments: normalized,
-        scheduleNotes: notes.trim() || null,
-      });
-      setToast({ message: "Cronograma contractual actualizado correctamente.", type: "success" });
-      await onSaved();
+      const result = isPrepaymentSchedule
+        ? await updateBankPrepaymentSchedule({
+            debtId: debt.id,
+            prepaymentEventId: prepaymentEventId!,
+            effectiveDate: eventDate,
+            scheduleInstallments: normalized,
+            scheduleNotes: notes.trim() || null,
+          })
+        : await updateDebtContractualSchedule({
+            debtId: debt.id,
+            eventId,
+            eventDate,
+            reason,
+            scheduleInstallments: normalized,
+            scheduleNotes: notes.trim() || null,
+          });
+      setToast({ message: isPrepaymentSchedule ? "Cronograma oficial del prepago guardado correctamente." : "Cronograma contractual actualizado correctamente.", type: "success" });
+      await onSaved(result);
     } catch (error) {
       setToast({ message: translateDebtError(error), type: "error" });
     } finally {
@@ -162,7 +218,7 @@ export function DebtScheduleUpdateForm({
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div>
-            <h2 className="text-2xl font-bold text-slate-900">Actualizar cronograma oficial</h2>
+            <h2 className="text-2xl font-bold text-slate-900">{isPrepaymentSchedule ? "Cargar cronograma oficial del prepago" : "Actualizar cronograma oficial"}</h2>
             <p className="text-sm text-slate-500">{debt.name} · {debt.creditorName}</p>
           </div>
         </div>
@@ -171,30 +227,56 @@ export function DebtScheduleUpdateForm({
         <div className="mb-6 flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">
           <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" />
           <p>
-            Esta acción agrega una nueva versión contractual y un evento de auditoría sin modificar el principal. No representa una refinanciación: un nuevo contrato debe registrarse como una deuda nueva. {hasPendingBankSchedule ? "La versión precargada es la última conocida y no se considera vigente hasta guardar el cronograma posterior." : "La versión precargada es la vigente actualmente."}
+            {isPrepaymentSchedule
+              ? "Esta acción reemplaza la proyección del prepago por el cronograma que entregó el banco. Conserva el evento original del prepago y no modifica el principal ni crea un movimiento nuevo."
+              : `Esta acción agrega una nueva versión contractual y un evento de auditoría sin modificar el principal. No representa una refinanciación: un nuevo contrato debe registrarse como una deuda nueva. ${hasPendingBankSchedule ? "La versión precargada es la última conocida y no se considera vigente hasta guardar el cronograma posterior." : "La versión precargada es la vigente actualmente."}`}
           </p>
         </div>
 
+      {isPrepaymentSchedule && (
+        <div className="mb-6 space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          <p className="font-semibold">Ingresa aquí únicamente el nuevo cronograma que te entregó el banco. La estimación anterior se muestra solo como referencia y no será convertida automáticamente en contractual.</p>
+          {hasLaterEffectiveFundEvent && (
+            <p role="alert" className="rounded-xl border border-amber-300 bg-amber-100 p-3 font-bold">
+              HAY PAGOS POSTERIORES A ESTE PREPAGO. El cronograma que cargues debe estar actualizado después de esos pagos y su capital pendiente debe coincidir con el saldo actual.
+            </p>
+          )}
+          {currentSchedule && currentInstallments.length > 0 ? (
+            <div className="rounded-xl border border-amber-200 bg-white/70 p-3">
+              <p className="font-bold">Referencia de solo lectura · {currentSchedule.scheduleSource === "estimated" ? "Estimado" : currentSchedule.scheduleSource === "contractual" ? "Contractual" : currentSchedule.scheduleSource === "reconstructed" ? "Reconstruido" : "Manual"}</p>
+              <div className="mt-2 space-y-1 text-xs text-slate-700">
+                {currentInstallments.map((installment) => (
+                  <p key={installment.id}>Cuota #{installment.contractualInstallmentNumber ?? installment.installmentNumber} · vence {installment.dueDate} · total {installment.expectedAmount == null ? "Por confirmar" : installment.expectedAmount.toFixed(2)}</p>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs">No hay un cronograma anterior disponible para mostrar como referencia.</p>
+          )}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-6">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className={`grid grid-cols-1 gap-4 ${isPrepaymentSchedule ? "" : "sm:grid-cols-2"}`}>
           <div>
             <label className="block text-sm font-semibold text-slate-700">Fecha efectiva *</label>
             <input type="date" required value={eventDate} onChange={(event) => setEventDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900" />
           </div>
-          <div>
-            <label className="block text-sm font-semibold text-slate-700">Motivo *</label>
-            <select value={reason} onChange={(event) => setReason(event.target.value as typeof reason)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900">
-              <option value="manual_adjustment">Reprogramación / ajuste contractual</option>
-              <option value="rate_change">Cambio de tasa contractual</option>
-            </select>
-          </div>
+          {!isPrepaymentSchedule && <div>
+              <label className="block text-sm font-semibold text-slate-700">Motivo *</label>
+              <select value={reason} onChange={(event) => setReason(event.target.value as typeof reason)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900">
+                <option value="manual_adjustment">Reprogramación / ajuste contractual</option>
+                <option value="rate_change">Cambio de tasa contractual</option>
+              </select>
+            </div>}
         </div>
 
         <div className="space-y-3 rounded-2xl border border-slate-200 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-lg font-bold text-slate-900">Cuotas contractuales</h3>
-              <p className="text-xs text-slate-500">La suma de capital, interés, comisiones y seguros debe coincidir con el total.</p>
+            <p className="text-xs text-slate-500">La suma de capital, interés, comisiones y seguros debe coincidir con el total. Los campos contractuales permiten conservar el número de cuota del banco y el saldo reportado por el banco.</p>
+            <p className="text-xs text-slate-500">No siempre corresponde al saldo de capital.</p>
             </div>
             <button type="button" onClick={() => setRows((current) => [...current, blankRow()])} className="rounded-xl bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100">
               Agregar cuota
@@ -204,13 +286,15 @@ export function DebtScheduleUpdateForm({
           {rows.length === 0 && <p className="rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-900">No hay cuotas cargadas. Agrega las cuotas entregadas por el banco.</p>}
 
           {rows.map((row, index) => (
-            <div key={index} className="grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-3 lg:grid-cols-7">
+            <div key={index} className="grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-3 lg:grid-cols-9">
               <div className="text-sm font-bold text-slate-700">Cuota #{index + 1}</div>
               <input aria-label={`Fecha cuota ${index + 1}`} type="date" value={row.dueDate} onChange={(event) => updateRow(index, "dueDate", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
+              <input aria-label={`Número contractual cuota ${index + 1}`} type="number" min="1" step="1" placeholder="N° banco" value={row.contractualInstallmentNumber} onChange={(event) => updateRow(index, "contractualInstallmentNumber", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
               <input aria-label={`Total cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Total" value={row.expectedAmount} onChange={(event) => updateRow(index, "expectedAmount", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
               <input aria-label={`Capital cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={row.expectedPrincipal} onChange={(event) => updateRow(index, "expectedPrincipal", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
               <input aria-label={`Interés cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={row.expectedInterest} onChange={(event) => updateRow(index, "expectedInterest", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
               <input aria-label={`Comisiones cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={row.expectedFees} onChange={(event) => updateRow(index, "expectedFees", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
+              <input aria-label={`Saldo reportado por el banco cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={row.reportedBalance} onChange={(event) => updateRow(index, "reportedBalance", event.target.value)} className="rounded-lg border border-slate-300 px-2 py-2 text-sm" />
               <div className="flex gap-2">
                 <input aria-label={`Seguro cuota ${index + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={row.expectedInsurance} onChange={(event) => updateRow(index, "expectedInsurance", event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm" />
                 <button type="button" onClick={() => setRows((current) => current.filter((_, rowIndex) => rowIndex !== index))} className="rounded-lg px-2 text-sm font-bold text-red-600 hover:bg-red-50" aria-label={`Eliminar cuota ${index + 1}`}>Quitar</button>
@@ -226,8 +310,8 @@ export function DebtScheduleUpdateForm({
 
         <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
           <button type="button" onClick={onCancel} className="rounded-xl px-5 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Cancelar</button>
-          <button type="submit" disabled={submitting || !canWriteDebt} className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50">
-            {submitting ? "Guardando..." : "Guardar cronograma oficial"}
+          <button type="submit" disabled={submitting || !canWriteDebt || rows.length === 0} className="rounded-xl bg-blue-600 px-6 py-2.5 font-bold text-white shadow-md hover:bg-blue-700 disabled:opacity-50">
+            {submitting ? "Guardando..." : isPrepaymentSchedule ? "Guardar cronograma oficial del prepago" : "Guardar cronograma oficial"}
           </button>
         </div>
       </form>

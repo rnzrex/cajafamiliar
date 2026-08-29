@@ -10,8 +10,9 @@ import {
   validateDebtPrepayment,
   validateDebtPayoff,
   validateDebtAllocations,
+  getInstallmentProgress,
 } from "./debtViewModel";
-import type { DebtInstallment, DebtEventInstallmentAllocation, DebtEvent } from "../types";
+import type { DebtInstallment, DebtEventInstallmentAllocation, DebtInstallmentCarriedAllocation, DebtEvent } from "../types";
 
 describe("debtViewModel utilities and pure helpers", () => {
   it("translates known debt errors correctly", () => {
@@ -165,6 +166,64 @@ describe("debtViewModel utilities and pure helpers", () => {
       debtEvents
     );
     expect(exceedAlloc.valid).toBe(false);
+  });
+
+  it("includes carried coverage in progress and client-side allocation overage guards", () => {
+    const installment: DebtInstallment = {
+      id: "i-carried",
+      debtId: "d1",
+      scheduleVersionId: "v1",
+      installmentNumber: 1,
+      dueDate: "2026-01-01",
+      expectedAmount: 100,
+      expectedPrincipal: 80,
+      expectedInterest: 20,
+      expectedFees: 0,
+      expectedInsurance: 0,
+      createdByUserId: "u1",
+      createdAt: "",
+    };
+    const payment: DebtEvent = {
+      id: "e-carried",
+      debtId: "d1",
+      eventDate: "2026-01-01",
+      eventType: "payment",
+      cashAmount: 60,
+      principalDelta: -48,
+      interestPaid: 12,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "m-carried",
+      reversalOfEventId: null,
+      description: "",
+      registeredByUserId: "u1",
+      createdAt: "2026-01-01T00:00:00Z",
+    };
+    const allocation: DebtEventInstallmentAllocation = {
+      id: "a-carried",
+      eventId: payment.id,
+      debtId: "d1",
+      installmentId: installment.id,
+      allocatedAmount: 60,
+      createdByUserId: "u1",
+      createdAt: payment.createdAt,
+    };
+    const carried: DebtInstallmentCarriedAllocation = {
+      id: "c-carried",
+      restoredInstallmentId: installment.id,
+      sourceEventId: payment.id,
+      sourceAllocationId: "a-source",
+      debtId: "d1",
+      householdId: "h1",
+      allocatedAmount: 40,
+      createdByUserId: "u1",
+      createdAt: payment.createdAt,
+    };
+
+    expect(getInstallmentProgress(installment, [allocation], [payment], [carried])).toMatchObject({ allocated: 100, isPaid: true, progressPercent: 100 });
+    expect(validateDebtAllocations([{ installmentId: installment.id, allocatedAmount: 21 }], [installment], 21, [allocation], [payment], [carried]).valid).toBe(false);
   });
 
   it("allows allocation when expectedAmount is null and does not invent remaining=0", () => {

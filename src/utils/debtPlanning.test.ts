@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtScheduleVersion } from "../types";
-import { buildDebtPlanningItems, summarizeDebtPlanningAlerts, summarizeDebtPlanningMonth } from "./debtPlanning";
+import type { Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtScheduleVersion } from "../types";
+import { buildDebtPlanningItems, getBankPrepaymentScheduleTarget, summarizeDebtPlanningAlerts, summarizeDebtPlanningMonth } from "./debtPlanning";
 import { paymentStatus, paymentAlert } from "./calculations";
 
 
@@ -112,9 +112,10 @@ function build(
   versions: DebtScheduleVersion[],
   installments: DebtInstallment[],
   allocs: DebtEventInstallmentAllocation[],
-  todayKey = "2026-08-21"
+  todayKey = "2026-08-21",
+  carriedAllocations: DebtInstallmentCarriedAllocation[] = []
 ) {
-  return buildDebtPlanningItems(debts, events, versions, installments, allocs, todayKey);
+  return buildDebtPlanningItems(debts, events, versions, installments, allocs, todayKey, carriedAllocations);
 }
 
 afterEach(() => vi.useRealTimers());
@@ -142,6 +143,15 @@ describe("buildDebtPlanningItems — schedule version handling", () => {
     const items = build([debt()], [], [v1, v2], [inst_v1], []);
     // sv2 is current but has no installments; sv1 has installments but is historical
     expect(items).toHaveLength(0);
+  });
+
+  it("includes carried coverage in the planning read model", () => {
+    const covered = installment({ expectedAmount: 900 });
+    const carried: DebtInstallmentCarriedAllocation = { id: "c1", restoredInstallmentId: covered.id, sourceEventId: "e1", sourceAllocationId: "a1", debtId: "d1", householdId: "h1", allocatedAmount: 900, createdByUserId: "u1", createdAt: "" };
+    const sourceEvent = debtEvent({ id: "e1", eventType: "payment" });
+    const items = build([debt()], [sourceEvent], [scheduleVersion()], [covered], [], "2026-08-21", [carried]);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ allocatedAmount: 900, remainingAmount: 0, isCovered: true, dueStatus: "covered" });
   });
 
   it("hides the last known schedule while a bank schedule is pending", () => {
@@ -229,6 +239,52 @@ describe("buildDebtPlanningItems — schedule version handling", () => {
     expect(items[0].installmentId).toBe("i2");
     expect(items[0].scheduleVersionId).toBe("sv2");
     expect(items[0].pendingBankSchedule).toBe(false);
+  });
+});
+
+describe("getBankPrepaymentScheduleTarget", () => {
+  it("targets the estimated schedule trigger instead of guessing by date", () => {
+    const event = debtEvent({
+      id: "e_prepayment",
+      eventType: "principal_prepayment",
+      eventDate: "2026-08-20",
+      prepaymentEffect: "reduce_term",
+      createdAt: "2026-08-20T00:00:00Z",
+    });
+    const version = scheduleVersion({
+      id: "sv_estimated",
+      scheduleSource: "estimated",
+      reason: "prepayment",
+      triggerEventId: event.id,
+    });
+
+    expect(getBankPrepaymentScheduleTarget({ debtId: "d1", debtEvents: [event], scheduleVersions: [version] })).toEqual({
+      eventId: event.id,
+      source: "estimated",
+    });
+  });
+
+  it("targets the latest pending prepayment when no newer schedule exists", () => {
+    const first = debtEvent({
+      id: "e_first",
+      eventType: "principal_prepayment",
+      eventDate: "2026-08-20",
+      prepaymentEffect: "pending_bank_schedule",
+      createdAt: "2026-08-20T00:00:00Z",
+    });
+    const second = debtEvent({
+      id: "e_second",
+      eventType: "payment",
+      eventDate: "2026-08-21",
+      extraPrincipalAmount: 100,
+      prepaymentEffect: "pending_bank_schedule",
+      createdAt: "2026-08-21T00:00:00Z",
+    });
+
+    expect(getBankPrepaymentScheduleTarget({ debtId: "d1", debtEvents: [first, second], scheduleVersions: [scheduleVersion()] })).toEqual({
+      eventId: second.id,
+      source: "pending",
+    });
   });
 });
 

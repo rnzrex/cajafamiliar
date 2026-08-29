@@ -13,6 +13,7 @@ interface BankSchedulePreviewProps {
   rows: BankSchedulePreviewRow[];
   compact?: boolean;
   showBalance?: boolean;
+  balanceLabel?: string;
   ariaLabel?: string;
 }
 
@@ -24,14 +25,14 @@ function rowAmount(value: number | null): string {
   return value == null ? "—" : amount(value);
 }
 
-function ScheduleDetail({ row, showBalance }: { row: BankSchedulePreviewRow; showBalance: boolean }) {
+function ScheduleDetail({ row, showBalance, balanceLabel }: { row: BankSchedulePreviewRow; showBalance: boolean; balanceLabel: string }) {
   return (
     <div className="grid grid-cols-2 gap-2 border-t border-slate-200 pt-2 text-xs text-slate-700 sm:grid-cols-4">
       <span>Capital: <strong>{rowAmount(row.principal)}</strong></span>
       <span>Interés: <strong>{rowAmount(row.interest)}</strong></span>
       <span>Seguro: <strong>{rowAmount(row.insurance)}</strong></span>
       <span>Gastos: <strong>{rowAmount(row.fees)}</strong></span>
-      {showBalance && <span>Saldo: <strong>{rowAmount(row.reportedBalance)}</strong></span>}
+      {showBalance && <span>{balanceLabel}: <strong>{rowAmount(row.reportedBalance)}</strong></span>}
       <span className={showBalance ? "sm:col-span-3" : "sm:col-span-4"}>Total: <strong>{rowAmount(row.total)}</strong></span>
     </div>
   );
@@ -42,7 +43,7 @@ function rowsForDisplay(rows: BankSchedulePreviewRow[], compact: boolean): { row
   return { rows: [...rows.slice(0, 3), rows[rows.length - 1]!], truncated: true };
 }
 
-export function BankSchedulePreview({ rows, compact = false, showBalance = true, ariaLabel = "Vista previa del cronograma importado" }: BankSchedulePreviewProps) {
+export function BankSchedulePreview({ rows, compact = false, showBalance = true, balanceLabel = "Saldo", ariaLabel = "Vista previa del cronograma importado" }: BankSchedulePreviewProps) {
   const display = rowsForDisplay(rows, compact);
   if (rows.length === 0) return null;
 
@@ -56,7 +57,7 @@ export function BankSchedulePreview({ rows, compact = false, showBalance = true,
               <span>Vence {row.dueDate}</span>
               <span>Total {rowAmount(row.total)}</span>
             </summary>
-            <div className="mt-2"><ScheduleDetail row={row} showBalance={showBalance} /></div>
+            <div className="mt-2"><ScheduleDetail row={row} showBalance={showBalance} balanceLabel={balanceLabel} /></div>
           </details>
         ))}
       </div>
@@ -71,7 +72,7 @@ export function BankSchedulePreview({ rows, compact = false, showBalance = true,
               <th className="px-3 py-2">Seguro</th>
               <th className="px-3 py-2">Gastos</th>
               <th className="px-3 py-2">Total</th>
-              {showBalance && <th className="px-3 py-2">Saldo</th>}
+              {showBalance && <th className="px-3 py-2">{balanceLabel}</th>}
             </tr>
           </thead>
           <tbody>

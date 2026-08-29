@@ -5,6 +5,7 @@ import type {
   DebtEvent,
   DebtScheduleVersion,
   DebtInstallment,
+  DebtInstallmentCarriedAllocation,
   DebtEventInstallmentAllocation,
   DebtCollateral,
   FinancialAccount,
@@ -33,11 +34,14 @@ import {
 import { formatDebtMoney } from "../utils/debtPresentation";
 import { deletePristineDebt, setDebtArchived, updateDebtMetadata, updateDebtTerms } from "../services/dataRepository";
 import { buildDebtPaymentLedger } from "../utils/debtPaymentLedger";
+import { estimatedBalanceAfterRow } from "../utils/debtEstimatedBalance.js";
 import { getCurrencySymbol, formatReviewDate, validateDebtFinancialTerms } from "../utils/debtFormMode";
 import { calculateNextPayment } from "../utils/debtNextPayment";
 import { effectivePeriodicRateFromTea } from "../utils/debtInterestEngine";
 import { getAmortizationMethodLabel, getBankLoanSubtypeLabel } from "../utils/bankCreditFormHelper";
 import { resolveContractualDetailNextPayment } from "../utils/debtDetailNextPayment";
+import { getBankPrepaymentScheduleTarget } from "../utils/debtPlanning";
+import { getDebtReversalDependencyState } from "../utils/debtReversalDependencies.js";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 
@@ -48,6 +52,7 @@ interface DebtDetailModalProps {
   scheduleVersions: DebtScheduleVersion[];
   installments: DebtInstallment[];
   allocations: DebtEventInstallmentAllocation[];
+  carriedAllocations?: DebtInstallmentCarriedAllocation[];
   collaterals: DebtCollateral[];
   accounts: FinancialAccount[];
   categories: Category[];
@@ -76,6 +81,7 @@ export function DebtDetailModal({
   scheduleVersions,
   installments,
   allocations,
+  carriedAllocations = [],
   collaterals,
   accounts,
   categories,
@@ -296,6 +302,15 @@ export function DebtDetailModal({
   const debtCollaterals = collaterals.filter((c) => c.debtId === debt.id);
   const bankProfile = bankLoanProfiles?.find((profile) => profile.debtId === debt.id) ?? null;
   const bankInsurances = (debtInsuranceTerms || []).filter((insurance) => insurance.debtId === debt.id);
+  const estimatedPrepaymentSchedule = debt.debtKind === "bank_loan"
+    && currentSchedule?.reason === "prepayment"
+    && currentSchedule.scheduleSource === "estimated"
+    && currentSchedule.isAuthoritative === false;
+  const bankPrepaymentScheduleTarget = getBankPrepaymentScheduleTarget({
+    debtId: debt.id,
+    debtEvents: allEventsForDebt,
+    scheduleVersions,
+  });
   const ledgerResult = buildDebtPaymentLedger(debt, allEventsForDebt);
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
@@ -836,8 +851,8 @@ export function DebtDetailModal({
                     <div><p className="text-xs text-slate-500">TEA</p><p className="font-bold">{debt.teaPercent == null ? "—" : `${debt.teaPercent}%`}</p></div>
                     <div><p className="text-xs text-slate-500">TCEA</p><p className="font-bold">{debt.tceaPercent == null ? "—" : `${debt.tceaPercent}%`}</p></div>
                     <div><p className="text-xs text-slate-500">Cuotas pagadas antes</p><p className="font-bold">{bankProfile.installmentsPaidBeforeTracking ?? 0}</p></div>
-                    <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : debtInstallments.filter((installment) => !installment.isPaidBeforeTracking && !getInstallmentProgress(installment, allocations, debtEvents).isPaid).length}</p></div>
-                    <div><p className="text-xs text-slate-500">Total pendiente conocido</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : `${currencySymbol} ${debtInstallments.filter((installment) => !installment.isPaidBeforeTracking).reduce((total, installment) => Math.max(0, total + (installment.expectedAmount ?? 0) - getInstallmentProgress(installment, allocations, debtEvents).allocated), 0).toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : debtInstallments.filter((installment) => !installment.isPaidBeforeTracking && !getInstallmentProgress(installment, allocations, debtEvents, carriedAllocations).isPaid).length}</p></div>
+                    <div><p className="text-xs text-slate-500">Total pendiente conocido</p><p className="font-bold">{pendingBankSchedule ? "Por confirmar" : `${currencySymbol} ${debtInstallments.filter((installment) => !installment.isPaidBeforeTracking).reduce((total, installment) => Math.max(0, total + (installment.expectedAmount ?? 0) - getInstallmentProgress(installment, allocations, debtEvents, carriedAllocations).allocated), 0).toFixed(2)}`}</p></div>
                   </div>
                   <div>
                     <p className="text-xs font-bold uppercase text-slate-500">Seguros</p>
@@ -856,10 +871,21 @@ export function DebtDetailModal({
                   <p className="text-xs font-black uppercase tracking-wider text-amber-800">CRONOGRAMA PENDIENTE DEL BANCO</p>
                   <p className="mt-1 text-sm font-semibold text-amber-950">Se registró un abono extraordinario, pero todavía no hay una versión posterior autoritativa. No se están inventando cuotas nuevas.</p>
                   {canWriteDebt && debt.debtKind === "bank_loan" && (
-                    <button type="button" onClick={() => onOpenOperation("schedule_update")} className="mt-3 rounded-xl bg-amber-200 px-4 py-2 text-sm font-bold text-amber-950 hover:bg-amber-300">
+                    <button type="button" disabled={!bankPrepaymentScheduleTarget} onClick={() => bankPrepaymentScheduleTarget && onOpenOperation("schedule_update", bankPrepaymentScheduleTarget.eventId)} className="mt-3 rounded-xl bg-amber-200 px-4 py-2 text-sm font-bold text-amber-950 hover:bg-amber-300 disabled:opacity-50">
                       Cargar cronograma oficial
                     </button>
                   )}
+                </section>
+              )}
+
+              {estimatedPrepaymentSchedule && !pendingBankSchedule && (
+                <section className="rounded-2xl border border-indigo-300 bg-indigo-50 p-5 shadow-sm">
+                  <p className="text-xs font-black uppercase tracking-wider text-indigo-800">CRONOGRAMA ESTIMADO DESPUÉS DEL PREPAGO</p>
+                  <p className="mt-1 text-sm font-semibold text-indigo-950">Esta proyección conserva el abono aplicado al principal, pero no es contractual ni sustituye el cronograma que entregue el banco.</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button type="button" onClick={() => setActiveTab("schedule")} className="rounded-xl bg-indigo-200 px-4 py-2 text-sm font-bold text-indigo-950 hover:bg-indigo-300">Ver simulación</button>
+                    {canWriteDebt && <button type="button" disabled={!bankPrepaymentScheduleTarget} onClick={() => bankPrepaymentScheduleTarget && onOpenOperation("schedule_update", bankPrepaymentScheduleTarget.eventId)} className="rounded-xl bg-white px-4 py-2 text-sm font-bold text-indigo-800 ring-1 ring-indigo-300 hover:bg-indigo-50 disabled:opacity-50">Cargar cronograma oficial</button>}
+                  </div>
                 </section>
               )}
 
@@ -1183,8 +1209,9 @@ export function DebtDetailModal({
                     <p className="text-sm text-slate-500 italic">No hay cuotas registradas en el cronograma actual.</p>
                   ) : (
                     <div className="space-y-3">
-                      {debtInstallments.map((inst) => {
-                        const prog = getInstallmentProgress(inst, allocations, debtEvents);
+                      {debtInstallments.map((inst, installmentIndex) => {
+                        const prog = getInstallmentProgress(inst, allocations, debtEvents, carriedAllocations);
+                        const estimatedBalance = estimatedBalanceAfterRow(debtInstallments, installmentIndex);
                         return (
                           <div
                             key={inst.id}
@@ -1211,6 +1238,11 @@ export function DebtDetailModal({
                                   ? `${currencySymbol} ${inst.expectedAmount.toFixed(2)} (Principal: ${inst.expectedPrincipal ?? 0} | Interés: ${inst.expectedInterest ?? 0})`
                                   : "Por confirmar"}
                               </p>
+                              {currentSchedule?.scheduleSource === "estimated" && (
+                                <p className="mt-1 text-xs font-semibold text-indigo-700">
+                                  Saldo de capital estimado: {estimatedBalance == null ? "Por confirmar" : `${currencySymbol} ${estimatedBalance.toFixed(2)}`}
+                                </p>
+                              )}
                             </div>
                             <div className="text-right">
                               <p className="text-sm font-bold text-slate-900">
@@ -1283,6 +1315,10 @@ export function DebtDetailModal({
                     );
                     return allEventsForDebt.map((e) => {
                       const isReversed = reversedEventIds.has(e.id);
+                      const reversalDependencyState = !isReversed && e.eventType !== "reversal"
+                        ? getDebtReversalDependencyState({ targetEvent: e, events: allEventsForDebt, scheduleVersions })
+                        : null;
+                      const reversalBlocked = reversalDependencyState?.hasDependencies === true;
                       return (
                         <div
                           key={e.id}
@@ -1305,13 +1341,22 @@ export function DebtDetailModal({
                             {e.description && <p className="mt-1 text-xs text-slate-600">{e.description}</p>}
                           </div>
                           {!isReversed && e.eventType !== "reversal" && canWriteDebt && debt.status === "active" && (
-                            <button
-                              type="button"
-                              onClick={() => onOpenOperation("reversal", e.id)}
-                              className="flex items-center gap-1 rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50 shadow-sm"
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" /> Revertir
-                            </button>
+                            <div className="flex flex-col items-end gap-1">
+                              <button
+                                type="button"
+                                disabled={reversalBlocked}
+                                title={reversalBlocked ? "Revierte primero los registros posteriores." : undefined}
+                                onClick={() => onOpenOperation("reversal", e.id)}
+                                className="flex items-center gap-1 rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-700 shadow-sm hover:bg-red-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-500"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" /> Revertir
+                              </button>
+                              {reversalBlocked && (
+                                <span className="max-w-56 text-right text-[11px] font-semibold text-amber-700">
+                                  Revierte primero los registros posteriores.
+                                </span>
+                              )}
+                            </div>
                           )}
                         </div>
                       );

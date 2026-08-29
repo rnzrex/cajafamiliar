@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthGate } from "./AuthGate";
 
@@ -123,5 +123,27 @@ describe("AuthGate membership revalidation", () => {
 
     await waitFor(() => expect(screen.getByTestId("remote-status").textContent).toBe("connected"));
     expect(screen.getByTestId("app")).toBeTruthy();
+  });
+
+  it("returns to the login state when sign-in never resolves", async () => {
+    authTestState.client.auth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    authTestState.client.auth.signInWithPassword.mockReturnValue(new Promise(() => {}));
+    render(<AuthGate />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Ingresar" })).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("Correo"), { target: { value: "ux-diagnostic-invalid@example.invalid" } });
+    fireEvent.change(screen.getByLabelText("Contraseña"), { target: { value: "not-a-real-password" } });
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Ingresar" }));
+        await vi.advanceTimersByTimeAsync(15_000);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(screen.getByRole("alert").textContent).toContain("No se pudo iniciar sesión");
+    expect(screen.getByRole("button", { name: "Ingresar" })).toBeTruthy();
   });
 });

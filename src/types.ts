@@ -244,6 +244,18 @@ export interface DebtEventInstallmentAllocation {
   createdAt: string;
 }
 
+export interface DebtInstallmentCarriedAllocation {
+  id: string;
+  restoredInstallmentId: string;
+  sourceEventId: string;
+  sourceAllocationId: string;
+  debtId: string;
+  householdId: string;
+  allocatedAmount: number;
+  createdByUserId: string;
+  createdAt: string;
+}
+
 export interface DebtCollateral {
   id: string;
   debtId: string;
@@ -683,6 +695,7 @@ export interface AppData {
   debtScheduleVersions: DebtScheduleVersion[];
   debtInstallments: DebtInstallment[];
   debtEventInstallmentAllocations: DebtEventInstallmentAllocation[];
+  debtInstallmentCarriedAllocations?: DebtInstallmentCarriedAllocation[];
   debtCollaterals: DebtCollateral[];
   creditCardProfiles: CreditCardProfile[];
   creditCardEntries: CreditCardEntry[];

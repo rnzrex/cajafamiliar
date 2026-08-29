@@ -353,7 +353,35 @@ try {
   }
 
   console.log("11. O, P, Q: Testing finalization payment, pending schedule and contractual update...");
-  const v3Schedule = '[{"installment_number":1,"due_date":"2026-05-01","expected_amount":100,"expected_principal":80,"expected_interest":20,"expected_fees":0,"expected_insurance":0}]';
+  const v3PrincipalBefore = Number(await execSql(`
+    select private.debt2b2_current_principal(
+      '${ids.householdA}',
+      '${ids.debtA}'
+    );
+  `));
+  if (!Number.isFinite(v3PrincipalBefore)) {
+    throw new Error(`Could not read live principal before Step 11 payment: ${v3PrincipalBefore}`);
+  }
+  const v3PrincipalReduction = 100 + 50;
+  const v3PostPaymentPrincipal = Math.round((v3PrincipalBefore - v3PrincipalReduction) * 100) / 100;
+  if (!(v3PostPaymentPrincipal > 0)) {
+    throw new Error(`Step 11 post-payment principal must remain positive: ${v3PostPaymentPrincipal}`);
+  }
+  const v3ScheduleRows = [{
+    installment_number: 1,
+    due_date: "2026-05-01",
+    expected_amount: v3PostPaymentPrincipal,
+    expected_principal: v3PostPaymentPrincipal,
+    expected_interest: 0,
+    expected_fees: 0,
+    expected_insurance: 0,
+  }];
+  const v3Schedule = JSON.stringify(v3ScheduleRows);
+  const v3SchedulePrincipalSum = Math.round(v3ScheduleRows.reduce((sum, row) => sum + row.expected_principal, 0) * 100) / 100;
+  if (Math.abs(v3SchedulePrincipalSum - v3PostPaymentPrincipal) > 0.01) {
+    throw new Error(`Step 11 schedule principal mismatch: ${v3SchedulePrincipalSum} vs ${v3PostPaymentPrincipal}`);
+  }
+  console.log(`11 fixture: principal before ${v3PrincipalBefore.toFixed(2)} - reduction ${v3PrincipalReduction.toFixed(2)} = post-payment ${v3PostPaymentPrincipal.toFixed(2)}; schedule principal sum ${v3SchedulePrincipalSum.toFixed(2)}`);
   await execSql(withUser(`
     select public.record_debt_payment_v3(
       '${ids.householdA}', '${ids.debtA}', '${ids.v3PaymentEvent}', 'mov-v3-pay-1',

@@ -3,9 +3,10 @@ import React from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Debt, DebtInstallment, DebtScheduleVersion, FinancialAccount } from "../types.js";
+import type { Debt, DebtEvent, DebtInstallment, DebtScheduleVersion, FinancialAccount } from "../types.js";
 import * as dataRepository from "../services/dataRepository.js";
-import { DebtOperationForm } from "./DebtOperationForm.js";
+import { DebtOperationForm, validateStrictScheduleDraft } from "./DebtOperationForm.js";
+import { DebtScheduleUpdateForm } from "./DebtScheduleUpdateForm.js";
 
 vi.mock("../services/dataRepository", async () => {
   const actual = await vi.importActual<typeof dataRepository>("../services/dataRepository.js");
@@ -14,7 +15,9 @@ vi.mock("../services/dataRepository", async () => {
     recordDebtPayment: vi.fn().mockResolvedValue({}),
     recordDebtPrepayment: vi.fn().mockResolvedValue({}),
     recordDebtInstallmentAdvance: vi.fn().mockResolvedValue({}),
+    reverseDebtEvent: vi.fn().mockResolvedValue({}),
     updateDebtContractualSchedule: vi.fn().mockResolvedValue({}),
+    updateBankPrepaymentSchedule: vi.fn().mockResolvedValue({}),
   };
 });
 
@@ -104,9 +107,12 @@ const installments: DebtInstallment[] = [
 ];
 
 function renderOperation(
-  operationType: "payment" | "prepayment" | "installment_advance" | "schedule_update",
+  operationType: "payment" | "prepayment" | "payoff" | "reversal" | "installment_advance" | "schedule_update",
   paymentWithExtraPrincipal = false,
-  setToast = vi.fn()
+  setToast = vi.fn(),
+  targetEventId?: string,
+  customScheduleVersions: DebtScheduleVersion[] = [schedule],
+  customDebtEvents: DebtEvent[] = [],
 ) {
   return render(
     <DebtOperationForm
@@ -114,8 +120,9 @@ function renderOperation(
       operationType={operationType}
       paymentWithExtraPrincipal={paymentWithExtraPrincipal}
       installments={installments}
-      scheduleVersions={[schedule]}
-      debtEvents={[]}
+      scheduleVersions={customScheduleVersions}
+      debtEvents={customDebtEvents}
+      targetEventId={targetEventId}
       accounts={[account]}
       categories={[]}
       currentPrincipal={10000}
@@ -146,6 +153,13 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     await user.type(amounts[1], "800");
     await user.clear(amounts[2]);
     await user.type(amounts[2], "2000");
+    expect(screen.getByRole("button", { name: /^REDUCIR PLAZO/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^REDUCIR CUOTA/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^TENGO EL NUEVO CRONOGRAMA DEL BANCO/ })).not.toBeNull();
+    expect(screen.getByRole("button", { name: /^BANCO TODAVÍA NO ME ENTREGA/ })).not.toBeNull();
+    expect(screen.queryByText("Efecto solicitado al banco")).toBeNull();
+    expect(screen.queryByText("El banco entregó el cronograma posterior a este abono")).toBeNull();
+    expect(screen.queryByText("Estimado por Caja Familiar")).toBeNull();
     await user.clear(amounts[3]);
     await user.type(amounts[3], "350");
     await user.clear(amounts[5]);
@@ -196,7 +210,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     await user.type(amounts[1], "300");
     await user.clear(amounts[2]);
     await user.type(amounts[2], "100");
-    await user.selectOptions(screen.getAllByRole("combobox")[1], "reduce_term");
+    await user.click(screen.getByRole("button", { name: /^REDUCIR PLAZO/ }));
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
 
     expect(dataRepository.recordDebtPayment).not.toHaveBeenCalled();
@@ -215,8 +229,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     await user.type(amounts[0], "500");
     await user.clear(amounts[1]);
     await user.type(amounts[1], "500");
-    await user.selectOptions(screen.getAllByRole("combobox")[1], "reduce_installment");
-    await user.click(screen.getByRole("checkbox", { name: "El acreedor me entregó un nuevo cronograma" }));
+    await user.click(screen.getByRole("button", { name: /^TENGO EL NUEVO CRONOGRAMA DEL BANCO/ }));
     await user.click(screen.getByRole("button", { name: "Agregar cuota al nuevo cronograma" }));
 
     const dueDate = screen.getByLabelText("Fecha nueva cuota 1");
@@ -230,7 +243,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
     await user.click(screen.getByRole("button", { name: "Confirmar operación" }));
 
     await waitFor(() => expect(dataRepository.recordDebtPrepayment).toHaveBeenCalledWith(expect.objectContaining({
-      prepaymentEffect: "reduce_installment",
+      prepaymentEffect: "other",
       scheduleInstallments: [{
         installmentNumber: 1,
         dueDate: "2026-09-01",
@@ -288,5 +301,232 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
         expect.objectContaining({ installmentNumber: 2, dueDate: installments[1].dueDate }),
       ],
     })));
+  });
+
+  it("starts the official post-prepayment form empty and routes an explicitly entered schedule to the dedicated RPC", async () => {
+    const user = userEvent.setup();
+    const prepaymentEvent: DebtEvent = {
+      id: "prepayment-qapaq-1",
+      debtId: debt.id,
+      eventDate: "2026-08-20",
+      eventType: "principal_prepayment",
+      cashAmount: 500,
+      principalDelta: -500,
+      interestPaid: 0,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "movement-qapaq-1",
+      reversalOfEventId: null,
+      description: "Prepago",
+      registeredByUserId: "user-1",
+      createdAt: "2026-08-20T00:00:00Z",
+      prepaymentEffect: "pending_bank_schedule",
+    };
+    const estimatedSchedule: DebtScheduleVersion = {
+      ...schedule,
+      id: "schedule-qapaq-estimated",
+      versionNumber: 2,
+      effectiveDate: "2026-08-20",
+      reason: "prepayment",
+      scheduleSource: "estimated",
+      isAuthoritative: false,
+      triggerEventId: prepaymentEvent.id,
+    };
+    const estimatedInstallments = installments.map((row) => ({ ...row, scheduleVersionId: estimatedSchedule.id }));
+    render(
+      <DebtOperationForm
+        debt={debt}
+        operationType="schedule_update"
+        targetEventId={prepaymentEvent.id}
+        installments={estimatedInstallments}
+        scheduleVersions={[schedule, estimatedSchedule]}
+        debtEvents={[prepaymentEvent]}
+        accounts={[account]}
+        categories={[]}
+        currentPrincipal={9500}
+        persistedAllocations={[]}
+        onSaved={vi.fn().mockResolvedValue(undefined)}
+        onCancel={vi.fn()}
+        setToast={vi.fn()}
+      />
+    );
+
+    const saveButton = screen.getByRole("button", { name: "Guardar cronograma oficial del prepago" });
+    expect((saveButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Ingresa aquí únicamente el nuevo cronograma que te entregó el banco. La estimación anterior se muestra solo como referencia y no será convertida automáticamente en contractual.")).toBeTruthy();
+    expect(screen.getByText("Referencia de solo lectura · Estimado")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Agregar cuota" }));
+    await user.clear(screen.getByLabelText("Fecha cuota 1"));
+    await user.type(screen.getByLabelText("Fecha cuota 1"), "2026-09-01");
+    await user.type(screen.getByLabelText("Total cuota 1"), "1100");
+    await user.type(screen.getByLabelText("Capital cuota 1"), "800");
+    await user.type(screen.getByLabelText("Interés cuota 1"), "250");
+    await user.type(screen.getByLabelText("Comisiones cuota 1"), "0");
+    await user.type(screen.getByLabelText("Seguro cuota 1"), "50");
+    await user.click(saveButton);
+
+    await waitFor(() => expect(dataRepository.updateBankPrepaymentSchedule).toHaveBeenCalledWith(expect.objectContaining({
+      debtId: debt.id,
+      prepaymentEventId: prepaymentEvent.id,
+      effectiveDate: prepaymentEvent.eventDate,
+    })));
+    expect(dataRepository.updateDebtContractualSchedule).not.toHaveBeenCalled();
+  });
+
+  it("restores the schedule before the first target version when estimated and official versions share the trigger", () => {
+    const targetEvent: DebtEvent = {
+      id: "prepayment-qapaq-reversal-target",
+      debtId: debt.id,
+      eventDate: "2026-08-20",
+      eventType: "principal_prepayment",
+      cashAmount: 500,
+      principalDelta: -500,
+      interestPaid: 0,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "movement-qapaq-reversal-target",
+      reversalOfEventId: null,
+      description: "Prepago para reversión",
+      registeredByUserId: "user-1",
+      createdAt: "2026-08-20T00:00:00Z",
+      prepaymentEffect: "reduce_term",
+    };
+    const estimatedSchedule: DebtScheduleVersion = {
+      ...schedule,
+      id: "schedule-qapaq-reversal-estimated",
+      versionNumber: 2,
+      effectiveDate: "2026-08-20",
+      reason: "prepayment",
+      scheduleSource: "estimated",
+      isAuthoritative: false,
+      triggerEventId: targetEvent.id,
+    };
+    const officialSchedule: DebtScheduleVersion = {
+      ...schedule,
+      id: "schedule-qapaq-reversal-official",
+      versionNumber: 3,
+      effectiveDate: "2026-08-20",
+      reason: "prepayment",
+      scheduleSource: "contractual",
+      isAuthoritative: true,
+      triggerEventId: targetEvent.id,
+    };
+
+    renderOperation("reversal", false, vi.fn(), targetEvent.id, [schedule, estimatedSchedule, officialSchedule], [targetEvent]);
+
+    expect((screen.getByLabelText("Fecha cuota restaurada 1") as HTMLInputElement).value).toBe("2026-09-01");
+    expect((screen.getByLabelText("Total cuota restaurada 1") as HTMLInputElement).value).toBe("1100");
+    expect((screen.getByLabelText("Capital cuota restaurada 2") as HTMLInputElement).value).toBe("700");
+  });
+
+  it("allows a restored baseline row whose due date is before the reversal date", () => {
+    const restoredRow = {
+      installmentNumber: 1,
+      dueDate: "2026-08-01",
+      expectedAmount: "1000",
+      expectedPrincipal: "800",
+      expectedInterest: "150",
+      expectedFees: "20",
+      expectedInsurance: "30",
+      reportedBalance: "",
+    };
+
+    expect(validateStrictScheduleDraft([restoredRow], "2026-08-28", "reversal")).toBeNull();
+    expect(validateStrictScheduleDraft([restoredRow], "2026-08-28", "schedule")).toContain("inválidos");
+  });
+
+  it("does not prefill the official form from an old contractual schedule while a bank schedule is pending", () => {
+    const pendingEvent: DebtEvent = {
+      id: "prepayment-qapaq-pending",
+      debtId: debt.id,
+      eventDate: "2026-08-20",
+      eventType: "principal_prepayment",
+      cashAmount: 500,
+      principalDelta: -500,
+      interestPaid: 0,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "movement-qapaq-pending",
+      reversalOfEventId: null,
+      description: "Prepago pendiente",
+      registeredByUserId: "user-1",
+      createdAt: "2026-08-21T00:00:00Z",
+      prepaymentEffect: "pending_bank_schedule",
+    };
+    render(
+      <DebtScheduleUpdateForm
+        debt={debt}
+        debtEvents={[pendingEvent]}
+        installments={installments}
+        scheduleVersions={[schedule]}
+        mode="prepayment_schedule"
+        prepaymentEventId={pendingEvent.id}
+        onSaved={vi.fn()}
+        onCancel={vi.fn()}
+        setToast={vi.fn()}
+      />
+    );
+
+    expect((screen.getByRole("button", { name: "Guardar cronograma oficial del prepago" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByLabelText("Fecha cuota 1")).toBeNull();
+    expect(screen.getByText("Referencia de solo lectura · Contractual")).toBeTruthy();
+  });
+
+  it("warns when the official prepayment schedule has later effective fund events", () => {
+    const prepaymentEvent: DebtEvent = {
+      id: "prepayment-qapaq-warning",
+      debtId: debt.id,
+      eventDate: "2026-08-20",
+      eventType: "principal_prepayment",
+      cashAmount: 500,
+      principalDelta: -500,
+      interestPaid: 0,
+      feesPaid: 0,
+      insurancePaid: 0,
+      otherCostPaid: 0,
+      breakdownComplete: true,
+      movementId: "movement-qapaq-warning",
+      reversalOfEventId: null,
+      description: "Prepago con pago posterior",
+      registeredByUserId: "user-1",
+      createdAt: "2026-08-20T00:00:00Z",
+      prepaymentEffect: "pending_bank_schedule",
+    };
+    const laterPayment: DebtEvent = {
+      ...prepaymentEvent,
+      id: "payment-qapaq-warning",
+      eventDate: "2026-08-21",
+      eventType: "payment",
+      cashAmount: 100,
+      principalDelta: -80,
+      movementId: "movement-qapaq-warning-payment",
+      description: "Pago posterior",
+      createdAt: "2026-08-21T00:00:00Z",
+      prepaymentEffect: null,
+    };
+    render(
+      <DebtScheduleUpdateForm
+        debt={debt}
+        debtEvents={[prepaymentEvent, laterPayment]}
+        installments={installments}
+        scheduleVersions={[schedule]}
+        mode="prepayment_schedule"
+        prepaymentEventId={prepaymentEvent.id}
+        onSaved={vi.fn()}
+        onCancel={vi.fn()}
+        setToast={vi.fn()}
+      />
+    );
+
+    const warning = screen.getByRole("alert");
+    expect(warning.textContent).toContain("HAY PAGOS POSTERIORES A ESTE PREPAGO");
+    expect(warning.textContent).toContain("su capital pendiente debe coincidir con el saldo actual");
   });
 });

@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination.js";
 import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors.js";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentAdvanceInput, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource, BankLoanProfile, DebtInsuranceTerms, BankInterestDayCountBasis, BankDueDateAdjustmentRule, BankInstallmentTotalMode, BankReportedBalanceKind } from "../types.js";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtInstallmentAdvanceInput, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource, BankLoanProfile, DebtInsuranceTerms, BankInterestDayCountBasis, BankDueDateAdjustmentRule, BankInstallmentTotalMode, BankReportedBalanceKind } from "../types.js";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage.js";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient.js";
 
@@ -9,6 +9,29 @@ export type AppDataLoadSource = "local" | "remote" | "fallback";
 export interface AppDataLoadResult {
   data: AppData;
   source: AppDataLoadSource;
+}
+
+async function fetchOptionalDebtInstallmentCarriedAllocationsRows(): Promise<Record<string, unknown>[]> {
+  try {
+    return await fetchAllSupabaseRows<Record<string, unknown>>({
+      supabase: supabase!,
+      table: "debt_installment_carried_allocations",
+      householdId,
+      orders: [
+        { column: "created_at", ascending: true },
+        { column: "id", ascending: true },
+      ],
+    });
+  } catch (error) {
+    if (error instanceof RemoteAppDataLoadError && error.failedResource === "debt_installment_carried_allocations") {
+      const cause = error.causeError as { code?: string; message?: string; details?: string; hint?: string; status?: number } | undefined;
+      const text = [cause?.message, cause?.details, cause?.hint].filter(Boolean).join(" ");
+      if (cause?.code === "42P01" || cause?.status === 404 || /does not exist|schema cache|could not find the table/i.test(text)) {
+        return [];
+      }
+    }
+    throw error;
+  }
 }
 
 export * from "./dataRepositoryErrors.js";
@@ -59,6 +82,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       debtScheduleVersionsRows,
       debtInstallmentsRows,
       debtAllocationsRows,
+      debtInstallmentCarriedAllocationsRows,
       debtCollateralsRows,
       creditCardProfilesRows,
       creditCardEntriesRows,
@@ -182,6 +206,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
           { column: "id", ascending: true },
         ],
       }),
+      fetchOptionalDebtInstallmentCarriedAllocationsRows(),
       fetchAllSupabaseRows({
         supabase,
         table: "debt_collaterals",
@@ -278,6 +303,7 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       debtScheduleVersions: debtScheduleVersionsRows.map(fromDebtScheduleVersionRow),
       debtInstallments: debtInstallmentsRows.map(fromDebtInstallmentRow),
       debtEventInstallmentAllocations: debtAllocationsRows.map(fromDebtEventInstallmentAllocationRow),
+      debtInstallmentCarriedAllocations: debtInstallmentCarriedAllocationsRows.map(fromDebtInstallmentCarriedAllocationRow),
       debtCollaterals: debtCollateralsRows.map(fromDebtCollateralRow),
       creditCardProfiles: creditCardProfilesRows.map(fromCreditCardProfileRow),
       creditCardEntries: creditCardEntriesRows.map(fromCreditCardEntryRow),
@@ -559,8 +585,12 @@ export type DebtOperationErrorCode =
   | "DEBT_EVENT_NOT_FOUND"
   | "DEBT_EVENT_TYPE_UNSUPPORTED"
   | "DEBT_NOT_BANK_LOAN"
+  | "DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED"
+  | "DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE"
+  | "DEBT_PREPAYMENT_SCHEDULE_NOT_CURRENT"
   | "DEBT_SCHEDULE_NOT_FOUND"
   | "DEBT_EVENT_ALREADY_REVERSED"
+  | "DEBT_REVERSAL_HAS_LATER_DEPENDENCIES"
   | "DEBT_REVERSAL_SCHEDULE_REQUIRED"
   | "DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED"
   | "DEBT_REVERSAL_SCHEDULE_CONFLICT"
@@ -599,6 +629,7 @@ export interface DebtFundOperationResult {
   allocations: DebtEventInstallmentAllocation[];
   scheduleVersion: DebtScheduleVersion | null;
   installments: DebtInstallment[];
+  carriedAllocations: DebtInstallmentCarriedAllocation[];
 }
 
 export interface DebtReversalResult {
@@ -607,6 +638,7 @@ export interface DebtReversalResult {
   event: DebtEvent;
   scheduleVersion: DebtScheduleVersion | null;
   installments: DebtInstallment[];
+  carriedAllocations: DebtInstallmentCarriedAllocation[];
 }
 
 export interface DebtScheduleUpdateInput {
@@ -618,12 +650,21 @@ export interface DebtScheduleUpdateInput {
   scheduleNotes?: string | null;
 }
 
+export interface BankPrepaymentScheduleUpdateInput {
+  debtId: string;
+  prepaymentEventId: string;
+  effectiveDate: string;
+  scheduleInstallments: DebtScheduleInstallmentInput[];
+  scheduleNotes?: string | null;
+}
+
 export interface DebtScheduleUpdateResult {
   idempotentReplay: boolean;
   debt: Debt;
   event: DebtEvent;
   scheduleVersion: DebtScheduleVersion;
   installments: DebtInstallment[];
+  carriedAllocations: DebtInstallmentCarriedAllocation[];
 }
 
 
@@ -913,6 +954,17 @@ export function toDebtScheduleUpdateRpcArgs(input: DebtScheduleUpdateInput) {
   };
 }
 
+export function toBankPrepaymentScheduleUpdateRpcArgs(input: BankPrepaymentScheduleUpdateInput) {
+  return {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_prepayment_event_id: input.prepaymentEventId,
+    p_effective_date: input.effectiveDate,
+    p_schedule_installments: input.scheduleInstallments.map(toDebtScheduleInstallmentRow),
+    p_schedule_notes: input.scheduleNotes ?? null,
+  };
+}
+
 export function toDebtPrepaymentRpcArgs(input: DebtPrepaymentInput) {
   return {
     p_household_id: householdId,
@@ -1012,6 +1064,10 @@ export async function reverseDebtEvent(input: DebtReversalInput): Promise<DebtRe
 
 export async function updateDebtContractualSchedule(input: DebtScheduleUpdateInput): Promise<DebtScheduleUpdateResult> {
   return callDebtOperation("update_debt_contractual_schedule_v1", toDebtScheduleUpdateRpcArgs(input), fromDebtScheduleUpdateResult);
+}
+
+export async function updateBankPrepaymentSchedule(input: BankPrepaymentScheduleUpdateInput): Promise<DebtScheduleUpdateResult> {
+  return callDebtOperation("update_bank_prepayment_schedule_v1", toBankPrepaymentScheduleUpdateRpcArgs(input), fromDebtScheduleUpdateResult);
 }
 
 export class CreditCardOperationError extends Error {
@@ -1365,8 +1421,12 @@ const debtOperationErrorCodes: DebtOperationErrorCode[] = [
   "DEBT_EVENT_NOT_FOUND",
   "DEBT_EVENT_TYPE_UNSUPPORTED",
   "DEBT_NOT_BANK_LOAN",
+  "DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED",
+  "DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE",
+  "DEBT_PREPAYMENT_SCHEDULE_NOT_CURRENT",
   "DEBT_SCHEDULE_NOT_FOUND",
   "DEBT_EVENT_ALREADY_REVERSED",
+  "DEBT_REVERSAL_HAS_LATER_DEPENDENCIES",
   "DEBT_REVERSAL_SCHEDULE_REQUIRED",
   "DEBT_REVERSAL_SCHEDULE_NOT_ALLOWED",
   "DEBT_REVERSAL_SCHEDULE_CONFLICT",
@@ -1393,6 +1453,7 @@ function fromDebtFundOperationResult(row: Record<string, any>): DebtFundOperatio
     allocations: Array.isArray(row.allocations) ? row.allocations.map(fromDebtEventInstallmentAllocationRow) : [],
     scheduleVersion: row.scheduleVersion == null ? null : fromDebtScheduleVersionRow(row.scheduleVersion),
     installments: Array.isArray(row.installments) ? row.installments.map(fromDebtInstallmentRow) : [],
+    carriedAllocations: Array.isArray(row.carriedAllocations) ? row.carriedAllocations.map(fromDebtInstallmentCarriedAllocationRow) : [],
   };
 }
 
@@ -1403,6 +1464,7 @@ function fromDebtReversalResult(row: Record<string, any>): DebtReversalResult {
     event: fromDebtEventRow(row.event),
     scheduleVersion: row.scheduleVersion == null ? null : fromDebtScheduleVersionRow(row.scheduleVersion),
     installments: Array.isArray(row.installments) ? row.installments.map(fromDebtInstallmentRow) : [],
+    carriedAllocations: Array.isArray(row.carriedAllocations) ? row.carriedAllocations.map(fromDebtInstallmentCarriedAllocationRow) : [],
   };
 }
 
@@ -1414,6 +1476,7 @@ function fromDebtScheduleUpdateResult(row: Record<string, any>): DebtScheduleUpd
     event: fromDebtEventRow(row.event),
     scheduleVersion: fromDebtScheduleVersionRow(row.scheduleVersion),
     installments: Array.isArray(row.installments) ? row.installments.map(fromDebtInstallmentRow) : [],
+    carriedAllocations: Array.isArray(row.carriedAllocations) ? row.carriedAllocations.map(fromDebtInstallmentCarriedAllocationRow) : [],
   };
 }
 
@@ -1764,6 +1827,20 @@ function fromDebtEventInstallmentAllocationRow(row: Record<string, any>): DebtEv
     eventId: row.event_id,
     installmentId: row.installment_id,
     debtId: row.debt_id,
+    allocatedAmount: Number(row.allocated_amount),
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromDebtInstallmentCarriedAllocationRow(row: Record<string, any>): DebtInstallmentCarriedAllocation {
+  return {
+    id: row.id,
+    restoredInstallmentId: row.restored_installment_id,
+    sourceEventId: row.source_event_id,
+    sourceAllocationId: row.source_allocation_id,
+    debtId: row.debt_id,
+    householdId: row.household_id,
     allocatedAmount: Number(row.allocated_amount),
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
