@@ -278,6 +278,20 @@ function mutationFingerprintSql(debtId) {
   return `select (select count(*) from public.debt_events where debt_id = '${debtId}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${debtId}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}' and description like '%reversal smoke%');`;
 }
 
+function assertPrincipalPair(actual, expected, message) {
+  const [schedulePrincipalRaw, livePrincipalRaw] = actual.split("|");
+  const schedulePrincipal = Number(schedulePrincipalRaw);
+  const livePrincipal = Number(livePrincipalRaw);
+  if (
+    !Number.isFinite(schedulePrincipal) ||
+    !Number.isFinite(livePrincipal) ||
+    Math.abs(schedulePrincipal - expected) > 0.01 ||
+    Math.abs(livePrincipal - expected) > 0.01
+  ) {
+    throw new Error(`${message}: ${actual}`);
+  }
+}
+
 function currentScheduleIdSql(debtId) {
   return `(select s.id from public.debt_schedule_versions as s where s.debt_id = '${debtId}' order by s.version_number desc limit 1)`;
 }
@@ -684,7 +698,7 @@ try {
     );
   `));
   const coherencePrincipalAfterRestore = await execSql(`select round((select sum(expected_principal) from public.debt_installments where schedule_version_id = (select id from public.debt_schedule_versions where debt_id = '${ids.coherenceDebt}' order by version_number desc limit 1)), 2)::text || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.coherenceDebt}'), 2)::text;`);
-  if (coherencePrincipalAfterRestore !== "900|900") throw new Error(`Reversed P2 did not restore P1 principal coherence: ${coherencePrincipalAfterRestore}`);
+  assertPrincipalPair(coherencePrincipalAfterRestore, 900, "Reversed P2 did not restore P1 principal coherence");
   await execSql(withUser(`
     ${recordPrepaymentSql({
       debtId: ids.coherenceDebt,
@@ -735,7 +749,7 @@ try {
     source: "estimated",
   })));
   const atomicPrepaymentSuccess = await execSql(`select round((select sum(expected_principal) from public.debt_installments where schedule_version_id = (select id from public.debt_schedule_versions where trigger_event_id = '${ids.atomicPrepaymentEvent}' order by version_number desc limit 1)), 2)::text || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.atomicPrepaymentDebt}'), 2)::text;`);
-  if (atomicPrepaymentSuccess !== "900|900") throw new Error(`Matching prepayment schedule was not persisted coherently: ${atomicPrepaymentSuccess}`);
+  assertPrincipalPair(atomicPrepaymentSuccess, 900, "Matching prepayment schedule was not persisted coherently");
 
   await execSql(withUser(createBaselineLoanSql(ids.atomicPaymentDebt, "Crédito atomic payment")));
   const atomicPaymentBefore = await execSql(`select (select count(*) from public.debt_events where debt_id = '${ids.atomicPaymentDebt}') || '|' || (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.atomicPaymentDebt}') || '|' || (select count(*) from public.debt_installments where debt_id = '${ids.atomicPaymentDebt}') || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.atomicPaymentDebt}') || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.atomicPaymentDebt}'), 2)::text;`);
@@ -768,7 +782,7 @@ try {
     scheduleSource: "estimated",
   })));
   const atomicPaymentSuccess = await execSql(`select round((select sum(expected_principal) from public.debt_installments where schedule_version_id = (select id from public.debt_schedule_versions where trigger_event_id = '${ids.atomicPaymentEvent}' order by version_number desc limit 1)), 2)::text || '|' || round(private.debt2b2_current_principal('${ids.household}', '${ids.atomicPaymentDebt}'), 2)::text;`);
-  if (atomicPaymentSuccess !== "820|820") throw new Error(`Matching payment schedule was not persisted coherently: ${atomicPaymentSuccess}`);
+  assertPrincipalPair(atomicPaymentSuccess, 820, "Matching payment schedule was not persisted coherently");
 
   console.log("10d. Requiring official schedules after later regular payments to use the latest date and live principal...");
   await execSql(withUser(`
