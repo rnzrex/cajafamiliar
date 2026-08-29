@@ -263,15 +263,34 @@ function recordPaymentSql({ debtId, eventId, movementId, eventDate = '2026-08-29
 }
 
 function recordAdvanceSql({ debtId, eventId, eventDate = '2026-08-29' }) {
-  return `select public.record_debt_installment_advance_v1(
+  return `with current_schedule as (
+    select s.id
+      from public.debt_schedule_versions as s
+     where s.debt_id = '${debtId}'
+       and s.household_id = '${ids.household}'
+     order by s.version_number desc
+     limit 1
+  ), target_installment as (
+    select i.*
+      from public.debt_installments as i
+      join current_schedule as s on s.id = i.schedule_version_id
+     where i.debt_id = '${debtId}'
+       and i.household_id = '${ids.household}'
+       and i.due_date > '${eventDate}'
+       and i.expected_amount is not null
+     order by i.installment_number
+     limit 1
+  )
+  select public.record_debt_installment_advance_v1(
     '${ids.household}', '${debtId}', '${eventId}', 'advance-${eventId}',
-    '${eventDate}', 100, '${ids.account}', 'Adelanto posterior reversal smoke', 'Pago de deuda',
-    80, 20, 0, 0, 0, true,
+    '${eventDate}', t.expected_amount, '${ids.account}', 'Adelanto posterior reversal smoke', 'Pago de deuda',
+    t.expected_principal, t.expected_interest, t.expected_fees, t.expected_insurance, 0, true,
     jsonb_build_array(jsonb_build_object(
-      'installment_id', (select i.id from public.debt_installments as i where i.debt_id = '${debtId}' order by i.installment_number limit 1),
-      'allocated_amount', 100
+      'installment_id', t.id,
+      'allocated_amount', t.expected_amount
     ))
-  );`;
+  )
+    from target_installment as t;`;
 }
 
 function mutationFingerprintSql(debtId) {
@@ -1123,8 +1142,40 @@ try {
       notes: "Dependency advance P1",
       source: "estimated",
     })}
-    ${recordAdvanceSql({ debtId: ids.dependencyAdvanceDebt, eventId: ids.dependencyAdvanceA2 })}
   `));
+  const advanceFixture = await execSql(`
+    with current_schedule as (
+      select s.*
+        from public.debt_schedule_versions as s
+       where s.debt_id = '${ids.dependencyAdvanceDebt}'
+         and s.household_id = '${ids.household}'
+       order by s.version_number desc
+       limit 1
+    ), target_installment as (
+      select i.*
+        from public.debt_installments as i
+        join current_schedule as s on s.id = i.schedule_version_id
+       where i.debt_id = '${ids.dependencyAdvanceDebt}'
+         and i.household_id = '${ids.household}'
+         and i.due_date > '2026-08-29'
+         and i.expected_amount is not null
+       order by i.installment_number
+       limit 1
+    )
+    select current_schedule.version_number::text || '|' || current_schedule.trigger_event_id::text || '|' || current_schedule.schedule_source || '|' ||
+      target_installment.installment_number::text || '|' || target_installment.due_date::text || '|' ||
+      to_char(target_installment.expected_amount, 'FM999999990.00') || '|' ||
+      to_char(target_installment.expected_principal, 'FM999999990.00') || '|' ||
+      to_char(target_installment.expected_interest, 'FM999999990.00') || '|' ||
+      to_char(target_installment.expected_fees, 'FM999999990.00') || '|' ||
+      to_char(target_installment.expected_insurance, 'FM999999990.00')
+      from current_schedule, target_installment;
+  `);
+  if (advanceFixture !== `2|${ids.dependencyAdvanceP1}|estimated|1|2026-09-01|470.00|450.00|20.00|0.00|0.00`) {
+    throw new Error(`Advance fixture did not target the current P1 schedule: ${advanceFixture}`);
+  }
+  console.log(`19 fixture: current schedule P1 / installment 1 / 2026-09-01 / 470.00 / 450.00 / 20.00 / 0.00 / 0.00`);
+  await execSql(withUser(recordAdvanceSql({ debtId: ids.dependencyAdvanceDebt, eventId: ids.dependencyAdvanceA2 })));
   const advanceDependencyBefore = await execSql(mutationFingerprintSql(ids.dependencyAdvanceDebt));
   await expectSqlError(withUser(reverseDebtSql({
     debtId: ids.dependencyAdvanceDebt,
@@ -1379,7 +1430,7 @@ try {
     })}
   `));
   await execSql(withUser(reverseDebtSql({ debtId: ids.carriedPartialDebt, reversalEventId: ids.carriedPartialR1, targetEventId: ids.carriedPartialP1, schedule: scheduleRows(1, 6) })));
-  const partialInstallmentIdSql = `(select i.id from public.debt_installments as i where i.debt_id = '${ids.carriedPartialDebt}' order by i.installment_number offset 2 limit 1)`;
+  const partialInstallmentIdSql = `(select i.id from public.debt_installments as i where i.debt_id = '${ids.carriedPartialDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.carriedPartialDebt)} and i.installment_number = 3)`;
   const carriedPartialBefore = await execSql(`select ${effectiveCarriedAmountSql(ids.carriedPartialDebt, 'i.id')} || '|' || (select count(*) from public.debt_event_installment_allocations where debt_id = '${ids.carriedPartialDebt}') from public.debt_installments as i where i.debt_id = '${ids.carriedPartialDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.carriedPartialDebt)} and i.installment_number = 3;`);
   if (carriedPartialBefore !== "40|1") throw new Error(`Partial carried coverage was not restored: ${carriedPartialBefore}`);
   await execSql(withUser(recordPaymentSql({
