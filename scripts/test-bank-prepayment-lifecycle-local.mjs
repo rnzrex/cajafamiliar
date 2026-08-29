@@ -554,7 +554,7 @@ try {
       '${ids.household}', '${ids.stalePrepaymentDebt}', '${ids.stalePrepaymentP1}', 'bank-prepayment-v1-stale-p1',
       '2026-08-27', 100, '${ids.account}', 'Prepago stale P1', 'Pago de deuda',
       100, 0, 0, 0, 0, 'reduce_term', true,
-       '${scheduleRowsForPrincipal(7, 2, 900)}'::jsonb, 'Estimación stale P1', 'estimated'
+       '${scheduleRowsForPrincipal(1, 2, 900)}'::jsonb, 'Estimación stale P1', 'estimated'
     );
     select public.record_debt_prepayment_v3(
       '${ids.household}', '${ids.stalePrepaymentDebt}', '${ids.stalePrepaymentP2}', 'bank-prepayment-v1-stale-p2',
@@ -567,7 +567,7 @@ try {
   await expectSqlError(withUser(`
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.stalePrepaymentDebt}', '${ids.stalePrepaymentP1}', '2026-08-27',
-       '${scheduleRowsForPrincipal(7, 2, 900, 900)}'::jsonb, 'Stale P1 must fail'
+       '${scheduleRowsForPrincipal(1, 2, 900, 900)}'::jsonb, 'Stale P1 must fail'
     );
   `), "DEBT_PREPAYMENT_SCHEDULE_TARGET_STALE");
   const stalePrepaymentAfter = await execSql(`select (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.stalePrepaymentDebt}') || '|' || (select prepayment_effect from public.debt_events where id = '${ids.stalePrepaymentP2}') || '|' || (select count(*)::text from public.debt_schedule_versions where debt_id = '${ids.stalePrepaymentDebt}' and trigger_event_id = '${ids.stalePrepaymentP1}' and schedule_source = 'contractual');`);
@@ -836,7 +836,7 @@ try {
       eventId: ids.reversalEstimatedP1,
       movementId: "bank-prepayment-v1-reversal-estimated",
       effect: "reduce_term",
-       schedule: scheduleRowsForPrincipal(7, 2, 900),
+       schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Estimación reversal",
       source: "estimated",
     })}
@@ -887,7 +887,7 @@ try {
       eventId: ids.reversalOfficialP1,
       movementId: "bank-prepayment-v1-reversal-official",
       effect: "other",
-       schedule: scheduleRowsForPrincipal(7, 2, 900, 900),
+       schedule: scheduleRowsForPrincipal(1, 2, 900, 900),
       notes: "Cronograma oficial reversal",
       source: "contractual",
     })}
@@ -916,13 +916,13 @@ try {
       eventId: ids.reversalCriticalP1,
       movementId: "bank-prepayment-v1-reversal-critical",
       effect: "reduce_term",
-       schedule: scheduleRowsForPrincipal(7, 2, 900),
+       schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Estimación critical",
       source: "estimated",
     })}
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.reversalCriticalDebt}', '${ids.reversalCriticalP1}', '2026-08-27',
-       '${scheduleRowsForPrincipal(7, 2, 900, 900)}'::jsonb, 'Cronograma oficial critical'
+       '${scheduleRowsForPrincipal(1, 2, 900, 900)}'::jsonb, 'Cronograma oficial critical'
     );
   `));
   const criticalBeforeReversal = await execSql(`select (select count(*) from public.movements where household_id = '${ids.household}') || '|' || (select count(*) from public.debt_schedule_versions where debt_id = '${ids.reversalCriticalDebt}');`);
@@ -1001,7 +1001,7 @@ try {
     })}
     select public.update_bank_prepayment_schedule_v1(
       '${ids.household}', '${ids.reversalLaterDebt}', '${ids.reversalLaterP1}', '2026-08-27',
-       '${scheduleRowsForPrincipal(7, 2, 900, 900)}'::jsonb, 'Cronograma posterior reversal'
+       '${scheduleRowsForPrincipal(1, 2, 900, 900)}'::jsonb, 'Cronograma posterior reversal'
     );
   `));
   await execSql(withUser(reverseDebtSql({
@@ -1032,7 +1032,7 @@ try {
       eventId: ids.lateReversalP1,
       movementId: "bank-prepayment-v1-reversal-late",
       effect: "reduce_term",
-       schedule: scheduleRowsForPrincipal(7, 2, 900),
+       schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Estimación reversal late",
       source: "estimated",
     })}
@@ -1062,7 +1062,7 @@ try {
       eventId: ids.dependencyPaymentP1,
       movementId: "bank-prepayment-v1-dependency-payment-p1",
       effect: "reduce_term",
-       schedule: scheduleRowsForPrincipal(7, 2, 900),
+       schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Dependency payment P1",
       source: "estimated",
     })}
@@ -1086,7 +1086,7 @@ try {
       eventId: ids.dependencyPrepaymentP1,
       movementId: "bank-prepayment-v1-dependency-prepayment-p1",
       effect: "reduce_term",
-       schedule: scheduleRowsForPrincipal(7, 2, 900),
+       schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Dependency prepayment P1",
       source: "estimated",
     })}
@@ -1119,7 +1119,7 @@ try {
       eventId: ids.dependencyAdvanceP1,
       movementId: "bank-prepayment-v1-dependency-advance-p1",
       effect: "reduce_term",
-      schedule: scheduleRowsForPrincipal(7, 2, 900),
+      schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Dependency advance P1",
       source: "estimated",
     })}
@@ -1143,7 +1143,7 @@ try {
       eventId: ids.dependencyScheduleP1,
       movementId: "bank-prepayment-v1-dependency-schedule-p1",
       effect: "reduce_term",
-      schedule: scheduleRowsForPrincipal(7, 2, 900),
+      schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Dependency schedule P1",
       source: "estimated",
     })}
@@ -1170,7 +1170,7 @@ try {
       eventId: ids.dependencyReversedP1,
       movementId: "bank-prepayment-v1-dependency-reversed-p1",
       effect: "reduce_term",
-      schedule: scheduleRowsForPrincipal(7, 2, 900),
+      schedule: scheduleRowsForPrincipal(1, 2, 900),
       notes: "Dependency reversed P1",
       source: "estimated",
     })}
