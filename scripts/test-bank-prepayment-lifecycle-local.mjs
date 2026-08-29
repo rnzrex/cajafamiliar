@@ -1525,11 +1525,11 @@ try {
   await execSql(withUser(`
     ${createBaselineLoanSql(ids.nestedLineageDebt, "Crédito nested lineage", { termInstallments: 6, schedule: scheduleRows(1, 6) })}
     ${recordPaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageE0, movementId: "bank-prepayment-v1-nested-e0", eventDate: '2026-08-20', cashAmount: 40, principalAmount: 40, allocations: nestedLineageAllocation })}
-    ${recordPrepaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageP1, movementId: "bank-prepayment-v1-nested-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 860), notes: "Nested lineage P1", source: "estimated" })}
+    ${recordPrepaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageP1, movementId: "bank-prepayment-v1-nested-lineage-p1", eventDate: '2026-08-21', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 860), notes: "Nested lineage P1", source: "estimated" })}
   `));
   await execSql(withUser(reverseDebtSql({ debtId: ids.nestedLineageDebt, reversalEventId: ids.nestedLineageR1, targetEventId: ids.nestedLineageP1, eventDate: '2026-08-22', schedule: scheduleRows(1, 6) })));
   await execSql(withUser(`
-    ${recordPrepaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageP2, movementId: "bank-prepayment-v1-nested-p2", eventDate: '2026-08-23', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 860), notes: "Nested lineage P2", source: "estimated" })}
+    ${recordPrepaymentSql({ debtId: ids.nestedLineageDebt, eventId: ids.nestedLineageP2, movementId: "bank-prepayment-v1-nested-lineage-p2", eventDate: '2026-08-23', effect: "reduce_term", schedule: scheduleRowsForPrincipal(1, 6, 860), notes: "Nested lineage P2", source: "estimated" })}
   `));
   await execSql(withUser(reverseDebtSql({ debtId: ids.nestedLineageDebt, reversalEventId: ids.nestedLineageR2, targetEventId: ids.nestedLineageP2, eventDate: '2026-08-24', schedule: scheduleRows(1, 6) })));
   const nestedLineageBefore = await execSql(`select ${effectiveCarriedAmountSql(ids.nestedLineageDebt, 'i.id')} || '|' || (select count(*) from public.debt_installment_carried_allocations where restored_installment_id = i.id) from public.debt_installments as i where i.debt_id = '${ids.nestedLineageDebt}' and i.schedule_version_id = ${currentScheduleIdSql(ids.nestedLineageDebt)} and i.installment_number = 3;`);
