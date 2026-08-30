@@ -51,9 +51,9 @@ Complete the orchestrator audit fix gate for `CAJA FAMILIAR UNIVERSAL DEBT CONTR
 
 ## Delivery
 
-- The audit-fix commit is pushed without force; remote SHA verified as `ef58e5ddb8c4302499c7dcdf5aceb13ad733a21d`.
+- The code-bearing audit-fix commit `ef58e5ddb8c4302499c7dcdf5aceb13ad733a21d` is pushed without force; subsequent commits are metadata-only continuity checkpoints.
 - PR #67 remains OPEN/DRAFT and MERGEABLE.
-- Automatic Preview for the pushed audit-fix SHA is READY at `https://cajafamiliar-o0bfcuf8f-renzorex.vercel.app`; Vercel metadata matches the exact SHA and build/runtime error scan is clean.
+- Automatic Preview for the pushed audit-fix code is READY at `https://cajafamiliar-o0bfcuf8f-renzorex.vercel.app`; Vercel metadata matched the exact code SHA and its build/runtime error scan was clean.
 - No further code changes are planned; stop at this DRAFT/Preview gate and do not apply Production.
 
 ## Production
