@@ -9,8 +9,9 @@ Implement and locally validate `CAJA FAMILIAR UNIVERSAL DEBT CONTRACT ENGINE V1`
 - Branch: `feat/universal-debt-contract-engine-v1`.
 - Authorized base: `86bb5eb4ef1ed8344abfb8f0fbcbcf2eeff0622f` from `origin/main`.
 - Implementation commit: `210d5db38418fc7226a3c0f67e1f094808bcc688`.
+- Previous pushed state checkpoint: `d072bd7f448cdef267e491f85f7706d4fd929c4c`.
 - PR: #67, `https://github.com/rnzrex/cajafamiliar/pull/67`, OPEN and DRAFT.
-- Remote feature branch points to the implementation commit; the final state checkpoint is the only remaining local commit before the next normal push.
+- Local and remote feature branch contain the implementation plus this final metadata checkpoint; working tree is clean after the state update.
 - Unrelated `chore/security-dependency-maintenance` work was not mixed.
 
 ## Constraints
@@ -45,9 +46,9 @@ Implement and locally validate `CAJA FAMILIAR UNIVERSAL DEBT CONTRACT ENGINE V1`
 ## Delivery
 
 - Branch pushed without force; remote SHA verified for implementation commit.
-- Vercel automatic Preview deployment: `https://cajafamiliar-e67utwb1k-renzorex.vercel.app`; GitHub deployment environment `Preview`, state `success`, associated exactly with implementation SHA `210d5db38418fc7226a3c0f67e1f094808bcc688`.
+- Last verified Vercel automatic Preview before this metadata-only handoff: `https://cajafamiliar-rax5lh8fw-renzorex.vercel.app`; GitHub deployment environment `Preview`, state `success`, associated exactly with code-bearing SHA `d072bd7f448cdef267e491f85f7706d4fd929c4c`.
 - PR #67 remains OPEN/DRAFT; no merge and no ready-for-review transition.
-- After the final state checkpoint push, stop. Do not apply the migration to Production.
+- Stop at the DRAFT PR gate. Do not apply the migration to Production.
 
 ## Production
 
