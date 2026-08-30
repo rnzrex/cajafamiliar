@@ -13,8 +13,8 @@ Production SQL, merge, deploy, secrets, or real-document actions.
 - Base: `288fd3b7d648078d7aa3660f231705226b1b100c` from `origin/main`.
 - Starting remote HEAD: `40e1166cc6afac190b99c955572f8b5f95ab001e`.
 - PR: #68, expected OPEN/DRAFT/MERGEABLE.
-- Implementation checkpoint is committed locally as `15df4d9b4ca3c2f313f439ca2ba225fff55fa7eb`;
-  push it without force and match the final Preview SHA.
+- Implementation checkpoint is published at the branch HEAD; Git is the
+  authority for the exact SHA and the final Preview must match it.
 
 ## Constraints
 
@@ -72,9 +72,9 @@ Production SQL, merge, deploy, secrets, or real-document actions.
 
 ## Next Step
 
-- Verify the committed diff, push without force, verify PR #68 remains
-  OPEN/DRAFT/MERGEABLE, and wait for a Preview tied exactly to the pushed HEAD.
-  Do not merge or touch Production.
+- Final implementation checkpoint is pushed and the exact-SHA Preview is
+  READY/HTTP 200. Report the completed gate and stop. Do not merge or touch
+  Production.
 
 ## Production
 
