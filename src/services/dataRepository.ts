@@ -1,6 +1,6 @@
 import { fetchAllSupabaseRows } from "./supabasePagination.js";
 import { HouseholdNotProvisionedError, RemoteAppDataLoadError, TrustedOfflineSnapshotUnavailableError, MovementReconciledError, ReconciliationIdConflictError, MovementCorrectionConflictError, MovementNotReconciledError, MovementCorrectionIdConflictError } from "./dataRepositoryErrors.js";
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtInstallmentAdvanceInput, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource, BankLoanProfile, DebtInsuranceTerms, BankInterestDayCountBasis, BankDueDateAdjustmentRule, BankInstallmentTotalMode, BankReportedBalanceKind } from "../types.js";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardPurchaseInput, CreditCardPurchaseResult, CreditCardPaymentInput, CreditCardPaymentResult, CreditCardFeeInput, CreditCardFeeResult, CreditCardCreditInput, CreditCardCreditResult, CreditCardReversalInput, CreditCardReversalResult, CreditCardStatement, CreditCardStatementCloseInput, CreditCardStatementCloseResult, CreditCardDebtCreateInput, CreditCardDebtCreateResult, CreditCardProfileSaveInput, CreditCardProfileSaveResult, Debt, DebtAllocationInput, DebtCollateral, DebtCollateralInput, DebtCreateInput, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtInstallmentAdvanceInput, DebtPaymentInput, DebtPayoffInput, DebtPrepaymentInput, DebtReversalInput, DebtScheduleInstallmentInput, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, DebtKind, DebtInstallmentAmountMode, DebtPaymentFrequency, AccountReconciliation, AccountReconciliationMovement, RecordAccountReconciliationInput, RecordAccountReconciliationResult, MovementCorrection, DebtRepaymentStructure, DebtInterestCalculationMode, PeriodicRateBasis, BankLoanSubtype, AmortizationMethod, DebtInsuranceType, DebtInsurancePricingMode, ScheduleSource, BankLoanProfile, DebtInsuranceTerms, BankInterestDayCountBasis, BankDueDateAdjustmentRule, BankInstallmentTotalMode, BankReportedBalanceKind, DebtFinancingContract, DebtRefinancingLink, DebtFinancingContractSaveInput, DebtDocumentImportJobInput, DebtRefinanceInput } from "../types.js";
 import { loadData, loadTrustedSnapshot, markTrustedSnapshot, normalizeData, saveData } from "../utils/storage.js";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient.js";
 
@@ -29,6 +29,24 @@ async function fetchOptionalDebtInstallmentCarriedAllocationsRows(): Promise<Rec
       if (cause?.code === "42P01" || cause?.status === 404 || /does not exist|schema cache|could not find the table/i.test(text)) {
         return [];
       }
+    }
+    throw error;
+  }
+}
+
+async function fetchOptionalDebtRows(table: "debt_financing_contracts" | "debt_refinancing_links"): Promise<Record<string, unknown>[]> {
+  try {
+    return await fetchAllSupabaseRows<Record<string, unknown>>({
+      supabase: supabase!,
+      table,
+      householdId,
+      orders: [{ column: "created_at", ascending: true }, { column: "id", ascending: true }],
+    });
+  } catch (error) {
+    if (error instanceof RemoteAppDataLoadError && error.failedResource === table) {
+      const cause = error.causeError as { code?: string; message?: string; details?: string; hint?: string; status?: number } | undefined;
+      const text = [cause?.message, cause?.details, cause?.hint].filter(Boolean).join(" ");
+      if (cause?.code === "42P01" || cause?.status === 404 || /does not exist|schema cache|could not find the table/i.test(text)) return [];
     }
     throw error;
   }
@@ -77,6 +95,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       accountsRows,
       debtsRows,
       bankLoanProfilesRows,
+      debtFinancingContractsRows,
+      debtRefinancingLinksRows,
       debtInsuranceTermsRows,
       debtEventsRows,
       debtScheduleVersionsRows,
@@ -158,6 +178,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
         ],
         pkField: "debt_id",
       }),
+      fetchOptionalDebtRows("debt_financing_contracts"),
+      fetchOptionalDebtRows("debt_refinancing_links"),
       fetchAllSupabaseRows({
         supabase,
         table: "debt_insurance_terms",
@@ -298,6 +320,8 @@ export async function loadAppData(member?: HouseholdMember): Promise<AppDataLoad
       financialAccounts: accountsRows.map(fromFinancialAccountRow),
       debts: debtsRows.map(fromDebtRow),
       bankLoanProfiles: (bankLoanProfilesRows ?? []).map(fromBankLoanProfileRow),
+      debtFinancingContracts: (debtFinancingContractsRows ?? []).map(fromDebtFinancingContractRow),
+      debtRefinancingLinks: (debtRefinancingLinksRows ?? []).map(fromDebtRefinancingLinkRow),
       debtInsuranceTerms: (debtInsuranceTermsRows ?? []).map(fromDebtInsuranceTermsRow),
       debtEvents: debtEventsRows.map(fromDebtEventRow),
       debtScheduleVersions: debtScheduleVersionsRows.map(fromDebtScheduleVersionRow),
@@ -605,7 +629,11 @@ export type DebtOperationErrorCode =
   | "DEBT_MOVEMENT_ACCOUNT_NOT_FOUND"
   | "DEBT_MOVEMENT_ACCOUNT_METHOD_MISMATCH"
   | "ACCOUNT_NOT_AVAILABLE"
-  | "DEBT_SERVICE_MOVEMENT_RPC_ONLY";
+  | "DEBT_SERVICE_MOVEMENT_RPC_ONLY"
+  | "DEBT_REFINANCE_ALREADY_LINKED"
+  | "DEBT_REFINANCE_SETTLEMENT_MISMATCH"
+  | "DEBT_REFINANCE_NOT_FOUND"
+  | "DEBT_REFINANCE_REVERSAL_HAS_DEPENDENCIES";
 
 export class DebtOperationError extends Error {
   constructor(readonly code: DebtOperationErrorCode) {
@@ -846,6 +874,96 @@ export async function createBankLoan(input: BankLoanCreateInput): Promise<DebtCr
   };
 }
 
+export async function saveDebtFinancingContract(input: DebtFinancingContractSaveInput): Promise<DebtFinancingContract> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("upsert_debt_financing_contract_v1", {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_contract: input.contract,
+  });
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La RPC de términos universales no devolvió un resultado válido.");
+  return fromDebtFinancingContractRow(data as Record<string, any>);
+}
+
+export async function createDebtDocumentImportJob(input: DebtDocumentImportJobInput): Promise<Record<string, any>> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("create_debt_document_import_job_v2", {
+    p_household_id: householdId,
+    p_debt_id: input.debtId ?? null,
+    p_document_kind: input.documentKind,
+    p_document_authority: input.documentAuthority,
+    p_provider: input.provider ?? null,
+    p_model: input.model ?? null,
+    p_file_count: input.fileCount,
+    p_storage_paths: input.storagePaths ?? [],
+    p_normalized_metadata: input.normalizedMetadata ?? {},
+  });
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La RPC de importación universal no devolvió un resultado válido.");
+  return data as Record<string, any>;
+}
+
+export async function refinanceDebt(input: DebtRefinanceInput): Promise<Record<string, any>> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("refinance_debt_v1", {
+    p_household_id: householdId,
+    p_link_id: input.linkId,
+    p_source_debt_id: input.sourceDebtId,
+    p_source_refinance_event_id: input.sourceRefinanceEventId,
+    p_target_debt_id: input.targetDebtId,
+    p_effective_date: input.effectiveDate,
+    p_target_name: input.targetName,
+    p_target_creditor_name: input.targetCreditorName,
+    p_target_debt_kind: input.targetDebtKind,
+    p_currency_code: input.currencyCode,
+    p_target_original_principal: input.targetOriginalPrincipal ?? null,
+    p_target_opening_principal: input.targetOpeningPrincipal,
+    p_target_planned_installment_count: input.targetPlannedInstallmentCount ?? null,
+    p_target_planned_installment_amount: input.targetPlannedInstallmentAmount ?? null,
+    p_target_installment_amount_mode: input.targetInstallmentAmountMode,
+    p_target_payment_frequency: input.targetPaymentFrequency ?? null,
+    p_target_custom_frequency_days: input.targetCustomFrequencyDays ?? null,
+    p_target_first_due_date: input.targetFirstDueDate ?? null,
+    p_target_tea_percent: input.targetTeaPercent ?? null,
+    p_target_tcea_percent: input.targetTceaPercent ?? null,
+    p_target_notes: input.targetNotes ?? null,
+    p_amount_paid_by_new_creditor: input.amountPaidByNewCreditor,
+    p_cash_contribution_amount: input.cashContributionAmount,
+    p_target_financed_principal_amount: input.targetFinancedPrincipalAmount,
+    p_target_installments: (input.targetInstallments ?? []).map(toDebtScheduleInstallmentRow),
+    p_target_schedule_source: input.targetScheduleSource ?? null,
+    p_target_contract: input.targetContract ?? null,
+    p_contribution_movement_id: input.contributionMovementId ?? null,
+    p_contribution_account_id: input.contributionAccountId ?? null,
+    p_contribution_description: input.contributionDescription ?? null,
+    p_contribution_category: input.contributionCategory ?? null,
+    p_refinance_costs_amount: input.refinanceCostsAmount,
+    p_refinance_costs_movement_id: input.refinanceCostsMovementId ?? null,
+    p_refinance_costs_account_id: input.refinanceCostsAccountId ?? null,
+    p_refinance_costs_description: input.refinanceCostsDescription ?? null,
+    p_refinance_costs_category: input.refinanceCostsCategory ?? null,
+    p_notes: input.notes ?? null,
+  });
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La RPC de refinanciación no devolvió un resultado válido.");
+  return data as Record<string, any>;
+}
+
+export async function reverseDebtRefinancing(input: { linkId: string; reversalEventId: string; reversalDate: string; description: string }): Promise<Record<string, any>> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("reverse_debt_refinancing_v1", {
+    p_household_id: householdId,
+    p_link_id: input.linkId,
+    p_reversal_event_id: input.reversalEventId,
+    p_reversal_date: input.reversalDate,
+    p_description: input.description,
+  });
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La RPC de reversión de refinanciación no devolvió un resultado válido.");
+  return data as Record<string, any>;
+}
+
 export async function updateDebtMetadata(input: DebtUpdateMetadataInput): Promise<Debt> {
   if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
   const { data, error } = await supabase.rpc("update_debt_metadata_v1", {
@@ -1043,11 +1161,11 @@ export function toDebtReversalRpcArgs(input: DebtReversalInput) {
 }
 
 export async function recordDebtPayment(input: DebtPaymentInput): Promise<DebtFundOperationResult> {
-  return callDebtOperation("record_debt_payment_v3", toDebtPaymentRpcArgs(input), fromDebtFundOperationResult);
+  return callDebtOperation("record_debt_payment_universal_v1", toDebtPaymentRpcArgs(input), fromDebtFundOperationResult);
 }
 
 export async function recordDebtPrepayment(input: DebtPrepaymentInput): Promise<DebtFundOperationResult> {
-  return callDebtOperation("record_debt_prepayment_v3", toDebtPrepaymentRpcArgs(input), fromDebtFundOperationResult);
+  return callDebtOperation("record_debt_prepayment_universal_v1", toDebtPrepaymentRpcArgs(input), fromDebtFundOperationResult);
 }
 
 export async function recordDebtPayoff(input: DebtPayoffInput): Promise<DebtFundOperationResult> {
@@ -1055,7 +1173,7 @@ export async function recordDebtPayoff(input: DebtPayoffInput): Promise<DebtFund
 }
 
 export async function recordDebtInstallmentAdvance(input: DebtInstallmentAdvanceInput): Promise<DebtFundOperationResult> {
-  return callDebtOperation("record_debt_installment_advance_v1", toDebtInstallmentAdvanceRpcArgs(input), fromDebtFundOperationResult);
+  return callDebtOperation("record_debt_installment_advance_universal_v1", toDebtInstallmentAdvanceRpcArgs(input), fromDebtFundOperationResult);
 }
 
 export async function reverseDebtEvent(input: DebtReversalInput): Promise<DebtReversalResult> {
@@ -1380,7 +1498,11 @@ function toDebtScheduleInstallmentRow(input: DebtScheduleInstallmentInput) {
     expected_interest: input.expectedInterest ?? null,
     expected_fees: input.expectedFees ?? null,
     expected_insurance: input.expectedInsurance ?? null,
+    expected_taxes: input.expectedTaxes ?? null,
     reported_balance: input.reportedBalance ?? null,
+    row_role: input.rowRole ?? "installment",
+    phase: input.phase ?? null,
+    evidence: input.evidence ?? {},
   };
 }
 
@@ -1442,6 +1564,10 @@ const debtOperationErrorCodes: DebtOperationErrorCode[] = [
   "DEBT_MOVEMENT_ACCOUNT_METHOD_MISMATCH",
   "ACCOUNT_NOT_AVAILABLE",
   "DEBT_SERVICE_MOVEMENT_RPC_ONLY",
+  "DEBT_REFINANCE_ALREADY_LINKED",
+  "DEBT_REFINANCE_SETTLEMENT_MISMATCH",
+  "DEBT_REFINANCE_NOT_FOUND",
+  "DEBT_REFINANCE_REVERSAL_HAS_DEPENDENCIES",
 ];
 
 function fromDebtFundOperationResult(row: Record<string, any>): DebtFundOperationResult {
@@ -1791,6 +1917,7 @@ function fromDebtScheduleVersionRow(row: Record<string, any>): DebtScheduleVersi
     effectiveDate: row.effective_date,
     reason: row.reason,
     scheduleSource: row.schedule_source || "manual",
+    authority: row.authority ?? (row.schedule_source === "contractual" && row.is_authoritative === true ? "contractual" : row.schedule_source === "estimated" ? "estimated" : "unknown"),
     isAuthoritative: row.is_authoritative != null ? Boolean(row.is_authoritative) : true,
     triggerEventId: row.trigger_event_id ?? null,
     notes: row.notes ?? "",
@@ -1811,6 +1938,10 @@ function fromDebtInstallmentRow(row: Record<string, any>): DebtInstallment {
     expectedInterest: row.expected_interest == null ? null : Number(row.expected_interest),
     expectedFees: row.expected_fees == null ? null : Number(row.expected_fees),
     expectedInsurance: row.expected_insurance == null ? null : Number(row.expected_insurance),
+    expectedTaxes: row.expected_taxes == null ? null : Number(row.expected_taxes),
+    rowRole: row.row_role ?? "installment",
+    phase: row.phase ?? null,
+    evidence: row.evidence && typeof row.evidence === "object" ? row.evidence : {},
     reportedBalance: row.reported_balance == null ? null : Number(row.reported_balance),
     contractualInstallmentNumber: row.contractual_installment_number == null
       ? Number(row.installment_number)
@@ -1828,6 +1959,60 @@ function fromDebtEventInstallmentAllocationRow(row: Record<string, any>): DebtEv
     installmentId: row.installment_id,
     debtId: row.debt_id,
     allocatedAmount: Number(row.allocated_amount),
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+  };
+}
+
+function fromDebtFinancingContractRow(row: Record<string, any>): DebtFinancingContract {
+  return {
+    debtId: row.debt_id,
+    householdId: row.household_id,
+    contractAuthority: row.contract_authority ?? "unknown",
+    principalBasis: row.principal_basis ?? "unknown",
+    assetPrice: row.asset_price == null ? null : Number(row.asset_price),
+    downPaymentAmount: row.down_payment_amount == null ? null : Number(row.down_payment_amount),
+    scheduledPrincipalAmount: row.scheduled_principal_amount == null ? null : Number(row.scheduled_principal_amount),
+    financedPrincipalAmount: row.financed_principal_amount == null ? null : Number(row.financed_principal_amount),
+    openingPrincipalAmount: row.opening_principal_amount == null ? null : Number(row.opening_principal_amount),
+    repaymentStructure: row.repayment_structure ?? "unknown",
+    amortizationMethod: row.amortization_method ?? "unknown",
+    installmentAmountMode: row.installment_amount_mode ?? "unknown",
+    paymentFrequency: row.payment_frequency ?? null,
+    customFrequencyDays: row.custom_frequency_days == null ? null : Number(row.custom_frequency_days),
+    firstDueDate: row.first_due_date ?? null,
+    interestRateType: row.interest_rate_type ?? "unknown",
+    interestRatePercent: row.interest_rate_percent == null ? null : Number(row.interest_rate_percent),
+    interestRateBasis: row.interest_rate_basis ?? null,
+    dayCountBasis: row.day_count_basis ?? "unknown",
+    feeRuleType: row.fee_rule_type ?? "unknown",
+    feeRule: row.fee_rule && typeof row.fee_rule === "object" ? row.fee_rule : {},
+    prepaymentTerms: row.prepayment_terms && typeof row.prepayment_terms === "object" ? row.prepayment_terms : {},
+    authorityNotes: row.authority_notes ?? "",
+    createdByUserId: row.created_by_user_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function fromDebtRefinancingLinkRow(row: Record<string, any>): DebtRefinancingLink {
+  return {
+    id: row.id,
+    householdId: row.household_id,
+    sourceDebtId: row.source_debt_id,
+    targetDebtId: row.target_debt_id,
+    sourceRefinanceEventId: row.source_refinance_event_id,
+    effectiveDate: row.effective_date,
+    settledPrincipalAmount: Number(row.settled_principal_amount),
+    amountPaidByNewCreditor: Number(row.amount_paid_by_new_creditor),
+    cashContributionAmount: Number(row.cash_contribution_amount),
+    targetFinancedPrincipalAmount: Number(row.target_financed_principal_amount),
+    contributionMovementId: row.contribution_movement_id ?? null,
+    refinanceCostsAmount: Number(row.refinance_costs_amount ?? 0),
+    refinanceCostsMovementId: row.refinance_costs_movement_id ?? null,
+    status: row.status ?? "active",
+    reversalEventId: row.reversal_event_id ?? null,
+    notes: row.notes ?? "",
     createdByUserId: row.created_by_user_id,
     createdAt: row.created_at,
   };

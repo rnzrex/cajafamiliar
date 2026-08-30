@@ -20,6 +20,7 @@ import type {
   DebtPaymentFrequency,
   BankLoanProfile,
   DebtInsuranceTerms,
+  DebtFinancingContract,
 } from "../types";
 import type { DebtIntelligenceItem } from "../utils/debtIntelligence";
 import { currentDebtScheduleVersion, effectiveDebtEvents } from "../utils/debtCalculations";
@@ -44,6 +45,7 @@ import { getBankPrepaymentScheduleTarget } from "../utils/debtPlanning";
 import { getDebtReversalDependencyState } from "../utils/debtReversalDependencies.js";
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
+import { DebtRefinanceForm } from "./DebtRefinanceForm";
 
 interface DebtDetailModalProps {
   debt: Debt;
@@ -61,6 +63,7 @@ interface DebtDetailModalProps {
   creditCardEntries?: CreditCardEntry[];
   cardStatements?: CreditCardStatement[];
   bankLoanProfiles?: BankLoanProfile[];
+  debtFinancingContract?: DebtFinancingContract | null;
   debtInsuranceTerms?: DebtInsuranceTerms[];
   allDebts?: Debt[];
   canWriteDebt?: boolean;
@@ -90,6 +93,7 @@ export function DebtDetailModal({
   creditCardEntries,
   cardStatements,
   bankLoanProfiles,
+  debtFinancingContract = null,
   debtInsuranceTerms,
   allDebts,
   canWriteDebt = true,
@@ -101,6 +105,7 @@ export function DebtDetailModal({
   const [activeTab, setActiveTab] = useState<"overview" | "schedule" | "collaterals" | "history">("overview");
   const [isEditingMetadata, setIsEditingMetadata] = useState(false);
   const [isEditingTerms, setIsEditingTerms] = useState(false);
+  const [isRefinancing, setIsRefinancing] = useState(false);
 
   const [editName, setEditName] = useState(debt.name);
   const [editCreditor, setEditCreditor] = useState(debt.creditorName);
@@ -314,6 +319,7 @@ export function DebtDetailModal({
   const ledgerResult = buildDebtPaymentLedger(debt, allEventsForDebt);
   const currencySymbol = getCurrencySymbol(debt.currencyCode);
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
+  const hasUniversalFixedSchedule = (debtFinancingContract?.repaymentStructure ?? debt.repaymentStructure) === "fixed_schedule";
   const insurancePricingLabel = (insurance: DebtInsuranceTerms): string => {
     if (insurance.pricingMode === "fixed_amount") {
       if (insurance.rateBasis === "total_credit_even") return "monto total repartido entre cuotas";
@@ -549,7 +555,7 @@ export function DebtDetailModal({
                     </button>
                   </>
                 )}
-                {debt.debtKind === "bank_loan" && !isFlexOpenEnded && (
+                {hasUniversalFixedSchedule && !isFlexOpenEnded && (
                   <button
                     type="button"
                     onClick={() => onOpenOperation("schedule_update")}
@@ -558,6 +564,13 @@ export function DebtDetailModal({
                     <Settings className="h-4 w-4" /> Actualizar cronograma
                   </button>
                 )}
+                <button
+                  type="button"
+                  onClick={() => setIsRefinancing(true)}
+                  className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-bold text-indigo-700 shadow hover:bg-indigo-100"
+                >
+                  <ArrowUpRight className="h-4 w-4" /> Refinanciar / compra de deuda
+                </button>
                 <button
                   type="button"
                   onClick={() => onOpenOperation("payoff")}
@@ -596,6 +609,20 @@ export function DebtDetailModal({
         <div className="flex-1 p-6">
           {activeTab === "overview" && (
             <div className="space-y-6">
+              {isRefinancing && (
+                <DebtRefinanceForm
+                  debt={debt}
+                  currentPrincipal={debtIntelligence.currentPrincipal}
+                  accounts={accounts}
+                  canWriteDebt={canWriteDebt && debt.status === "active" && !debt.isArchived}
+                  onCancel={() => setIsRefinancing(false)}
+                  onSaved={async () => {
+                    setIsRefinancing(false);
+                    await onRefresh();
+                  }}
+                  setToast={setToast}
+                />
+              )}
               {isEditingMetadata ? (
                 <form onSubmit={handleSaveMetadata} className="rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-4">
                   <h3 className="text-lg font-bold text-slate-900">Editar metadata de la deuda</h3>
@@ -821,6 +848,24 @@ export function DebtDetailModal({
                     </button>
                   </div>
                 </div>
+              )}
+
+              {debtFinancingContract && debt.debtKind !== "bank_loan" && (
+                <section className="rounded-2xl border border-slate-200 bg-slate-50 p-5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-black uppercase tracking-wider text-slate-800">Contrato de deuda</h3>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${debtFinancingContract.contractAuthority === "contractual" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                      {debtFinancingContract.contractAuthority === "contractual" ? "Contractual" : debtFinancingContract.contractAuthority === "estimated" ? "Estimado" : "Por confirmar"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <div><p className="text-xs text-slate-500">Estructura</p><p className="font-bold">{debtFinancingContract.repaymentStructure === "fixed_schedule" ? "Cronograma fijo" : debtFinancingContract.repaymentStructure === "open_ended" ? "Abierto" : "Por confirmar"}</p></div>
+                    <div><p className="text-xs text-slate-500">Capital financiado</p><p className="font-bold">{debtFinancingContract.financedPrincipalAmount == null ? "Por confirmar" : `${currencySymbol} ${debtFinancingContract.financedPrincipalAmount.toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Precio del activo</p><p className="font-bold">{debtFinancingContract.assetPrice == null ? "No aplica / no informado" : `${currencySymbol} ${debtFinancingContract.assetPrice.toFixed(2)}`}</p></div>
+                    <div><p className="text-xs text-slate-500">Cuota inicial</p><p className="font-bold">{debtFinancingContract.downPaymentAmount == null ? "No informado" : `${currencySymbol} ${debtFinancingContract.downPaymentAmount.toFixed(2)}`}</p></div>
+                  </div>
+                  {debtFinancingContract.contractAuthority !== "contractual" && <p className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">Estos datos no constituyen una confirmación contractual. Revisa el documento antes de afirmar ahorro o saldo.</p>}
+                </section>
               )}
 
               {debt.debtKind === "bank_loan" && bankProfile && (

@@ -1,4 +1,4 @@
-import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardStatement, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories, AccountReconciliation, AccountReconciliationMovement, MovementCorrection } from "../types";
+import { AppData, CashCount, Category, CreditCardEntry, CreditCardProfile, CreditCardStatement, Debt, DebtCollateral, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtScheduleVersion, FinancialAccount, HouseholdMember, Movement, RecurringPayment, baseCategories, AccountReconciliation, AccountReconciliationMovement, MovementCorrection, DebtFinancingContract, DebtRefinancingLink } from "../types";
 import { localDateString } from "./date";
 import { isSupabaseConfigured } from "../services/supabaseClient";
 import { normalizeDebtCollaterals, normalizeDebtEventInstallmentAllocations, normalizeDebtEvents, normalizeDebtInstallments, normalizeDebtInstallmentCarriedAllocations, normalizeDebtScheduleVersions, normalizeDebts } from "./debtNormalizers";
@@ -20,6 +20,8 @@ export interface AppDataSnapshotInput {
   financialAccounts?: FinancialAccount[];
   debts?: Debt[];
   bankLoanProfiles?: any[];
+  debtFinancingContracts?: DebtFinancingContract[];
+  debtRefinancingLinks?: DebtRefinancingLink[];
   debtInsuranceTerms?: any[];
   debtEvents?: DebtEvent[];
   debtScheduleVersions?: DebtScheduleVersion[];
@@ -192,6 +194,8 @@ export const defaultData: AppData = {
   financialAccounts: [],
   debts: [],
   bankLoanProfiles: [],
+  debtFinancingContracts: [],
+  debtRefinancingLinks: [],
   debtInsuranceTerms: [],
   debtEvents: [],
   debtScheduleVersions: [],
@@ -393,6 +397,8 @@ export function normalizeData(data: AppDataSnapshotInput): AppData {
     categories,
     financialAccounts: normalizeFinancialAccounts(data.financialAccounts ?? []),
     debts: normalizeDebts(data.debts ?? []),
+    debtFinancingContracts: data.debtFinancingContracts ?? [],
+    debtRefinancingLinks: data.debtRefinancingLinks ?? [],
     debtEvents: normalizeDebtEvents(data.debtEvents ?? []),
     debtScheduleVersions: normalizeDebtScheduleVersions(data.debtScheduleVersions ?? []),
     debtInstallments: normalizeDebtInstallments(data.debtInstallments ?? []),

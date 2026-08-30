@@ -8,7 +8,7 @@ import {
   buildDebtCreateInputPayload,
   validateDebtFinancialTerms,
 } from "../utils/debtFormMode";
-import { createDebt, createBankLoan, type DebtCreateResult } from "../services/dataRepository";
+import { createDebt, createBankLoan, saveDebtFinancingContract, type DebtCreateResult } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError } from "../utils/debtViewModel";
@@ -979,6 +979,34 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         });
 
         createResult = await createDebt(payload);
+        if (repaymentStructure !== "unknown" || installments.length > 0 || originalPrincipal.trim() !== "") {
+          await saveDebtFinancingContract({
+            debtId,
+            contract: {
+              contractAuthority: installments.length > 0 ? "user_reported" : "unknown",
+              principalBasis: "financed_principal_only",
+              assetPrice: assetPrice.trim() ? Number(assetPrice) : null,
+              downPaymentAmount: downPaymentAmount.trim() ? Number(downPaymentAmount) : null,
+              scheduledPrincipalAmount: originalPrincipal.trim() ? Number(originalPrincipal) : null,
+              financedPrincipalAmount: originalPrincipal.trim() ? Number(originalPrincipal) : null,
+              openingPrincipalAmount: openingPrincipalBalance.trim() ? Number(openingPrincipalBalance) : null,
+              repaymentStructure,
+              amortizationMethod: "unknown",
+              installmentAmountMode,
+              paymentFrequency,
+              customFrequencyDays: customFrequencyDays.trim() ? Number(customFrequencyDays) : null,
+              firstDueDate: firstDueDate || null,
+              interestRateType: interestCalculationMode === "contract_schedule" ? "contract_schedule" : interestCalculationMode === "contract_periodic_rate" ? "effective_periodic" : interestCalculationMode === "tea_estimate" ? "effective_annual" : "unknown",
+              interestRatePercent: periodicRatePercent.trim() ? Number(periodicRatePercent) : teaPercent.trim() ? Number(teaPercent) : null,
+              interestRateBasis: periodicRateBasis,
+              dayCountBasis: "unknown",
+              feeRuleType: "unknown",
+              feeRule: {},
+              prepaymentTerms: {},
+              authorityNotes: installments.length > 0 ? "Importe ingresado por el usuario; requiere verificación documental." : "",
+            },
+          });
+        }
         setToast({ message: "Deuda registrada exitosamente.", type: "success" });
       }
       await onSaved(createResult);

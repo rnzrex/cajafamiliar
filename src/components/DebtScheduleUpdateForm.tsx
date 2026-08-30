@@ -229,7 +229,7 @@ export function DebtScheduleUpdateForm({
           <p>
             {isPrepaymentSchedule
               ? "Esta acción reemplaza la proyección del prepago por el cronograma que entregó el banco. Conserva el evento original del prepago y no modifica el principal ni crea un movimiento nuevo."
-              : `Esta acción agrega una nueva versión contractual y un evento de auditoría sin modificar el principal. No representa una refinanciación: un nuevo contrato debe registrarse como una deuda nueva. ${hasPendingBankSchedule ? "La versión precargada es la última conocida y no se considera vigente hasta guardar el cronograma posterior." : "La versión precargada es la vigente actualmente."}`}
+              : `Esta acción agrega una nueva versión del cronograma y un evento de auditoría sin modificar el principal. No representa una refinanciación: un nuevo contrato debe registrarse como una deuda nueva. ${hasPendingBankSchedule ? "La versión precargada es la última conocida y no se considera vigente hasta guardar el cronograma posterior." : "La versión precargada es la vigente actualmente."}`}
           </p>
         </div>
 
@@ -275,15 +275,15 @@ export function DebtScheduleUpdateForm({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h3 className="text-lg font-bold text-slate-900">Cuotas contractuales</h3>
-            <p className="text-xs text-slate-500">La suma de capital, interés, comisiones y seguros debe coincidir con el total. Los campos contractuales permiten conservar el número de cuota del banco y el saldo reportado por el banco.</p>
-            <p className="text-xs text-slate-500">No siempre corresponde al saldo de capital.</p>
+          <p className="text-xs text-slate-500">La suma de capital, interés, comisiones y seguros debe coincidir con el total. Los campos contractuales permiten conservar el número de cuota de la fuente y el saldo reportado.</p>
+            <p className="text-xs text-slate-500">El saldo reportado no siempre corresponde al saldo de capital.</p>
             </div>
             <button type="button" onClick={() => setRows((current) => [...current, blankRow()])} className="rounded-xl bg-blue-50 px-3 py-2 text-sm font-bold text-blue-700 hover:bg-blue-100">
               Agregar cuota
             </button>
           </div>
 
-          {rows.length === 0 && <p className="rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-900">No hay cuotas cargadas. Agrega las cuotas entregadas por el banco.</p>}
+          {rows.length === 0 && <p className="rounded-xl bg-amber-50 p-3 text-sm font-semibold text-amber-900">No hay cuotas cargadas. Agrega las cuotas de la fuente contractual o reportada.</p>}
 
           {rows.map((row, index) => (
             <div key={index} className="grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-3 sm:grid-cols-3 lg:grid-cols-9">

@@ -16,6 +16,10 @@ export function translateDebtError(error: unknown): string {
       DEBT_HAS_HISTORY: "Esta deuda ya tiene historial registrado y no puede eliminarse. Puedes archivarla para conservar el historial.",
       DEBT_NOT_ACTIVE: "La deuda no está activa.",
       DEBT_ALREADY_PAID_OFF: "La deuda ya ha sido pagada en su totalidad.",
+      DEBT_REFINANCE_ALREADY_LINKED: "Esta deuda ya tiene una refinanciación activa.",
+      DEBT_REFINANCE_SETTLEMENT_MISMATCH: "La suma pagada por el nuevo acreedor y el aporte propio debe coincidir exactamente con el saldo principal.",
+      DEBT_REFINANCE_NOT_FOUND: "No se encontró la relación de refinanciación.",
+      DEBT_REFINANCE_REVERSAL_HAS_DEPENDENCIES: "No se puede revertir la refinanciación porque la deuda nueva ya tiene dependencias. Revierte primero sus operaciones y aportes.",
       DEBT_PRINCIPAL_EXCEEDED: "El monto supera el saldo principal actual.",
       DEBT_PREPAYMENT_WOULD_PAY_OFF: "El prepago pagaría la totalidad del principal; utilice la opción de Liquidar deuda.",
       INVALID_DEBT_PAYMENT: "Los datos del pago no son válidos.",
@@ -225,6 +229,30 @@ export function validateDebtPayment(input: {
     }
   }
   return { valid: true };
+}
+
+export type DebtPaymentExcessClassification = "extra_principal" | "installment_advance" | "other";
+
+/**
+ * Detects an amount above the selected contractual obligation without deciding
+ * how the creditor applied it. The caller must still ask for an explicit
+ * classification before persisting the payment.
+ */
+export function detectDebtPaymentExcess(input: {
+  cashAmount: number;
+  contractualAmount: number | null | undefined;
+  tolerance?: number;
+}): number | null {
+  if (
+    input.contractualAmount == null
+    || !Number.isFinite(input.cashAmount)
+    || !Number.isFinite(input.contractualAmount)
+    || input.cashAmount < 0
+    || input.contractualAmount < 0
+  ) return null;
+  const tolerance = input.tolerance ?? 0.01;
+  const excess = Number((input.cashAmount - input.contractualAmount).toFixed(2));
+  return excess > tolerance ? excess : 0;
 }
 
 export function validateDebtPrepayment(input: {
