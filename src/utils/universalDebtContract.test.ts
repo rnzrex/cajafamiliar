@@ -5,7 +5,7 @@ import { calculateKnownDebtFee, calculateNominalAnnualSimpleInterest, compareRef
 import { classifyDebtDocumentAuthority, normalizeUniversalDebtDocument, reconcileUniversalDebtDocument } from "./universalDebtDocument";
 import { createDirectRealEstateFixture } from "./universalDebtFixture";
 import { simulateUniversalDebtPrepayment } from "./universalDebtSimulation";
-import { mapUniversalDocumentRowsToSchedule, parseUniversalDebtExternalAiResponse } from "./universalDebtDocumentImport";
+import { mapUniversalDocumentRowsToSchedule, parseUniversalDebtExternalAiResponse, UNIVERSAL_EXTERNAL_AI_PROMPT } from "./universalDebtDocumentImport";
 
 const debt: Debt = {
   id: "debt-universal-1", name: "Financiamiento", creditorName: "Proveedor", debtKind: "installment_purchase", currencyCode: "PEN",
@@ -47,8 +47,10 @@ describe("universal debt contract engine", () => {
   });
 
   it("keeps refinancing comparison unknown instead of claiming savings", () => {
-    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: null, targetPrincipal: 900, targetRemainingPayments: 1100, cashContribution: 0 }).status).toBe("insufficient_info");
-    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: 1300, targetPrincipal: 900, targetRemainingPayments: 1100, cashContribution: 0 })).toMatchObject({ status: "known", difference: 200 });
+    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: null, sourceRemainingInterest: 100, sourceRemainingFees: null, sourceRemainingInsurance: 0, targetPrincipal: 900, targetRemainingPayments: 1100, cashContribution: 0, refinanceCosts: 0 })).toMatchObject({ status: "insufficient_info", sourceTotal: null, difference: null });
+    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: null, sourceRemainingInterest: 100, sourceRemainingFees: 0, sourceRemainingInsurance: 0, targetPrincipal: 900, targetRemainingPayments: null, targetRemainingInterest: 80, targetRemainingFees: 0, targetRemainingInsurance: 0, cashContribution: 0, refinanceCosts: 0 })).toMatchObject({ status: "known", sourceTotal: 1100, targetTotal: 980, difference: 120 });
+    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: 1300, sourceRemainingInterest: 100, sourceRemainingFees: null, sourceRemainingInsurance: null, targetPrincipal: 900, targetRemainingPayments: 1100, targetRemainingInterest: null, targetRemainingFees: null, targetRemainingInsurance: null, cashContribution: 0, refinanceCosts: 0 })).toMatchObject({ status: "known", sourceTotal: 1300, targetTotal: 1100, difference: 200 });
+    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: 1300, targetPrincipal: 900, targetRemainingPayments: 1100, cashContribution: 100, refinanceCosts: 25 })).toMatchObject({ status: "known", targetTotal: 1225, difference: 75 });
   });
 
   it("normalizes universal document rows without collapsing null into zero", () => {
@@ -124,6 +126,26 @@ describe("universal debt contract engine", () => {
     expect(unknown.canPersist).toBe(false);
   });
 
+  it.each(["contract_schedule_only", "unknown"] as const)("does not copy original schedule fees into a post-prepayment schedule for %s", (feeRuleType) => {
+    const result = simulateUniversalDebtPrepayment({
+      effect: "reduce_term",
+      principalBeforeOperation: 1000,
+      principalPaid: 100,
+      operationDate: "2027-01-01",
+      currentSchedule: [
+        { installmentNumber: 1, contractualInstallmentNumber: 1, dueDate: "2027-02-01", expectedAmount: 600, expectedPrincipal: 500, expectedInterest: 100, expectedFees: 75, expectedInsurance: 0, expectedTaxes: 0 },
+        { installmentNumber: 2, contractualInstallmentNumber: 2, dueDate: "2027-03-01", expectedAmount: 600, expectedPrincipal: 500, expectedInterest: 100, expectedFees: 75, expectedInsurance: 0, expectedTaxes: 0 },
+      ],
+      contract: { repaymentStructure: "fixed_schedule", interestRateType: "nominal_annual_simple", interestRatePercent: 36, interestRateBasis: null, dayCountBasis: "actual_days_360", feeRuleType, feeRule: {}, prepaymentTerms: {} },
+    });
+    expect(result.principalAfter).toBe(900);
+    expect(result.rows[0]).toMatchObject({ interest: 27.9, fees: null, total: null });
+    expect(result.newEstimatedInterest).not.toBeNull();
+    expect(result.status).toBe("calculated_with_warnings");
+    expect(result.canPersist).toBe(false);
+    expect(result.rows.every((row) => row.fees === null)).toBe(true);
+  });
+
   it.each([
     ["effective_annual", null],
     ["effective_periodic", "monthly"],
@@ -146,15 +168,29 @@ describe("universal debt contract engine", () => {
 
   it("passes the 129-row fixture through the same V2 parser and mapper used by the UI", () => {
     const fixture = createDirectRealEstateFixture();
-    const review = parseUniversalDebtExternalAiResponse(JSON.stringify({ schema: "CAJA_FAMILIAR_DEBT_DOCUMENT_V2", kind: "schedule", authority: "official_noncontractual", contract: { assetPrice: fixture.assetPrice, downPaymentAmount: fixture.downPaymentAmount, financedPrincipalAmount: fixture.financedPrincipalAmount, scheduledPrincipalAmount: fixture.scheduledPrincipalAmount, interestRateType: "nominal_annual_simple", interestRatePercent: 23, dayCountBasis: "actual_days_360" }, rows: fixture.rows }), fixture.scheduledPrincipalAmount);
+    const review = parseUniversalDebtExternalAiResponse(JSON.stringify({ schema: "CAJA_FAMILIAR_DEBT_DOCUMENT_V2", kind: "schedule", authority: "official_noncontractual", contract: { assetPrice: fixture.assetPrice, downPaymentAmount: fixture.downPaymentAmount, financedPrincipalAmount: fixture.financedPrincipalAmount, scheduledPrincipalAmount: fixture.scheduledPrincipalAmount, principalBasis: "asset_price_including_down_payment", interestRateType: "nominal_annual_simple", interestRatePercent: 23, dayCountBasis: "actual_days_360", feeRuleType: "contract_schedule_only", prepaymentTerms: { futureInterestWaiver: null, futureFeeWaiver: null, penalties: null, administrativeCharges: null, instrumentReleaseCharges: null, taxPercentage: null } }, rows: fixture.rows }), fixture.scheduledPrincipalAmount);
     const mapped = mapUniversalDocumentRowsToSchedule(review);
     expect(review.isAuthoritative).toBe(false);
     expect(review.warnings.join(" ")).toContain("PROFORMA");
+    expect(review.normalized.authority).toBe("official_noncontractual");
+    expect(review.contract).toMatchObject({ assetPrice: 85000, downPaymentAmount: 8500, financedPrincipalAmount: 76500, scheduledPrincipalAmount: 85000, principalBasis: "asset_price_including_down_payment", interestRateType: "nominal_annual_simple", interestRatePercent: 23, dayCountBasis: "actual_days_360", feeRuleType: "contract_schedule_only", prepaymentTerms: { taxPercentage: null } });
     expect(mapped).toHaveLength(129);
     expect(review.reconciliation.status).toBe("exact");
-    expect(mapped[0]).toMatchObject({ expectedPrincipal: 8500, expectedAmount: 8500 });
+    expect(mapped[0]).toMatchObject({ expectedPrincipal: 8500, expectedAmount: 8500, rowRole: "down_payment" });
+    expect(mapped.slice(1).reduce((sum, row) => sum + (row.expectedPrincipal ?? 0), 0)).toBeCloseTo(fixture.financedPrincipalAmount, 8);
     expect(mapped[8]?.expectedInterest).toBe(0);
     expect(mapped[9]).toMatchObject({ expectedInterest: 1303.33 });
     expect(mapped.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0)).toBeCloseTo(209044, 8);
+  });
+
+  it("publishes the complete contract extraction semantics in the External AI V2 prompt", () => {
+    for (const field of ["assetPrice", "downPaymentAmount", "financedPrincipalAmount", "scheduledPrincipalAmount", "principalBasis", "repaymentStructure", "amortizationMethod", "installmentAmountMode", "paymentFrequency", "customFrequencyDays", "firstDueDate", "interestRateType", "interestRatePercent", "interestRateBasis", "dayCountBasis", "feeRuleType", "feeRule", "prepaymentTerms", "authorityEvidence"]) {
+      expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain(field);
+    }
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("null != 0");
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("no uses TCEA como interés de cuota");
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("no conviertas TNA a TEA");
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("Nunca inventes un porcentaje de IGV");
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("PII");
   });
 });

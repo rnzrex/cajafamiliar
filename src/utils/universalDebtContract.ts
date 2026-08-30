@@ -209,20 +209,20 @@ export interface RefinancingComparison {
 }
 
 export function compareRefinancing(input: RefinancingComparisonInput): RefinancingComparison {
-  const sourceComponents = [input.sourcePrincipal ?? null, input.sourceRemainingInterest ?? 0, input.sourceRemainingFees ?? 0, input.sourceRemainingInsurance ?? 0];
-  const targetComponents = [input.targetPrincipal ?? null, input.targetRemainingInterest ?? null, input.targetRemainingFees ?? null, input.targetRemainingInsurance ?? null];
-  const explicitSourceComponents = input.sourceRemainingInterest != null || input.sourceRemainingFees != null || input.sourceRemainingInsurance != null;
-  const explicitTargetComponents = input.targetRemainingInterest != null || input.targetRemainingFees != null || input.targetRemainingInsurance != null;
+  const sourceComponents = [input.sourcePrincipal, input.sourceRemainingInterest, input.sourceRemainingFees, input.sourceRemainingInsurance];
+  const targetComponents = [input.targetPrincipal, input.targetRemainingInterest, input.targetRemainingFees, input.targetRemainingInsurance];
+  const allKnown = (values: Array<number | null | undefined>): values is number[] => values.every((value) => value != null && Number.isFinite(value));
   const sourceTotal = input.sourceRemainingPayments == null
-    ? (explicitSourceComponents && sourceComponents.every((value) => value != null) ? roundCurrency(sourceComponents.reduce((sum, value) => sum + (value as number), 0)) : null)
-    : roundCurrency(input.sourceRemainingPayments);
+    ? (allKnown(sourceComponents) ? roundCurrency(sourceComponents.reduce((sum, value) => sum + value, 0)) : null)
+    : Number.isFinite(input.sourceRemainingPayments) ? roundCurrency(input.sourceRemainingPayments) : null;
   const targetBase = input.targetRemainingPayments == null
-    ? (explicitTargetComponents && targetComponents.every((value) => value != null) ? roundCurrency(targetComponents.reduce((sum, value) => sum + (value as number), 0)) : null)
-    : roundCurrency(input.targetRemainingPayments);
-  const costs = input.refinanceCosts === null ? null : input.refinanceCosts ?? 0;
-  const targetTotal = targetBase == null || input.cashContribution == null || costs == null
+    ? (allKnown(targetComponents) ? roundCurrency(targetComponents.reduce((sum, value) => sum + value, 0)) : null)
+    : Number.isFinite(input.targetRemainingPayments) ? roundCurrency(input.targetRemainingPayments) : null;
+  const costs = input.refinanceCosts != null && Number.isFinite(input.refinanceCosts) ? roundCurrency(input.refinanceCosts) : null;
+  const contribution = input.cashContribution != null && Number.isFinite(input.cashContribution) ? roundCurrency(input.cashContribution) : null;
+  const targetTotal = targetBase == null || contribution == null || costs == null
     ? null
-    : roundCurrency(targetBase + input.cashContribution + costs);
+    : roundCurrency(targetBase + contribution + costs);
   if (sourceTotal == null || targetTotal == null) {
     return { status: "insufficient_info", sourceTotal, targetTotal, difference: null, monthlyPaymentDelta: null, termDelta: null, warning: "No hay información suficiente para afirmar ahorro o sobrecosto." };
   }

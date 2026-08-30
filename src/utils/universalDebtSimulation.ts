@@ -97,7 +97,7 @@ function buildRows(input: UniversalDebtSimulationInput, futureRows: UniversalDeb
       : roundCurrency(balance * rate);
     const knownFee = input.contract && input.contract.feeRuleType !== "unknown" && input.contract.feeRuleType !== "contract_schedule_only"
       ? calculateKnownDebtFee({ ruleType: input.contract.feeRuleType, rule: input.contract.feeRule, baseAmount: balance, installmentNumber: source.installmentNumber })
-      : (source.expectedFees ?? null);
+      : null;
     const knownInsurance = source.expectedInsurance ?? null;
     const knownTaxes = source.expectedTaxes ?? null;
     const costsKnown = knownFee != null && knownInsurance != null && knownTaxes != null;

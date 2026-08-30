@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Debt, FinancialAccount } from "../types";
@@ -80,6 +80,28 @@ describe("universal refinance UX", () => {
       refinanceCostsAmount: 25,
       refinanceCostsAccountId: account.id,
       refinanceCostsMovementId: expect.any(String),
+    }));
+  });
+
+  it.each([
+    ["contractual", "contractual"],
+    ["official_noncontractual", "reconstructed"],
+    ["user_reported", "manual"],
+    ["estimated", "estimated"],
+    ["unknown", null],
+  ] as const)("preserves imported %s authority independently of schedule source", async (authority, scheduleSource) => {
+    const user = userEvent.setup();
+    render(<DebtRefinanceForm debt={debt} currentPrincipal={1000} accounts={[]} canWriteDebt onSaved={vi.fn()} onCancel={vi.fn()} setToast={vi.fn()} />);
+    await user.type(screen.getByLabelText("Nuevo acreedor *"), "Acreedor B");
+    await user.selectOptions(screen.getByLabelText("Estructura nueva"), "fixed_schedule");
+    const scheduleJson = JSON.stringify({ schema: "CAJA_FAMILIAR_DEBT_DOCUMENT_V2", kind: "schedule", authority, contract: {}, rows: [{ sourceRowNumber: 1, contractualInstallmentNumber: 1, dueDate: "2027-02-01", expectedAmount: 1000, expectedPrincipal: 1000, expectedInterest: 0, expectedFees: 0, expectedInsurance: 0, expectedTaxes: 0, rowRole: "installment" }] });
+    fireEvent.change(screen.getByLabelText("JSON V2 del nuevo cronograma"), { target: { value: scheduleJson } });
+    await user.click(screen.getByRole("button", { name: "CARGAR NUEVO CRONOGRAMA" }));
+    expect(screen.getByText(`AUTORIDAD: ${authority}`)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Registrar refinanciación" }));
+    expect(dataRepository.refinanceDebt).toHaveBeenCalledWith(expect.objectContaining({
+      targetScheduleSource: scheduleSource,
+      targetContract: expect.objectContaining({ contractAuthority: authority }),
     }));
   });
 });
