@@ -17,10 +17,13 @@ Cada row debe conservar sourceRowNumber, contractualInstallmentNumber, dueDate, 
 
 No confundas TEA, TCEA, TNA ni tasas periódicas: no uses TCEA como interés de cuota, no conviertas TNA a TEA y no calcules una tasa o componente no demostrado.`;
 
+export type UniversalDebtAuthorityEvidence = "signed_contract" | "official_schedule" | "proforma_non_binding" | "user_statement" | "unknown";
+
 export interface UniversalDebtDocumentImportReview {
   normalized: NormalizedDebtDocument;
   reconciliation: ReturnType<typeof reconcileUniversalDebtDocument>;
   contract: Record<string, unknown>;
+  authorityEvidence: UniversalDebtAuthorityEvidence;
   scheduleSource: ScheduleSource | null;
   isAuthoritative: boolean;
   warnings: string[];
@@ -28,6 +31,13 @@ export interface UniversalDebtDocumentImportReview {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeAuthorityEvidence(value: unknown): UniversalDebtAuthorityEvidence {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return normalized === "signed_contract" || normalized === "official_schedule" || normalized === "proforma_non_binding" || normalized === "user_statement"
+    ? normalized
+    : "unknown";
 }
 
 function parseJson(text: string): unknown {
@@ -39,6 +49,7 @@ export function normalizeUniversalDebtDocumentV2(value: unknown, expectedPrincip
   if (!isRecord(value) || value.schema !== CAJA_FAMILIAR_DEBT_DOCUMENT_V2) throw new Error(`Se esperaba el schema ${CAJA_FAMILIAR_DEBT_DOCUMENT_V2}.`);
   const kind = value.kind === "contract" || value.kind === "schedule" || value.kind === "refinance" || value.kind === "statement" || value.kind === "other" ? value.kind : "schedule" as UniversalDebtDocumentKind;
   const authority = value.authority === "contractual" || value.authority === "official_noncontractual" || value.authority === "user_reported" || value.authority === "estimated" || value.authority === "unknown" ? value.authority : "unknown" as DebtContractAuthority;
+  const authorityEvidence = normalizeAuthorityEvidence(value.authorityEvidence ?? value.authority_evidence);
   const rawRows = Array.isArray(value.rows) ? value.rows : Array.isArray(value.schedule) ? value.schedule : [];
   const normalized = normalizeUniversalDebtDocument({ kind, authority, rows: rawRows.filter(isRecord) });
   const reconciliation = reconcileUniversalDebtDocument(normalized.rows, expectedPrincipal);
@@ -50,6 +61,7 @@ export function normalizeUniversalDebtDocumentV2(value: unknown, expectedPrincip
     normalized,
     reconciliation,
     contract: isRecord(value.contract) ? value.contract : {},
+    authorityEvidence,
     scheduleSource,
     isAuthoritative: authority === "contractual",
     warnings: [...new Set(warnings)],

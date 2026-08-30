@@ -124,6 +124,7 @@ export function UniversalDebtDocumentImportPanel({ debt, expectedPrincipal = nul
         normalizedMetadata: {
           schema: review.normalized.schema,
           authority: review.normalized.authority,
+          authorityEvidence: review.authorityEvidence,
           isAuthoritative: review.isAuthoritative,
           reconciliation: review.reconciliation,
           rowCount: schedule.length,

@@ -1,4 +1,4 @@
-import type { DebtDayCountBasis, DebtFinancingContract, DebtInstallment, PeriodicRateBasis, PrepaymentEffect, ScheduleSource } from "../types.js";
+import type { DebtDayCountBasis, DebtFinancingContract, DebtInstallment, DebtInsuranceTerms, PeriodicRateBasis, PrepaymentEffect, ScheduleSource } from "../types.js";
 import { calculateKnownDebtFee, calculateNominalAnnualSimpleInterest, roundCurrency } from "./universalDebtContract.js";
 
 export type UniversalSimulationEffect = Extract<PrepaymentEffect, "reduce_term" | "reduce_installment">;
@@ -9,8 +9,11 @@ export interface UniversalDebtSimulationInput {
   principalPaid?: number;
   extraPrincipalPaid?: number;
   operationDate: string;
+  originalPrincipal?: number | null;
+  originalTermInstallments?: number | null;
   currentSchedule: Array<Pick<DebtInstallment, "installmentNumber" | "contractualInstallmentNumber" | "dueDate" | "expectedAmount" | "expectedPrincipal" | "expectedInterest" | "expectedFees" | "expectedInsurance" | "expectedTaxes">>;
   contract?: Pick<DebtFinancingContract, "interestRateType" | "interestRatePercent" | "interestRateBasis" | "dayCountBasis" | "feeRuleType" | "feeRule" | "prepaymentTerms" | "repaymentStructure"> | null;
+  insuranceTerms?: Array<Pick<DebtInsuranceTerms, "pricingMode" | "ratePercent" | "fixedAmount" | "rateBasis" | "isRequired">>;
   currentScheduleSource?: ScheduleSource | null;
   currentScheduleAuthoritative?: boolean;
   hasAllocatedFutureInstallments?: boolean;
@@ -83,6 +86,71 @@ function emptyResult(input: UniversalDebtSimulationInput, warnings: string[], pr
   };
 }
 
+const UNKNOWN_FUTURE_COSTS_WARNING = "COMISIONES, SEGURO O IMPUESTOS FUTUROS: POR CONFIRMAR.";
+const UNKNOWN_FUTURE_COSTS_ESTIMATE_WARNING = "Los costos futuros desconocidos pueden cambiar la distribución entre capital e interés. Esta proyección es orientativa y debe confirmarse con el nuevo cronograma del acreedor.";
+
+function distributeEvenInsurance(total: number, installments: number): number[] {
+  if (total <= 0 || installments <= 0) return Array.from({ length: Math.max(0, installments) }, () => 0);
+  const regularAmount = roundCurrency(total / installments);
+  const amounts = Array.from({ length: installments }, () => regularAmount);
+  const priorTotal = amounts.slice(0, -1).reduce((sum, amount) => sum + amount, 0);
+  amounts[installments - 1] = roundCurrency(total - priorTotal);
+  return amounts;
+}
+
+type FutureRow = UniversalDebtSimulationInput["currentSchedule"][number];
+
+function insuranceForRow(
+  input: UniversalDebtSimulationInput,
+  balance: number,
+  source: FutureRow,
+): { amount: number | null; known: boolean } {
+  const terms = input.insuranceTerms ?? [];
+  if (terms.length === 0) {
+    if (source.expectedInsurance === 0) return { amount: 0, known: true };
+    return { amount: null, known: false };
+  }
+
+  const originalPrincipal = input.originalPrincipal;
+  const amount = terms.reduce((sum, term) => {
+    if (term.pricingMode === "percent_outstanding_balance" && term.ratePercent != null && Number.isFinite(term.ratePercent) && term.ratePercent >= 0) {
+      return sum + roundCurrency(balance * term.ratePercent / 100);
+    }
+    if (term.pricingMode === "percent_original_principal" && term.ratePercent != null && Number.isFinite(term.ratePercent) && term.ratePercent >= 0 && originalPrincipal != null && Number.isFinite(originalPrincipal) && originalPrincipal >= 0) {
+      return sum + roundCurrency(originalPrincipal * term.ratePercent / 100);
+    }
+    if (term.pricingMode === "fixed_amount" && term.fixedAmount != null && Number.isFinite(term.fixedAmount) && term.fixedAmount >= 0) {
+      if (term.rateBasis === "per_installment") return sum + roundCurrency(term.fixedAmount);
+      if (term.rateBasis === "total_credit_upfront") return sum;
+      if (term.rateBasis === "total_credit_even") {
+        const originalTerm = input.originalTermInstallments;
+        const contractualNumber = source.contractualInstallmentNumber ?? source.installmentNumber;
+        if (originalTerm == null || !Number.isInteger(originalTerm) || originalTerm <= 0 || !Number.isInteger(contractualNumber) || contractualNumber < 1 || contractualNumber > originalTerm) return sum;
+        return sum + (distributeEvenInsurance(term.fixedAmount, originalTerm)[contractualNumber - 1] ?? 0);
+      }
+    }
+    return sum;
+  }, 0);
+
+  const known = terms.every((term) => {
+    if (term.pricingMode === "percent_outstanding_balance") return term.ratePercent != null && Number.isFinite(term.ratePercent) && term.ratePercent >= 0;
+    if (term.pricingMode === "percent_original_principal") return term.ratePercent != null && Number.isFinite(term.ratePercent) && term.ratePercent >= 0 && originalPrincipal != null && Number.isFinite(originalPrincipal) && originalPrincipal >= 0;
+    if (term.pricingMode !== "fixed_amount" || term.fixedAmount == null || !Number.isFinite(term.fixedAmount) || term.fixedAmount < 0) return false;
+    if (term.rateBasis === "per_installment" || term.rateBasis === "total_credit_upfront") return true;
+    if (term.rateBasis !== "total_credit_even") return false;
+    const originalTerm = input.originalTermInstallments;
+    const contractualNumber = source.contractualInstallmentNumber ?? source.installmentNumber;
+    return originalTerm != null && Number.isInteger(originalTerm) && originalTerm > 0 && Number.isInteger(contractualNumber) && contractualNumber >= 1 && contractualNumber <= originalTerm;
+  });
+  return known ? { amount: roundCurrency(amount), known: true } : { amount: null, known: false };
+}
+
+function taxesForRow(source: FutureRow): { amount: number | null; known: boolean } {
+  // V1 deliberately accepts only explicit zero. A positive historical tax or a
+  // missing value is not a recalculation rule for the new schedule.
+  return source.expectedTaxes === 0 ? { amount: 0, known: true } : { amount: null, known: false };
+}
+
 function buildRows(input: UniversalDebtSimulationInput, futureRows: UniversalDebtSimulationInput["currentSchedule"], principalAfter: number, payment: number): { rows: UniversalDebtSimulationRow[]; balance: number; warnings: string[] } {
   let balance = roundCurrency(principalAfter);
   let previousDate = input.operationDate;
@@ -98,16 +166,19 @@ function buildRows(input: UniversalDebtSimulationInput, futureRows: UniversalDeb
     const knownFee = input.contract && input.contract.feeRuleType !== "unknown" && input.contract.feeRuleType !== "contract_schedule_only"
       ? calculateKnownDebtFee({ ruleType: input.contract.feeRuleType, rule: input.contract.feeRule, baseAmount: balance, installmentNumber: source.installmentNumber })
       : null;
-    const knownInsurance = source.expectedInsurance ?? null;
-    const knownTaxes = source.expectedTaxes ?? null;
+    const insuranceResult = insuranceForRow(input, balance, source);
+    const taxResult = taxesForRow(source);
+    const knownInsurance = insuranceResult.amount;
+    const knownTaxes = taxResult.amount;
     const costsKnown = knownFee != null && knownInsurance != null && knownTaxes != null;
-    if (!costsKnown && !warnings.includes("COMISIONES, SEGURO O IMPUESTOS FUTUROS: POR CONFIRMAR.")) warnings.push("COMISIONES, SEGURO O IMPUESTOS FUTUROS: POR CONFIRMAR.");
+    if (!costsKnown && !warnings.includes(UNKNOWN_FUTURE_COSTS_WARNING)) warnings.push(UNKNOWN_FUTURE_COSTS_WARNING);
+    if (!costsKnown && !warnings.includes(UNKNOWN_FUTURE_COSTS_ESTIMATE_WARNING)) warnings.push(UNKNOWN_FUTURE_COSTS_ESTIMATE_WARNING);
     const principal = roundCurrency(Math.min(balance, Math.max(0, payment - interest - (knownFee ?? 0) - (knownInsurance ?? 0) - (knownTaxes ?? 0))));
     const remaining = roundCurrency(Math.max(0, balance - principal));
     rows.push({
       installmentNumber: rows.length + 1,
       contractualInstallmentNumber: source.contractualInstallmentNumber ?? source.installmentNumber,
-      dueDate: source.dueDate, principal, interest: costsKnown ? interest : interest,
+      dueDate: source.dueDate, principal, interest,
       fees: knownFee, insurance: knownInsurance, taxes: knownTaxes,
       total: costsKnown ? roundCurrency(principal + interest + (knownFee ?? 0) + (knownInsurance ?? 0) + (knownTaxes ?? 0)) : null,
       remainingPrincipalBalance: remaining <= 0.01 ? 0 : remaining, interestDays: days,

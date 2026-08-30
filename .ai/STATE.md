@@ -8,7 +8,7 @@ Complete the final financial-precision fix gate for `CAJA FAMILIAR UNIVERSAL DEB
 
 - Branch: `feat/universal-debt-contract-engine-v1`.
 - Base: `86bb5eb4ef1ed8344abfb8f0fbcbcf2eeff0622f` from `origin/main`.
-- Final code checkpoint pushed: `2b68f9924a70e37990eff2764b458f120463e2bb`.
+- Final code checkpoint pending push; the previous code checkpoint is `2b68f9924a70e37990eff2764b458f120463e2bb`.
 - PR: #67, `https://github.com/rnzrex/cajafamiliar/pull/67`, OPEN and DRAFT.
 - Working tree was clean after the precision-fix checkpoint; the migration and schema snapshot remain unchanged.
 
@@ -27,15 +27,19 @@ Complete the final financial-precision fix gate for `CAJA FAMILIAR UNIVERSAL DEB
 - Extended the 129-row fixture through the same parser/mapper with principal basis, schedule-only fee semantics, null unknown tax percentage, official non-contractual authority, exact reconciliation, and no down-payment double count.
 - Preserved imported target contract authority in `DebtRefinanceForm` for contractual, official_noncontractual, user_reported, estimated, and unknown documents; unknown imported schedules remain loadable with source null.
 - Added regressions for both unknown fee modes, refinance component/cost/contribution precision, complete prompt semantics, 129-row contract semantics, and all refinance authority values.
+- Corrected universal post-prepayment insurance provenance: known percentage, per-installment fixed, upfront, and deterministically allocated total-credit-even rules calculate from their terms; positive or missing historical insurance without a rule remains null.
+- Corrected universal post-prepayment tax provenance: explicit zero remains known, while positive or missing historical tax amounts remain null in conservative V1.
+- Passed original principal, original term, and `debtInsuranceTerms` from `DebtOperationForm` into the universal simulator; strengthened the non-contractual estimate warning.
+- Preserved sanitized V2 `authorityEvidence` in the review and `bank_document_import_jobs.normalized_metadata` without changing authority classification.
 
 ## Validation
 
-- Universal targeted suite: PASS — 2 files, 30 tests; migration hygiene PASS (additive-only, 13 required symbols, 0 forbidden terms).
+- Universal targeted suite: PASS — 2 files, 42 tests; migration hygiene PASS (additive-only, 13 required symbols, 0 forbidden terms).
 - BANK reconstruction: PASS — 1 file, 11 tests.
 - BANK prepayment simulation: PASS — 1 file, 18 tests.
 - BANK external AI/import: PASS — 3 files, 29 tests.
 - BANK document V5: PASS — 6 files, 26 tests.
-- Full Vitest: PASS — 76 files, 1,067 tests.
+- Full Vitest: PASS — 76 files, 1,079 tests.
 - Typecheck: PASS (`npm run typecheck:api`). Build: PASS; only existing dynamic-import and large-chunk warnings.
 - Node syntax checks for all `scripts/*.mjs` and `git diff --check` passed.
 - Clean disposable PostgreSQL 17 container `bank_lifecycle_clean_pg17` (schema snapshot plus unreleased universal migration, local-only grants/trigger harness adjustment) passed: BANK prepayment lifecycle scenarios 1–30, BANK V3, BANK V2, DEBT2B2, and universal SQL smoke.
@@ -46,18 +50,25 @@ Complete the final financial-precision fix gate for `CAJA FAMILIAR UNIVERSAL DEB
 
 ## Next Step
 
-- No implementation work remains. This final state checkpoint documents the completed clean PG17 gate, exact-SHA Preview, PR evidence, and Production safety boundary; stop at OPEN/DRAFT without merge or Production action.
+- Commit and push the cost-provenance code/tests and this state update without force; refresh PR #67 and wait for a new exact-SHA Preview. Then stop OPEN/DRAFT without merge or Production action.
 
-## Delivery\n\n- Precision-fix code checkpoint `2b68f9924a70e37990eff2764b458f120463e2bb` was committed and pushed without force.\n- PR #67 evidence was refreshed after the exact-SHA Preview and remains OPEN/DRAFT/MERGEABLE.\n- The following final state metadata checkpoint is documentation only; it does not change application behavior, migration SQL, or Production.\n\n## Production
+## Delivery
+
+- Previous precision-fix code checkpoint `2b68f9924a70e37990eff2764b458f120463e2bb` was committed and pushed without force.
+- The cost-provenance code/test checkpoint is pending commit and push.
+- PR #67 evidence must be refreshed after the new exact-SHA Preview and remain OPEN/DRAFT/MERGEABLE.
+- The migration and schema snapshot remain unchanged.
+
+## Production
 
 - Production untouched. Observed Production baseline remains migration `20260827214244 bank_prepayment_schedule_lifecycle_v1`; no Production SQL, schema/data mutation, financial test data, real upload, frontend deployment, Vercel env change, Gemini key, or merge occurred.
 
 ## Relevant Files
 
-- `src/utils/universalDebtSimulation.ts` — preserves unknown post-prepayment fees.
+- `src/utils/universalDebtSimulation.ts` — provenance-safe universal post-prepayment fees, insurance, taxes, and estimate warnings.
 - `src/utils/universalDebtContract.ts` — null-safe refinance comparison.
-- `src/utils/universalDebtDocumentImport.ts` — complete External AI V2 prompt.
+- `src/utils/universalDebtDocumentImport.ts` — complete External AI V2 prompt and sanitized authority evidence.
 - `src/components/DebtRefinanceForm.tsx` — preserves imported contract authority.
-- `src/utils/universalDebtContract.test.ts` — precision and 129-row parser regressions.
+- `src/utils/universalDebtContract.test.ts` — financial precision, cost provenance, and 129-row parser regressions.
 - `src/components/DebtRefinanceForm.test.tsx` — authority-preservation UX regressions.
 - `supabase/migrations/20260830100000_universal_debt_contract_engine_v1.sql` — unchanged additive migration under audit.
