@@ -8,7 +8,7 @@ import {
   buildDebtCreateInputPayload,
   validateDebtFinancialTerms,
 } from "../utils/debtFormMode";
-import { createDebt, createBankLoan, type DebtCreateResult } from "../services/dataRepository";
+import { createDebt, createBankLoan, saveDebtFinancingContract, type DebtCreateResult } from "../services/dataRepository";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
 import { translateDebtError } from "../utils/debtViewModel";
@@ -117,6 +117,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
   const [assetPrice, setAssetPrice] = useState("");
   const [downPaymentAmount, setDownPaymentAmount] = useState("");
   const [financedAmount, setFinancedAmount] = useState("");
+  const [scheduledPrincipalAmount, setScheduledPrincipalAmount] = useState("");
   const [gracePeriodType, setGracePeriodType] = useState<"none" | "total" | "partial">("none");
   const [gracePeriodInstallments, setGracePeriodInstallments] = useState("");
   const [balloonPaymentAmount, setBalloonPaymentAmount] = useState("");
@@ -723,7 +724,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         return false;
       }
     } else {
-      if (!name.trim() || !creditorName.trim() || (debtKind !== "bank_loan" && !openingPrincipalBalance)) {
+      if (!name.trim() || !creditorName.trim() || (debtKind !== "bank_loan" && !openingPrincipalBalance && !financedAmount && !originalPrincipal)) {
         setToast({ message: debtKind === "bank_loan" ? "Complete los campos obligatorios (Nombre y Acreedor)." : "Complete los campos obligatorios (Nombre, Acreedor y Saldo adeudado).", type: "error" });
         return false;
       }
@@ -820,6 +821,16 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     if (effectiveOpeningPrincipalBalance != null && Number.isFinite(effectiveOpeningPrincipalBalance) && effectiveOpeningPrincipalBalance < 0) {
       setToast({ message: "El saldo adeudado no puede ser un monto negativo.", type: "error" });
       return false;
+    }
+
+    if (debtKind !== "bank_loan" && assetPrice.trim() && downPaymentAmount.trim() && financedAmount.trim()) {
+      const asset = Number(assetPrice);
+      const down = Number(downPaymentAmount);
+      const financed = Number(financedAmount);
+      if (![asset, down, financed].every((value) => Number.isFinite(value) && value >= 0) || Math.abs(asset - down - financed) > 0.01) {
+        setToast({ message: "El valor del bien debe coincidir con la suma de la cuota inicial y el monto financiado.", type: "error" });
+        return false;
+      }
     }
 
     const termsValidation = validateDebtFinancialTerms({
@@ -945,6 +956,9 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         });
         setToast({ message: "Crédito bancario registrado exitosamente.", type: "success" });
       } else {
+        const genericFinancedAmount = financedAmount.trim() || originalPrincipal.trim() || openingPrincipalBalance.trim();
+        const genericOpeningPrincipal = openingPrincipalBalance.trim() || financedAmount.trim() || originalPrincipal.trim();
+        const hasAssetStructure = assetPrice.trim() !== "" || downPaymentAmount.trim() !== "" || financedAmount.trim() !== "";
         const payload = buildDebtCreateInputPayload({
           debtId,
           debtKind,
@@ -952,8 +966,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           currencyCode,
           name,
           creditorName,
-          openingPrincipalBalance,
-          originalPrincipal,
+          openingPrincipalBalance: genericOpeningPrincipal,
+          originalPrincipal: genericFinancedAmount,
           originDate,
           trackingStartDate,
           paymentFrequency,
@@ -979,6 +993,34 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         });
 
         createResult = await createDebt(payload);
+        if (repaymentStructure !== "unknown" || installments.length > 0 || hasAssetStructure || originalPrincipal.trim() !== "") {
+          await saveDebtFinancingContract({
+            debtId,
+            contract: {
+              contractAuthority: installments.length > 0 ? "user_reported" : "unknown",
+              principalBasis: assetPrice.trim() && downPaymentAmount.trim() && financedAmount.trim() ? "asset_price_including_down_payment" : "financed_principal_only",
+              assetPrice: assetPrice.trim() ? Number(assetPrice) : null,
+              downPaymentAmount: downPaymentAmount.trim() ? Number(downPaymentAmount) : null,
+              scheduledPrincipalAmount: scheduledPrincipalAmount.trim() ? Number(scheduledPrincipalAmount) : (!hasAssetStructure && originalPrincipal.trim() ? Number(originalPrincipal) : null),
+              financedPrincipalAmount: genericFinancedAmount ? Number(genericFinancedAmount) : null,
+              openingPrincipalAmount: genericOpeningPrincipal ? Number(genericOpeningPrincipal) : null,
+              repaymentStructure,
+              amortizationMethod: "unknown",
+              installmentAmountMode,
+              paymentFrequency,
+              customFrequencyDays: customFrequencyDays.trim() ? Number(customFrequencyDays) : null,
+              firstDueDate: firstDueDate || null,
+              interestRateType: interestCalculationMode === "contract_schedule" ? "contract_schedule" : interestCalculationMode === "contract_periodic_rate" ? "effective_periodic" : interestCalculationMode === "tea_estimate" ? "effective_annual" : "unknown",
+              interestRatePercent: periodicRatePercent.trim() ? Number(periodicRatePercent) : teaPercent.trim() ? Number(teaPercent) : null,
+              interestRateBasis: periodicRateBasis,
+              dayCountBasis: "unknown",
+              feeRuleType: "unknown",
+              feeRule: {},
+              prepaymentTerms: {},
+              authorityNotes: installments.length > 0 ? "Importe ingresado por el usuario; requiere verificación documental." : "",
+            },
+          });
+        }
         setToast({ message: "Deuda registrada exitosamente.", type: "success" });
       }
       await onSaved(createResult);
@@ -2230,6 +2272,21 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   className="mt-1 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-slate-900 focus:border-blue-600 focus:outline-none"
                 />
               </div>}
+
+              {repaymentStructure === "fixed_schedule" && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4 space-y-3 sm:col-span-2">
+                  <div>
+                    <p className="text-sm font-black uppercase tracking-wide text-blue-950">Estructura del financiamiento</p>
+                    <p className="mt-1 text-xs text-blue-900">Conserva por separado el valor del bien, la cuota inicial, el principal programado, el monto financiado y el saldo vivo. No asumimos que son el mismo importe.</p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <label className="text-xs font-bold text-slate-700">Valor del bien / activo<input type="number" min="0" step="0.01" value={assetPrice} onChange={(event) => setAssetPrice(event.target.value)} placeholder="Ej. 85000" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal" /></label>
+                    <label className="text-xs font-bold text-slate-700">Cuota inicial<input type="number" min="0" step="0.01" value={downPaymentAmount} onChange={(event) => setDownPaymentAmount(event.target.value)} placeholder="Ej. 8500" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal" /></label>
+                    <label className="text-xs font-bold text-slate-700">Principal programado<input type="number" min="0" step="0.01" value={scheduledPrincipalAmount} onChange={(event) => setScheduledPrincipalAmount(event.target.value)} placeholder="Ej. 85000" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal" /></label>
+                    <label className="text-xs font-bold text-slate-700">Principal financiado<input type="number" min="0" step="0.01" value={financedAmount} onChange={(event) => { setFinancedAmount(event.target.value); if (onboardingMode === "NEW_DEBT") setOpeningPrincipalBalance(event.target.value); }} placeholder="Ej. 76500" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-normal" /></label>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

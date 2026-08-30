@@ -149,6 +149,92 @@ export type DebtRepaymentStructure = "fixed_schedule" | "open_ended" | "unknown"
 export type DebtInterestCalculationMode = "contract_schedule" | "contract_periodic_rate" | "tea_estimate" | "manual" | "unknown";
 export type PeriodicRateBasis = "monthly" | "biweekly" | "weekly" | "daily";
 
+/** Authority is intentionally separate from schedule provenance/reconciliation. */
+export type DebtContractAuthority = "contractual" | "official_noncontractual" | "user_reported" | "estimated" | "unknown";
+export type DebtPrincipalBasis = "asset_price_including_down_payment" | "financed_principal_only" | "reported_balance" | "unknown";
+export type DebtInterestRateType = "nominal_annual_simple" | "effective_annual" | "effective_periodic" | "contract_schedule" | "manual" | "unknown";
+export type DebtDayCountBasis = "actual_days_360" | "actual_days_365" | "unknown";
+export type DebtFeeRuleType = "fixed" | "percentage" | "formula_known" | "contract_schedule_only" | "unknown";
+export type DebtRefinancingStatus = "active" | "reversed";
+
+export interface DebtFinancingContract {
+  debtId: string;
+  householdId: string;
+  contractAuthority: DebtContractAuthority;
+  principalBasis: DebtPrincipalBasis;
+  assetPrice: number | null;
+  downPaymentAmount: number | null;
+  scheduledPrincipalAmount: number | null;
+  financedPrincipalAmount: number | null;
+  openingPrincipalAmount: number | null;
+  repaymentStructure: DebtRepaymentStructure;
+  amortizationMethod: AmortizationMethod;
+  installmentAmountMode: DebtInstallmentAmountMode;
+  paymentFrequency: DebtPaymentFrequency | null;
+  customFrequencyDays: number | null;
+  firstDueDate: string | null;
+  interestRateType: DebtInterestRateType;
+  interestRatePercent: number | null;
+  interestRateBasis: string | null;
+  dayCountBasis: DebtDayCountBasis;
+  feeRuleType: DebtFeeRuleType;
+  feeRule: Record<string, unknown>;
+  prepaymentTerms: Record<string, unknown>;
+  authorityNotes: string;
+  createdByUserId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DebtRefinancingLink {
+  id: string;
+  householdId: string;
+  sourceDebtId: string;
+  targetDebtId: string;
+  sourceRefinanceEventId: string;
+  effectiveDate: string;
+  settledPrincipalAmount: number;
+  amountPaidByNewCreditor: number;
+  cashContributionAmount: number;
+  targetFinancedPrincipalAmount: number;
+  contributionMovementId: string | null;
+  refinanceCostsAmount: number;
+  refinanceCostsMovementId: string | null;
+  status: DebtRefinancingStatus;
+  reversalEventId: string | null;
+  notes: string;
+  createdByUserId: string;
+  createdAt: string;
+}
+
+export interface DebtStateSnapshot {
+  currentPrincipal: number;
+  principalPaid: number;
+  cashPaid: number;
+  interestPaid: number;
+  feesPaid: number;
+  insurancePaid: number;
+  otherCostsPaid: number;
+  effectiveEventCount: number;
+  futureInstallmentCount: number;
+  scheduleKnown: boolean;
+  scheduleAuthority: DebtContractAuthority;
+  nextDueDate: string | null;
+  nextInstallmentAmount: number | null;
+  overdueAmount: number | null;
+  remainingScheduledPrincipal: number | null;
+  remainingProjectedInterest: number | null;
+  remainingProjectedFees: number | null;
+  remainingProjectedInsurance: number | null;
+  remainingProjectedTotalCash: number | null;
+  paidInstallmentCount: number;
+  partialInstallmentCount: number;
+  advancedInstallmentCount: number;
+  pendingInstallmentCount: number;
+  overdueInstallmentCount: number;
+  certainty: "exact" | "reported" | "estimated" | "insufficient_info";
+}
+
 export interface Debt {
   id: string;
   name: string;
@@ -209,6 +295,7 @@ export interface DebtScheduleVersion {
   effectiveDate: string;
   reason: DebtScheduleReason;
   scheduleSource?: ScheduleSource;
+  authority?: DebtContractAuthority;
   isAuthoritative?: boolean;
   triggerEventId: string | null;
   notes: string;
@@ -227,6 +314,10 @@ export interface DebtInstallment {
   expectedInterest: number | null;
   expectedFees: number | null;
   expectedInsurance: number | null;
+  expectedTaxes?: number | null;
+  rowRole?: "down_payment" | "installment" | "summary" | "unknown";
+  phase?: string | null;
+  evidence?: Record<string, unknown>;
   reportedBalance?: number | null;
   contractualInstallmentNumber?: number | null;
   isPaidBeforeTracking?: boolean;
@@ -510,6 +601,61 @@ export interface DebtCreateInput {
   minimumPrincipalPayment?: number | null;
 }
 
+export interface DebtFinancingContractSaveInput {
+  debtId: string;
+  contract: Partial<Omit<DebtFinancingContract, "debtId" | "householdId" | "createdByUserId" | "createdAt" | "updatedAt">>;
+}
+
+export interface DebtDocumentImportJobInput {
+  debtId?: string | null;
+  documentKind: "contract" | "schedule" | "refinance" | "statement" | "other";
+  documentAuthority: DebtContractAuthority;
+  provider?: string | null;
+  model?: string | null;
+  fileCount: number;
+  storagePaths?: string[];
+  normalizedMetadata?: Record<string, unknown>;
+}
+
+export interface DebtRefinanceInput {
+  linkId: string;
+  sourceDebtId: string;
+  sourceRefinanceEventId: string;
+  targetDebtId: string;
+  effectiveDate: string;
+  targetName: string;
+  targetCreditorName: string;
+  targetDebtKind: DebtKind;
+  currencyCode: string;
+  targetOriginalPrincipal?: number | null;
+  targetOpeningPrincipal: number;
+  targetPlannedInstallmentCount?: number | null;
+  targetPlannedInstallmentAmount?: number | null;
+  targetInstallmentAmountMode: DebtInstallmentAmountMode;
+  targetPaymentFrequency?: DebtPaymentFrequency | null;
+  targetCustomFrequencyDays?: number | null;
+  targetFirstDueDate?: string | null;
+  targetTeaPercent?: number | null;
+  targetTceaPercent?: number | null;
+  targetNotes?: string | null;
+  amountPaidByNewCreditor: number;
+  cashContributionAmount: number;
+  targetFinancedPrincipalAmount: number;
+  targetInstallments?: DebtScheduleInstallmentInput[];
+  targetScheduleSource?: ScheduleSource | null;
+  targetContract?: Record<string, unknown> | null;
+  contributionMovementId?: string | null;
+  contributionAccountId?: string | null;
+  contributionDescription?: string | null;
+  contributionCategory?: string | null;
+  refinanceCostsAmount: number;
+  refinanceCostsMovementId?: string | null;
+  refinanceCostsAccountId?: string | null;
+  refinanceCostsDescription?: string | null;
+  refinanceCostsCategory?: string | null;
+  notes?: string | null;
+}
+
 export interface CreditCardDebtCreateResult {
   success: boolean;
   debtId: string;
@@ -540,7 +686,11 @@ export interface DebtScheduleInstallmentInput {
   expectedInterest?: number | null;
   expectedFees?: number | null;
   expectedInsurance?: number | null;
+  expectedTaxes?: number | null;
   reportedBalance?: number | null;
+  rowRole?: "down_payment" | "installment" | "summary" | "unknown";
+  phase?: string | null;
+  evidence?: Record<string, unknown>;
 }
 
 export interface DebtAllocationInput {
@@ -690,6 +840,8 @@ export interface AppData {
   financialAccounts: FinancialAccount[];
   debts: Debt[];
   bankLoanProfiles?: BankLoanProfile[];
+  debtFinancingContracts?: DebtFinancingContract[];
+  debtRefinancingLinks?: DebtRefinancingLink[];
   debtInsuranceTerms?: DebtInsuranceTerms[];
   debtEvents: DebtEvent[];
   debtScheduleVersions: DebtScheduleVersion[];

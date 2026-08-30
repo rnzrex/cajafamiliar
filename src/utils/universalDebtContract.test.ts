@@ -1,0 +1,343 @@
+import { describe, expect, it } from "vitest";
+import type { Debt, DebtEvent, DebtInstallment } from "../types";
+import { detectDebtPaymentExcess } from "./debtViewModel";
+import { calculateKnownDebtFee, calculateNominalAnnualSimpleInterest, compareRefinancing, deriveUniversalDebtState, isFixedScheduleDebt, validateUniversalScheduleArithmetic } from "./universalDebtContract";
+import { classifyDebtDocumentAuthority, normalizeUniversalDebtDocument, reconcileUniversalDebtDocument } from "./universalDebtDocument";
+import { createDirectRealEstateFixture } from "./universalDebtFixture";
+import { simulateUniversalDebtPrepayment } from "./universalDebtSimulation";
+import { mapUniversalDocumentRowsToSchedule, parseUniversalDebtExternalAiResponse, UNIVERSAL_EXTERNAL_AI_PROMPT } from "./universalDebtDocumentImport";
+
+const debt: Debt = {
+  id: "debt-universal-1", name: "Financiamiento", creditorName: "Proveedor", debtKind: "installment_purchase", currencyCode: "PEN",
+  originDate: "2027-01-10", trackingStartDate: "2027-01-10", originalPrincipal: 1000, openingPrincipalBalance: 1000,
+  plannedInstallmentCount: 10, plannedInstallmentAmount: 120, installmentAmountMode: "fixed", paymentFrequency: "monthly",
+  customFrequencyDays: null, firstDueDate: "2027-02-10", teaPercent: null, tceaPercent: null, notes: "", status: "active",
+  isArchived: false, createdByUserId: "user-1", createdAt: "2027-01-01T00:00:00Z", updatedAt: "2027-01-01T00:00:00Z",
+  repaymentStructure: "fixed_schedule", interestCalculationMode: "contract_periodic_rate", periodicRatePercent: null,
+  periodicRateBasis: null, minimumPrincipalPayment: null,
+};
+
+function event(overrides: Partial<DebtEvent>): DebtEvent {
+  return { id: "event-1", debtId: debt.id, eventDate: "2027-02-10", eventType: "payment", cashAmount: 100, principalDelta: -100, interestPaid: 0, feesPaid: 0, insurancePaid: 0, otherCostPaid: 0, breakdownComplete: true, movementId: "movement-1", reversalOfEventId: null, description: "Pago", registeredByUserId: "user-1", createdAt: "2027-02-10T00:00:00Z", ...overrides };
+}
+
+describe("universal debt contract engine", () => {
+  it("calculates TNA nominal simple using actual days and preserves null when basis is unknown", () => {
+    expect(calculateNominalAnnualSimpleInterest({ principal: 1000, annualRatePercent: 23, elapsedDays: 30, dayCountBasis: "actual_days_360" })).toBe(19.17);
+    expect(calculateNominalAnnualSimpleInterest({ principal: 1000, annualRatePercent: 23, elapsedDays: 30, dayCountBasis: "actual_days_365" })).toBe(18.9);
+    expect(calculateNominalAnnualSimpleInterest({ principal: 1000, annualRatePercent: 23, elapsedDays: 30, dayCountBasis: "unknown" })).toBeNull();
+  });
+
+  it("does not turn an unknown fee formula into zero", () => {
+    expect(calculateKnownDebtFee({ ruleType: "unknown", rule: {}, baseAmount: 1000 })).toBeNull();
+    expect(calculateKnownDebtFee({ ruleType: "percentage", rule: { percent: 1.5 }, baseAmount: 1000 })).toBe(15);
+  });
+
+  it("detects overpayment without choosing a creditor allocation", () => {
+    expect(detectDebtPaymentExcess({ cashAmount: 125, contractualAmount: 100 })).toBe(25);
+    expect(detectDebtPaymentExcess({ cashAmount: 100.01, contractualAmount: 100 })).toBe(0);
+    expect(detectDebtPaymentExcess({ cashAmount: 125, contractualAmount: null })).toBeNull();
+  });
+
+  it("derives a structure-driven state with reversal-aware principal", () => {
+    const snapshot = deriveUniversalDebtState({ debt, events: [event({}), event({ id: "reversal-1", eventType: "reversal", cashAmount: 0, principalDelta: 0, breakdownComplete: false, movementId: null, reversalOfEventId: "event-1" })] });
+    expect(snapshot.currentPrincipal).toBe(1000);
+    expect(snapshot.effectiveEventCount).toBe(0);
+    expect(isFixedScheduleDebt(debt)).toBe(true);
+  });
+
+  it("keeps refinancing comparison unknown instead of claiming savings", () => {
+    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: null, sourceRemainingInterest: 100, sourceRemainingFees: null, sourceRemainingInsurance: 0, targetPrincipal: 900, targetRemainingPayments: 1100, cashContribution: 0, refinanceCosts: 0 })).toMatchObject({ status: "insufficient_info", sourceTotal: null, difference: null });
+    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: null, sourceRemainingInterest: 100, sourceRemainingFees: 0, sourceRemainingInsurance: 0, targetPrincipal: 900, targetRemainingPayments: null, targetRemainingInterest: 80, targetRemainingFees: 0, targetRemainingInsurance: 0, cashContribution: 0, refinanceCosts: 0 })).toMatchObject({ status: "known", sourceTotal: 1100, targetTotal: 980, difference: 120 });
+    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: 1300, sourceRemainingInterest: 100, sourceRemainingFees: null, sourceRemainingInsurance: null, targetPrincipal: 900, targetRemainingPayments: 1100, targetRemainingInterest: null, targetRemainingFees: null, targetRemainingInsurance: null, cashContribution: 0, refinanceCosts: 0 })).toMatchObject({ status: "known", sourceTotal: 1300, targetTotal: 1100, difference: 200 });
+    expect(compareRefinancing({ sourcePrincipal: 1000, sourceRemainingPayments: 1300, targetPrincipal: 900, targetRemainingPayments: 1100, cashContribution: 100, refinanceCosts: 25 })).toMatchObject({ status: "known", targetTotal: 1225, difference: 75 });
+  });
+
+  it("normalizes universal document rows without collapsing null into zero", () => {
+    const normalized = normalizeUniversalDebtDocument({ kind: "schedule", authority: classifyDebtDocumentAuthority({ contractualDocument: false, officialButNonContractual: true }), rows: [{ due_date: "2027-01-10", expected_principal: "100", expected_interest: "0" }] });
+    expect(normalized.rows[0].expectedPrincipal).toBe(100);
+    expect(normalized.rows[0].expectedAmount).toBeNull();
+    expect(reconcileUniversalDebtDocument(normalized.rows, 100).status).toBe("exact");
+  });
+
+  it("ships the sanitized 129-row direct-real-estate fixture with the requested phases", () => {
+    const fixture = createDirectRealEstateFixture();
+    expect(fixture.rows).toHaveLength(129);
+    expect(fixture.assetPrice).toBe(85000);
+    expect(fixture.downPaymentAmount).toBe(8500);
+    expect(fixture.financedPrincipalAmount).toBe(76500);
+    expect(fixture.rows[0]).toMatchObject({ rowRole: "down_payment", expectedAmount: 8500, expectedPrincipal: 8500, reportedBalance: 76500 });
+    expect(fixture.rows.slice(1, 9).every((row) => row.expectedAmount === 1062.5 && row.expectedInterest === 0)).toBe(true);
+    expect(fixture.rows[8].reportedBalance).toBe(68000);
+    expect(fixture.rows[9].phase).toBe("tna_actual_days_360");
+    expect(fixture.rows[9]).toMatchObject({ expectedPrincipal: 141.97, expectedInterest: 1303.33, expectedFees: 155.06, expectedAmount: 1600.36, reportedBalance: 67858.03 });
+    expect(fixture.rows[10]).toMatchObject({ expectedPrincipal: 95.97, expectedInterest: 1343.97, expectedFees: 160.42, expectedAmount: 1600.36, reportedBalance: 67762.06 });
+    expect(fixture.rows[128]).toMatchObject({ expectedPrincipal: 1566.43, expectedInterest: 31.02, expectedFees: 3.71, expectedAmount: 1601.16, reportedBalance: 0 });
+    expect(fixture.rows.reduce((sum, row) => sum + (row.expectedPrincipal ?? 0), 0)).toBeCloseTo(85000, 8);
+    expect(fixture.rows.reduce((sum, row) => sum + (row.expectedInterest ?? 0), 0)).toBeCloseTo(110837.54, 8);
+    expect(fixture.rows.reduce((sum, row) => sum + (row.expectedFees ?? 0), 0)).toBeCloseTo(13206.46, 8);
+    expect(fixture.rows.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0)).toBeCloseTo(209044, 8);
+  });
+
+  it.each([28, 29, 30, 31, 47])( "calculates TNA simple interest for irregular period %i", (days) => {
+    expect(calculateNominalAnnualSimpleInterest({ principal: 68000, annualRatePercent: 23, elapsedDays: days, dayCountBasis: "actual_days_360" })).toBe(
+      Math.round(68000 * 0.23 * days / 360 * 100) / 100,
+    );
+  });
+
+  it("keeps proforma authority separate from exact reconciliation and preserves null", () => {
+    const normalized = normalizeUniversalDebtDocument({
+      kind: "schedule",
+      authority: classifyDebtDocumentAuthority({ contractualDocument: false, officialButNonContractual: true }),
+      rows: [
+        { due_date: "2027-01-10", opening_balance: "1000", expected_principal: "1000", expected_interest: "0", reported_balance: "0", evidence: { source: "proforma" } },
+        { due_date: "2027-02-10", expected_amount: null, expected_principal: null },
+      ],
+    });
+    expect(normalized.authority).toBe("official_noncontractual");
+    expect(normalized.rows[0]).toMatchObject({ openingBalance: 1000, endingBalance: 0, authority: "official_noncontractual", evidence: { source: "proforma" } });
+    expect(normalized.rows[1].expectedAmount).toBeNull();
+    expect(reconcileUniversalDebtDocument(normalized.rows, 1000).status).toBe("exact");
+  });
+
+  it("includes a known tax exactly once while preserving unknown tax as reviewable", () => {
+    expect(validateUniversalScheduleArithmetic({ expectedAmount: 110, expectedPrincipal: 80, expectedInterest: 20, expectedFees: 5, expectedInsurance: 0, expectedTaxes: 5 })).toBe(true);
+    expect(validateUniversalScheduleArithmetic({ expectedAmount: 105, expectedPrincipal: 80, expectedInterest: 20, expectedFees: 5, expectedInsurance: 0 })).toBe(true);
+    expect(validateUniversalScheduleArithmetic({ expectedAmount: 110, expectedPrincipal: 80, expectedInterest: 20, expectedFees: 5, expectedInsurance: 0, expectedTaxes: 4 })).toBe(false);
+  });
+
+  it("uses effective direct allocations for partial and carried residuals", () => {
+    const installment: DebtInstallment = { id: "installment-1", scheduleVersionId: "schedule-1", debtId: debt.id, installmentNumber: 1, dueDate: "2027-02-10", expectedAmount: 1000, expectedPrincipal: 800, expectedInterest: 150, expectedFees: 50, expectedInsurance: 0, createdByUserId: "user-1", createdAt: "2027-01-01T00:00:00Z" };
+    const partial = deriveUniversalDebtState({ debt, events: [event({ id: "partial-event", cashAmount: 400, principalDelta: -400, eventDate: "2027-02-01" })], installments: [installment], allocations: [{ id: "allocation-1", eventId: "partial-event", installmentId: installment.id, debtId: debt.id, allocatedAmount: 400, createdByUserId: "user-1", createdAt: "2027-02-01T00:00:00Z" }] });
+    expect(partial.nextInstallmentAmount).toBe(600);
+    expect(partial.remainingProjectedTotalCash).toBe(600);
+    expect(partial.remainingProjectedInterest).toBeNull();
+    const carried = deriveUniversalDebtState({ debt, events: [event({ id: "old-event", eventDate: "2027-01-15" })], installments: [installment], allocations: [{ id: "old-allocation", eventId: "old-event", installmentId: "another-installment", debtId: debt.id, allocatedAmount: 250, createdByUserId: "user-1", createdAt: "2027-01-15T00:00:00Z" }], carriedAllocations: [{ id: "carried-1", restoredInstallmentId: installment.id, sourceEventId: "old-event", sourceAllocationId: "old-allocation", debtId: debt.id, householdId: "household-1", allocatedAmount: 250, createdByUserId: "user-1", createdAt: "2027-02-01T00:00:00Z" }] });
+    expect(carried.nextInstallmentAmount).toBe(750);
+  });
+
+  it("simulates a non-bank fixed debt with TNA actual/360 and refuses schedule-only terms", () => {
+    const result = simulateUniversalDebtPrepayment({ effect: "reduce_term", principalBeforeOperation: 1000, principalPaid: 100, operationDate: "2027-01-01", currentSchedule: [{ installmentNumber: 1, contractualInstallmentNumber: 1, dueDate: "2027-02-01", expectedAmount: 600, expectedPrincipal: 500, expectedInterest: 100, expectedFees: 0, expectedInsurance: 0, expectedTaxes: 0 }, { installmentNumber: 2, contractualInstallmentNumber: 2, dueDate: "2027-03-01", expectedAmount: 600, expectedPrincipal: 500, expectedInterest: 100, expectedFees: 0, expectedInsurance: 0, expectedTaxes: 0 }], contract: { repaymentStructure: "fixed_schedule", interestRateType: "nominal_annual_simple", interestRatePercent: 36, interestRateBasis: null, dayCountBasis: "actual_days_360", feeRuleType: "fixed", feeRule: { amount: 0 }, prepaymentTerms: {} } });
+    expect(result.principalAfter).toBe(900);
+    expect(result.status).toBe("calculated");
+    expect(result.rows[0].interest).toBe(27.9);
+    const unknown = simulateUniversalDebtPrepayment({ effect: "reduce_installment", principalBeforeOperation: 1000, principalPaid: 100, operationDate: "2027-01-01", currentSchedule: [{ installmentNumber: 1, contractualInstallmentNumber: 1, dueDate: "2027-02-01", expectedAmount: 600, expectedPrincipal: 500, expectedInterest: 100, expectedFees: null, expectedInsurance: 0, expectedTaxes: 0 }], contract: { repaymentStructure: "fixed_schedule", interestRateType: "contract_schedule", interestRatePercent: null, interestRateBasis: null, dayCountBasis: "unknown", feeRuleType: "unknown", feeRule: {}, prepaymentTerms: {} } });
+    expect(unknown.status).toBe("insufficient_data");
+    expect(unknown.canPersist).toBe(false);
+  });
+
+  it.each(["contract_schedule_only", "unknown"] as const)("does not copy original schedule fees into a post-prepayment schedule for %s", (feeRuleType) => {
+    const result = simulateUniversalDebtPrepayment({
+      effect: "reduce_term",
+      principalBeforeOperation: 1000,
+      principalPaid: 100,
+      operationDate: "2027-01-01",
+      currentSchedule: [
+        { installmentNumber: 1, contractualInstallmentNumber: 1, dueDate: "2027-02-01", expectedAmount: 600, expectedPrincipal: 500, expectedInterest: 100, expectedFees: 75, expectedInsurance: 0, expectedTaxes: 0 },
+        { installmentNumber: 2, contractualInstallmentNumber: 2, dueDate: "2027-03-01", expectedAmount: 600, expectedPrincipal: 500, expectedInterest: 100, expectedFees: 75, expectedInsurance: 0, expectedTaxes: 0 },
+      ],
+      contract: { repaymentStructure: "fixed_schedule", interestRateType: "nominal_annual_simple", interestRatePercent: 36, interestRateBasis: null, dayCountBasis: "actual_days_360", feeRuleType, feeRule: {}, prepaymentTerms: {} },
+    });
+    expect(result.principalAfter).toBe(900);
+    expect(result.rows[0]).toMatchObject({ interest: 27.9, fees: null, total: null });
+    expect(result.newEstimatedInterest).not.toBeNull();
+    expect(result.status).toBe("calculated_with_warnings");
+    expect(result.canPersist).toBe(false);
+    expect(result.rows.every((row) => row.fees === null)).toBe(true);
+  });
+
+  const simulationContract = {
+    repaymentStructure: "fixed_schedule" as const,
+    interestRateType: "nominal_annual_simple" as const,
+    interestRatePercent: 36,
+    interestRateBasis: null,
+    dayCountBasis: "actual_days_360" as const,
+    feeRuleType: "fixed" as const,
+    feeRule: { amount: 0 },
+    prepaymentTerms: {},
+  };
+
+  function simulateCostScenario(overrides: {
+    expectedInsurance?: number | null;
+    expectedTaxes?: number | null;
+    expectedFees?: number | null;
+    contractFeeRuleType?: "fixed" | "unknown";
+    insuranceTerms?: Array<{ pricingMode: "fixed_amount" | "percent_outstanding_balance" | "percent_original_principal" | "contract_schedule" | "unknown"; ratePercent: number | null; fixedAmount: number | null; rateBasis: string | null; isRequired: boolean }>;
+    originalPrincipal?: number | null;
+    originalTermInstallments?: number | null;
+  } = {}) {
+    const row = {
+      installmentNumber: 1,
+      contractualInstallmentNumber: 1,
+      dueDate: "2027-02-01",
+      expectedAmount: 600,
+      expectedPrincipal: 500,
+      expectedInterest: 100,
+      expectedFees: overrides.expectedFees === undefined ? 0 : overrides.expectedFees,
+      expectedInsurance: overrides.expectedInsurance === undefined ? 0 : overrides.expectedInsurance,
+      expectedTaxes: overrides.expectedTaxes === undefined ? 0 : overrides.expectedTaxes,
+    };
+    return simulateUniversalDebtPrepayment({
+      effect: "reduce_term",
+      principalBeforeOperation: 1000,
+      principalPaid: 100,
+      operationDate: "2027-01-01",
+      originalPrincipal: overrides.originalPrincipal,
+      originalTermInstallments: overrides.originalTermInstallments,
+      currentSchedule: [row, { ...row, installmentNumber: 2, contractualInstallmentNumber: 2, dueDate: "2027-03-01" }],
+      contract: { ...simulationContract, feeRuleType: overrides.contractFeeRuleType ?? simulationContract.feeRuleType, feeRule: overrides.contractFeeRuleType === "unknown" ? {} : simulationContract.feeRule },
+      insuranceTerms: overrides.insuranceTerms,
+    });
+  }
+
+  it("does not copy positive historical insurance when no insurance rule exists", () => {
+    const result = simulateCostScenario({ expectedInsurance: 25 });
+    expect(result.rows[0]).toMatchObject({ insurance: null, total: null });
+    expect(result.status).toBe("calculated_with_warnings");
+    expect(result.canPersist).toBe(false);
+    expect(result.principalAfter).toBe(900);
+    expect(result.rows[0]?.interest).toBe(27.9);
+  });
+
+  it("recalculates insurance from the new outstanding balance", () => {
+    const result = simulateCostScenario({
+      expectedInsurance: 25,
+      insuranceTerms: [{ pricingMode: "percent_outstanding_balance", ratePercent: 1, fixedAmount: null, rateBasis: null, isRequired: true }],
+    });
+    expect(result.rows[0]?.insurance).toBe(9);
+    expect(result.rows[0]?.insurance).not.toBe(25);
+    expect(result.canPersist).toBe(true);
+  });
+
+  it("keeps fixed per-installment insurance known", () => {
+    const result = simulateCostScenario({
+      expectedInsurance: 25,
+      insuranceTerms: [{ pricingMode: "fixed_amount", ratePercent: null, fixedAmount: 12, rateBasis: "per_installment", isRequired: true }],
+    });
+    expect(result.rows.every((row) => row.insurance === 12)).toBe(true);
+    expect(result.canPersist).toBe(true);
+  });
+
+  it("uses original principal for a supported percentage insurance rule", () => {
+    const result = simulateCostScenario({
+      expectedInsurance: 25,
+      originalPrincipal: 1000,
+      insuranceTerms: [{ pricingMode: "percent_original_principal", ratePercent: 1, fixedAmount: null, rateBasis: null, isRequired: true }],
+    });
+    expect(result.rows.every((row) => row.insurance === 10)).toBe(true);
+    expect(result.canPersist).toBe(true);
+  });
+
+  it("keeps total-credit-even insurance known only with original-term allocation inputs", () => {
+    const known = simulateCostScenario({
+      expectedInsurance: 25,
+      originalTermInstallments: 2,
+      insuranceTerms: [{ pricingMode: "fixed_amount", ratePercent: null, fixedAmount: 20, rateBasis: "total_credit_even", isRequired: true }],
+    });
+    expect(known.rows.every((row) => row.insurance === 10)).toBe(true);
+    expect(known.canPersist).toBe(true);
+
+    const unknown = simulateCostScenario({
+      expectedInsurance: 25,
+      insuranceTerms: [{ pricingMode: "fixed_amount", ratePercent: null, fixedAmount: 20, rateBasis: "total_credit_even", isRequired: true }],
+    });
+    expect(unknown.rows.every((row) => row.insurance === null)).toBe(true);
+    expect(unknown.canPersist).toBe(false);
+  });
+
+  it("does not copy positive historical taxes without a supported tax rule", () => {
+    const result = simulateCostScenario({ expectedTaxes: 5 });
+    expect(result.rows[0]).toMatchObject({ taxes: null, total: null });
+    expect(result.status).toBe("calculated_with_warnings");
+    expect(result.canPersist).toBe(false);
+  });
+
+  it("keeps missing historical taxes unknown instead of treating them as zero", () => {
+    const result = simulateCostScenario({ expectedTaxes: null });
+    expect(result.rows[0]).toMatchObject({ taxes: null, total: null });
+    expect(result.canPersist).toBe(false);
+  });
+
+  it("allows explicit zero taxes when no tax product or rule is evidenced", () => {
+    const result = simulateCostScenario({ expectedTaxes: 0 });
+    expect(result.rows.every((row) => row.taxes === 0)).toBe(true);
+    expect(result.rows.every((row) => row.total != null)).toBe(true);
+    expect(result.canPersist).toBe(true);
+  });
+
+  it("persists a complete schedule when fees, insurance, and taxes are known", () => {
+    const result = simulateCostScenario({
+      expectedInsurance: 25,
+      expectedTaxes: 0,
+      insuranceTerms: [{ pricingMode: "fixed_amount", ratePercent: null, fixedAmount: 12, rateBasis: "per_installment", isRequired: true }],
+    });
+    expect(result.rows.every((row) => row.fees != null && row.insurance != null && row.taxes != null && row.total != null)).toBe(true);
+    expect(result.status).toBe("calculated");
+    expect(result.canPersist).toBe(true);
+  });
+
+  it.each([
+    { label: "unknown fee", expectedFees: 5, contractFeeRuleType: "unknown" as const },
+    { label: "unknown insurance", expectedInsurance: 25 },
+    { label: "unknown tax", expectedTaxes: 5 },
+  ])("refuses persistence when $label affects future totals", (scenario) => {
+    const result = simulateCostScenario({
+      expectedFees: scenario.expectedFees,
+      expectedInsurance: scenario.expectedInsurance,
+      expectedTaxes: scenario.expectedTaxes,
+      contractFeeRuleType: scenario.contractFeeRuleType,
+    });
+    expect(result.status).toBe("calculated_with_warnings");
+    expect(result.canPersist).toBe(false);
+    expect(result.rows[0]?.total).toBeNull();
+  });
+
+  it.each([
+    ["effective_annual", null],
+    ["effective_periodic", "monthly"],
+  ] as const)("simulates non-bank fixed debt with %s", (interestRateType, interestRateBasis) => {
+    const result = simulateUniversalDebtPrepayment({
+      effect: "reduce_term",
+      principalBeforeOperation: 1000,
+      principalPaid: 100,
+      operationDate: "2027-01-01",
+      currentSchedule: [
+        { installmentNumber: 1, contractualInstallmentNumber: 1, dueDate: "2027-02-01", expectedAmount: 600, expectedPrincipal: 500, expectedInterest: 100, expectedFees: 0, expectedInsurance: 0, expectedTaxes: 0 },
+        { installmentNumber: 2, contractualInstallmentNumber: 2, dueDate: "2027-03-01", expectedAmount: 600, expectedPrincipal: 500, expectedInterest: 100, expectedFees: 0, expectedInsurance: 0, expectedTaxes: 0 },
+      ],
+      contract: { repaymentStructure: "fixed_schedule", interestRateType, interestRatePercent: 12, interestRateBasis, dayCountBasis: "unknown", feeRuleType: "fixed", feeRule: { amount: 0 }, prepaymentTerms: {} },
+    });
+    expect(result.status).toBe("calculated");
+    expect(result.canPersist).toBe(true);
+    expect(result.rows.length).toBeGreaterThan(0);
+  });
+
+  it("passes the 129-row fixture through the same V2 parser and mapper used by the UI", () => {
+    const fixture = createDirectRealEstateFixture();
+    const review = parseUniversalDebtExternalAiResponse(JSON.stringify({ schema: "CAJA_FAMILIAR_DEBT_DOCUMENT_V2", kind: "schedule", authority: "official_noncontractual", authorityEvidence: "proforma_non_binding", contract: { assetPrice: fixture.assetPrice, downPaymentAmount: fixture.downPaymentAmount, financedPrincipalAmount: fixture.financedPrincipalAmount, scheduledPrincipalAmount: fixture.scheduledPrincipalAmount, principalBasis: "asset_price_including_down_payment", interestRateType: "nominal_annual_simple", interestRatePercent: 23, dayCountBasis: "actual_days_360", feeRuleType: "contract_schedule_only", prepaymentTerms: { futureInterestWaiver: null, futureFeeWaiver: null, penalties: null, administrativeCharges: null, instrumentReleaseCharges: null, taxPercentage: null } }, rows: fixture.rows }), fixture.scheduledPrincipalAmount);
+    const mapped = mapUniversalDocumentRowsToSchedule(review);
+    expect(review.isAuthoritative).toBe(false);
+    expect(review.warnings.join(" ")).toContain("PROFORMA");
+    expect(review.normalized.authority).toBe("official_noncontractual");
+    expect(review.authorityEvidence).toBe("proforma_non_binding");
+    expect(review.contract).toMatchObject({ assetPrice: 85000, downPaymentAmount: 8500, financedPrincipalAmount: 76500, scheduledPrincipalAmount: 85000, principalBasis: "asset_price_including_down_payment", interestRateType: "nominal_annual_simple", interestRatePercent: 23, dayCountBasis: "actual_days_360", feeRuleType: "contract_schedule_only", prepaymentTerms: { taxPercentage: null } });
+    expect(mapped).toHaveLength(129);
+    expect(review.reconciliation.status).toBe("exact");
+    expect(mapped[0]).toMatchObject({ expectedPrincipal: 8500, expectedAmount: 8500, rowRole: "down_payment" });
+    expect(mapped.slice(1).reduce((sum, row) => sum + (row.expectedPrincipal ?? 0), 0)).toBeCloseTo(fixture.financedPrincipalAmount, 8);
+    expect(mapped[8]?.expectedInterest).toBe(0);
+    expect(mapped[9]).toMatchObject({ expectedInterest: 1303.33 });
+    expect(mapped.reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0)).toBeCloseTo(209044, 8);
+  });
+
+  it("publishes the complete contract extraction semantics in the External AI V2 prompt", () => {
+    for (const field of ["assetPrice", "downPaymentAmount", "financedPrincipalAmount", "scheduledPrincipalAmount", "principalBasis", "repaymentStructure", "amortizationMethod", "installmentAmountMode", "paymentFrequency", "customFrequencyDays", "firstDueDate", "interestRateType", "interestRatePercent", "interestRateBasis", "dayCountBasis", "feeRuleType", "feeRule", "prepaymentTerms", "authorityEvidence"]) {
+      expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain(field);
+    }
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("null != 0");
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("no uses TCEA como interés de cuota");
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("no conviertas TNA a TEA");
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("Nunca inventes un porcentaje de IGV");
+    expect(UNIVERSAL_EXTERNAL_AI_PROMPT).toContain("PII");
+  });
+});

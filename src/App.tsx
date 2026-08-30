@@ -152,6 +152,8 @@ const EMPTY_APP_DATA: AppData = {
   initialBalance: 0,
   financialAccounts: [],
   debts: [],
+  debtFinancingContracts: [],
+  debtRefinancingLinks: [],
   debtEvents: [],
   debtScheduleVersions: [],
   debtInstallments: [],
@@ -1646,6 +1648,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
                 creditCardEntries={data.creditCardEntries}
                 cardStatements={data.creditCardStatements}
                 bankLoanProfiles={data.bankLoanProfiles}
+                debtFinancingContract={data.debtFinancingContracts?.find((contract) => contract.debtId === selectedDebt.id) ?? null}
                 debtInsuranceTerms={data.debtInsuranceTerms}
                 allDebts={data.debts}
                 canWriteDebt={canWriteDebt}
@@ -1722,6 +1725,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               categories={data.categories}
               currentPrincipal={currentDebtPrincipal(selectedDebt, data.debtEvents)}
               bankLoanProfile={data.bankLoanProfiles?.find((profile) => profile.debtId === selectedDebt.id) ?? null}
+              debtFinancingContract={data.debtFinancingContracts?.find((contract) => contract.debtId === selectedDebt.id) ?? null}
               debtInsuranceTerms={(data.debtInsuranceTerms ?? []).filter((term) => term.debtId === selectedDebt.id)}
               canWriteDebt={canWriteDebt}
               onSaved={handleDebtOperationSaved}

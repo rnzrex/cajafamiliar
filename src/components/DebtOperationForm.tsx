@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import { ArrowLeft, AlertCircle } from "lucide-react";
-import type { BankLoanProfile, Category, Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtInsuranceTerms, DebtScheduleVersion, FinancialAccount, PrepaymentEffect } from "../types";
+import type { BankLoanProfile, Category, Debt, DebtEvent, DebtEventInstallmentAllocation, DebtInstallment, DebtInstallmentCarriedAllocation, DebtInsuranceTerms, DebtScheduleVersion, FinancialAccount, PrepaymentEffect, DebtFinancingContract } from "../types";
 import { recordDebtPayment, recordDebtPrepayment, recordDebtPayoff, reverseDebtEvent, recordDebtInstallmentAdvance } from "../services/dataRepository";
 import type { DebtOperationSaveResult } from "../services/authoritativeSync";
 import { makeUuid } from "../utils/storage";
 import { localDateString } from "../utils/date";
-import { translateDebtError, validateDebtPayment, validateDebtPrepayment, validateDebtPayoff, validateDebtAllocations, debtEconomicSummary } from "../utils/debtViewModel";
+import { detectDebtPaymentExcess, translateDebtError, validateDebtPayment, validateDebtPrepayment, validateDebtPayoff, validateDebtAllocations, debtEconomicSummary } from "../utils/debtViewModel";
+import type { DebtPaymentExcessClassification } from "../utils/debtViewModel";
 import { totalAllocatedAmountForInstallment } from "../utils/debtCalculations";
 import { calculateAssistedInterestSuggestion, getLastEffectiveDebtPaymentDate } from "../utils/debtInterestEngine";
 import { calculateNextPayment } from "../utils/debtNextPayment";
@@ -15,6 +16,8 @@ import { getDebtReversalScheduleBaseline } from "../utils/debtReversalSchedule.j
 import { DebtScheduleUpdateForm } from "./DebtScheduleUpdateForm.js";
 import { BankSchedulePreview } from "./BankSchedulePreview.js";
 import { simulateBankPrepayment } from "../utils/bankPrepaymentSimulation.js";
+import { isFixedScheduleDebt, validateUniversalScheduleArithmetic } from "../utils/universalDebtContract.js";
+import { simulateUniversalDebtPrepayment, type UniversalDebtSimulationResult } from "../utils/universalDebtSimulation.js";
 
 function assertNever(value: never): never {
   throw new Error(`Operación de deuda no soportada: ${String(value)}`);
@@ -29,6 +32,7 @@ export type ScheduleDraftRow = {
   expectedInterest: string;
   expectedFees: string;
   expectedInsurance: string;
+  expectedTaxes?: string;
   reportedBalance: string;
 };
 
@@ -42,6 +46,7 @@ function toScheduleDraftRow(installment: DebtInstallment): ScheduleDraftRow {
     expectedInterest: installment.expectedInterest == null ? "" : String(installment.expectedInterest),
     expectedFees: installment.expectedFees == null ? "" : String(installment.expectedFees),
     expectedInsurance: installment.expectedInsurance == null ? "" : String(installment.expectedInsurance),
+    expectedTaxes: installment.expectedTaxes == null ? "" : String(installment.expectedTaxes),
     reportedBalance: installment.reportedBalance == null ? "" : String(installment.reportedBalance),
   };
 }
@@ -57,6 +62,7 @@ function toScheduleInstallmentInput(row: ScheduleDraftRow, index: number, includ
     expectedInterest: numberOrNull(row.expectedInterest),
     expectedFees: numberOrNull(row.expectedFees),
     expectedInsurance: numberOrNull(row.expectedInsurance),
+    ...((row.expectedTaxes ?? "").trim() !== "" ? { expectedTaxes: numberOrNull(row.expectedTaxes ?? "") } : {}),
     ...(includeReportedBalance && row.reportedBalance.trim() !== "" ? { reportedBalance: numberOrNull(row.reportedBalance) } : {}),
   };
 }
@@ -73,10 +79,11 @@ export function validateStrictScheduleDraft(rows: ScheduleDraftRow[], eventDate:
     const row = rows[index];
     const values = [row.expectedAmount, row.expectedPrincipal, row.expectedInterest, row.expectedFees, row.expectedInsurance];
     const numbers = values.map(Number);
+    const taxes = (row.expectedTaxes ?? "").trim() === "" ? null : Number(row.expectedTaxes);
     const contractualNumber = row.contractualInstallmentNumber;
     const reportedBalance = row.reportedBalance.trim() === "" ? null : Number(row.reportedBalance);
     const previousContractualNumber = index > 0 ? rows[index - 1].contractualInstallmentNumber : null;
-    const components = numbers[1] + numbers[2] + numbers[3] + numbers[4];
+    const arithmeticValid = validateUniversalScheduleArithmetic({ expectedAmount: numbers[0], expectedPrincipal: numbers[1], expectedInterest: numbers[2], expectedFees: numbers[3], expectedInsurance: numbers[4], expectedTaxes: taxes });
     if (
       !row.dueDate ||
       (reason !== "reversal" && row.dueDate <= eventDate) ||
@@ -86,7 +93,8 @@ export function validateStrictScheduleDraft(rows: ScheduleDraftRow[], eventDate:
       numbers.slice(1).some((value) => value < 0) ||
       (contractualNumber != null && (!Number.isInteger(contractualNumber) || contractualNumber <= 0)) ||
       (reportedBalance != null && (!Number.isFinite(reportedBalance) || reportedBalance < 0)) ||
-      Math.abs(components - numbers[0]) > 0.01 ||
+      !arithmeticValid ||
+      (taxes != null && (!Number.isFinite(taxes) || taxes < 0)) ||
       (index > 0 && row.dueDate <= rows[index - 1].dueDate) ||
       (contractualNumber != null && previousContractualNumber != null && contractualNumber <= previousContractualNumber) ||
       (contractualNumber != null && rows.slice(0, index).some((previous) => previous.contractualInstallmentNumber === contractualNumber))
@@ -109,6 +117,7 @@ interface DebtOperationFormProps {
   categories: Category[];
   currentPrincipal: number;
   bankLoanProfile?: BankLoanProfile | null;
+  debtFinancingContract?: DebtFinancingContract | null;
   debtInsuranceTerms?: DebtInsuranceTerms[];
   canWriteDebt?: boolean;
   persistedAllocations: DebtEventInstallmentAllocation[];
@@ -129,6 +138,7 @@ export function DebtOperationForm({
   accounts,
   currentPrincipal,
   bankLoanProfile = null,
+  debtFinancingContract = null,
   debtInsuranceTerms = [],
   canWriteDebt = true,
   persistedAllocations,
@@ -142,7 +152,12 @@ export function DebtOperationForm({
   const [reversalEventId] = useState(() => makeUuid());
 
   const isFlexOpenEnded = debt.repaymentStructure === "open_ended";
+  const isUniversalFixedSchedule = isFixedScheduleDebt(debt, debtFinancingContract);
+  const isNonBankFixedSchedule = isUniversalFixedSchedule && debt.debtKind !== "bank_loan";
   const isBankFixedSchedule = debt.debtKind === "bank_loan" && debt.repaymentStructure === "fixed_schedule";
+  const creditorTerm = isBankFixedSchedule ? "banco" : "acreedor";
+  const pendingScheduleLabel = isBankFixedSchedule ? "BANCO TODAVÍA NO ME ENTREGA EL NUEVO CRONOGRAMA" : "EL ACREEDOR TODAVÍA NO ME ENTREGA EL NUEVO CRONOGRAMA";
+  const pendingScheduleChoiceText = isBankFixedSchedule ? "Banco todavía no entrega cronograma" : "El acreedor todavía no entrega cronograma";
   const initialNextPayment = calculateNextPayment({ debt, debtEvents, currentPrincipal });
 
   let initialPayoffCash = "";
@@ -214,10 +229,11 @@ export function DebtOperationForm({
   const [principalAmount, setPrincipalAmount] = useState(initialPrefillPrincipal);
   const [extraPrincipalAmount, setExtraPrincipalAmount] = useState("0");
   const [prepaymentEffect, setPrepaymentEffect] = useState<PrepaymentEffect>(() =>
-    isBankFixedSchedule && (operationType === "prepayment" || paymentWithExtraPrincipal)
+    isUniversalFixedSchedule && (operationType === "prepayment" || paymentWithExtraPrincipal)
       ? "pending_bank_schedule"
       : "unknown"
   );
+  const [paymentExcessClassification, setPaymentExcessClassification] = useState<DebtPaymentExcessClassification | null>(null);
   const [interestPaid, setInterestPaid] = useState(initialPrefillInterest);
   const [feesPaid, setFeesPaid] = useState("0");
   const [insurancePaid, setInsurancePaid] = useState("0");
@@ -281,7 +297,7 @@ export function DebtOperationForm({
   const [scheduleNotes, setScheduleNotes] = useState(() =>
     operationType === "reversal" ? previousScheduleVersion?.notes ?? "" : ""
   );
-  const [simulation, setSimulation] = useState<ReturnType<typeof simulateBankPrepayment> | null>(null);
+  const [simulation, setSimulation] = useState<(ReturnType<typeof simulateBankPrepayment> | UniversalDebtSimulationResult) | null>(null);
   const [calculatedSimulationFingerprint, setCalculatedSimulationFingerprint] = useState("");
   const [simulationAccepted, setSimulationAccepted] = useState(false);
 
@@ -320,7 +336,18 @@ export function DebtOperationForm({
   const numFees = Number(feesPaid || 0);
   const numInsurance = Number(insurancePaid || 0);
   const numOtherCost = Number(otherCostPaid || 0);
+  const selectedContractualInstallment = operationType === "payment" ? currentScheduleInstallments[0] ?? null : null;
+  const paymentExcess = selectedContractualInstallment
+    ? detectDebtPaymentExcess({ cashAmount: numCash, contractualAmount: selectedContractualInstallment.expectedAmount })
+    : null;
+  // The BANK flow already has its audited explicit extra-principal path. The
+  // universal prompt is added only for non-bank fixed structures so that the
+  // legacy BANK UX and validation remain unchanged.
+  const requiresPaymentExcessClassification = isNonBankFixedSchedule && paymentExcess != null && paymentExcess > 0.01;
   const bankPrepaymentScenario = isBankFixedSchedule && (
+    operationType === "prepayment" || (operationType === "payment" && numExtraPrincipal > 0)
+  );
+  const universalPrepaymentScenario = isUniversalFixedSchedule && (
     operationType === "prepayment" || (operationType === "payment" && numExtraPrincipal > 0)
   );
   const simulationEffect = prepaymentEffect === "reduce_term" || prepaymentEffect === "reduce_installment"
@@ -347,12 +374,14 @@ export function DebtOperationForm({
         expectedInterest: row.expectedInterest,
         expectedFees: row.expectedFees,
         expectedInsurance: row.expectedInsurance,
+        expectedTaxes: row.expectedTaxes,
         reportedBalance: row.reportedBalance,
       })),
       currentScheduleSource: currentSchedule?.scheduleSource ?? null,
       currentScheduleAuthoritative: currentSchedule?.isAuthoritative === true,
+      debtFinancingContract,
     }),
-    [bankLoanProfile, currentPrincipal, currentSchedule?.isAuthoritative, currentSchedule?.scheduleSource, currentScheduleInstallments, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, eventDate, numExtraPrincipal, numPrincipal, operationType, simulationEffect],
+    [bankLoanProfile, currentPrincipal, currentSchedule?.isAuthoritative, currentSchedule?.scheduleSource, currentScheduleInstallments, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, debtFinancingContract, eventDate, numExtraPrincipal, numPrincipal, operationType, simulationEffect],
   );
   const simulationIsCurrent = simulation != null && calculatedSimulationFingerprint === simulationFingerprint;
   const simulationInput = useMemo(() => simulationEffect == null ? null : ({
@@ -361,22 +390,23 @@ export function DebtOperationForm({
     principalPaid: operationType === "payment" ? numPrincipal : 0,
     extraPrincipalPaid: operationType === "payment" ? numExtraPrincipal : numPrincipal,
     operationDate: eventDate,
-    originalPrincipal: bankLoanProfile?.financedAmount ?? debt.originalPrincipal,
+    originalPrincipal: debtFinancingContract?.financedPrincipalAmount ?? bankLoanProfile?.financedAmount ?? debt.originalPrincipal,
     teaPercent: debt.teaPercent,
     periodicRatePercent: debt.periodicRatePercent,
     periodicRateBasis: debt.periodicRateBasis,
       dayCountBasis: bankLoanProfile?.interestDayCountBasis,
-      originalTermInstallments: bankLoanProfile?.termInstallments,
+      originalTermInstallments: bankLoanProfile?.termInstallments ?? debt.plannedInstallmentCount,
       installmentTotalMode: bankLoanProfile?.installmentTotalMode,
     dueDateAdjustmentRule: bankLoanProfile?.dueDateAdjustmentRule,
       amortizationMethod: bankLoanProfile?.amortizationMethod,
       currentSchedule: currentScheduleInstallments,
       currentScheduleSource: currentSchedule?.scheduleSource ?? null,
       currentScheduleAuthoritative: currentSchedule?.isAuthoritative === true,
+      debtFinancingContract,
       insuranceTerms: debtInsuranceTerms,
       hasAllocatedFutureInstallments: currentScheduleInstallments.some((installment) => installment.dueDate > eventDate && totalAllocatedAmountForInstallment(installment, persistedAllocations, debtEvents, persistedCarriedAllocations) > 0.01),
       hasContractualDueDateForPayment: currentScheduleInstallments.some((installment) => installment.dueDate === eventDate),
-  }), [bankLoanProfile, currentPrincipal, currentSchedule?.isAuthoritative, currentSchedule?.scheduleSource, currentScheduleInstallments, debt.originalPrincipal, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, debtEvents, eventDate, numExtraPrincipal, numPrincipal, operationType, persistedAllocations, persistedCarriedAllocations, simulationEffect]);
+  }), [bankLoanProfile, currentPrincipal, currentSchedule?.isAuthoritative, currentSchedule?.scheduleSource, currentScheduleInstallments, debt.originalPrincipal, debt.periodicRateBasis, debt.periodicRatePercent, debt.teaPercent, debtInsuranceTerms, debtFinancingContract, debtEvents, eventDate, numExtraPrincipal, numPrincipal, operationType, persistedAllocations, persistedCarriedAllocations, simulationEffect]);
   const summary = debtEconomicSummary(
     numCash,
     operationType === "payoff" ? currentPrincipal : totalPrincipalAmount,
@@ -417,13 +447,29 @@ export function DebtOperationForm({
 
   const calculatePrepaymentSimulation = () => {
     if (!simulationInput) return;
-    const result = simulateBankPrepayment(simulationInput);
+    const result = isNonBankFixedSchedule
+      ? simulateUniversalDebtPrepayment({
+          effect: simulationInput.effect,
+          principalBeforeOperation: simulationInput.principalBeforeOperation,
+          principalPaid: simulationInput.principalPaid,
+          extraPrincipalPaid: simulationInput.extraPrincipalPaid,
+          operationDate: simulationInput.operationDate,
+          originalPrincipal: simulationInput.originalPrincipal,
+          originalTermInstallments: simulationInput.originalTermInstallments,
+          currentSchedule: currentScheduleInstallments,
+          contract: debtFinancingContract,
+          insuranceTerms: simulationInput.insuranceTerms,
+          currentScheduleSource: currentSchedule?.scheduleSource ?? null,
+          currentScheduleAuthoritative: currentSchedule?.isAuthoritative === true,
+          hasAllocatedFutureInstallments: simulationInput.hasAllocatedFutureInstallments,
+        })
+      : simulateBankPrepayment(simulationInput);
     setSimulation(result);
     setCalculatedSimulationFingerprint(simulationFingerprint);
     setSimulationAccepted(false);
   };
 
-  const effectiveSimulation = bankPrepaymentScenario && simulationEffect != null && simulationIsCurrent ? simulation : null;
+  const effectiveSimulation = universalPrepaymentScenario && simulationEffect != null && simulationIsCurrent ? simulation : null;
   const hasSelectedSchedule = operationType === "payment" ? hasNewPaymentSchedule : hasNewPrepaymentSchedule;
   const scheduleForSave = hasSelectedSchedule
     ? scheduleInstallments.map((row, index) => toScheduleInstallmentInput(row, index, newScheduleSource === "contractual"))
@@ -436,6 +482,7 @@ export function DebtOperationForm({
         expectedInterest: row.interest,
         expectedFees: row.fees,
         expectedInsurance: row.insurance,
+        expectedTaxes: "taxes" in row && typeof row.taxes === "number" ? row.taxes : null,
       })) ?? [];
   const scheduleSourceForSave = hasSelectedSchedule
     ? (bankPrepaymentScenario ? "contractual" as const : newScheduleSource)
@@ -467,17 +514,25 @@ export function DebtOperationForm({
     }
 
     if (operationType === "payment") {
-      if (isBankFixedSchedule && numExtraPrincipal > 0) {
+      if (requiresPaymentExcessClassification && paymentExcessClassification == null) {
+        setToast({ message: `Pagaste ${getCurrencySymbol(debt.currencyCode)} ${paymentExcess!.toFixed(2)} por encima de la obligación seleccionada. Indica cómo aplicó el ${creditorTerm} el excedente.`, type: "error" });
+        return;
+      }
+      if (requiresPaymentExcessClassification && paymentExcessClassification === "installment_advance") {
+        setToast({ message: "El excedente debe registrarse desde la operación 'Adelanto de cuotas' para conservar sus allocations y componentes contractuales.", type: "error" });
+        return;
+      }
+      if (isUniversalFixedSchedule && numExtraPrincipal > 0) {
         if ((simulationEffect != null) && !hasNewPaymentSchedule && (!effectiveSimulation || !effectiveSimulation.canPersist || !simulationAccepted)) {
-          setToast({ message: "Calcula y confirma la simulación, o selecciona 'Banco todavía no entrega cronograma' antes de guardar el prepago.", type: "error" });
+          setToast({ message: `Calcula y confirma la simulación, o selecciona '${pendingScheduleChoiceText}' antes de guardar el prepago.`, type: "error" });
           return;
         }
         if (hasNewPaymentSchedule && prepaymentEffect === "pending_bank_schedule") {
-          setToast({ message: "Adjunta el nuevo cronograma o selecciona 'Banco todavía no entrega cronograma', pero no ambos.", type: "error" });
+          setToast({ message: `Adjunta el nuevo cronograma o selecciona '${pendingScheduleChoiceText}', pero no ambos.`, type: "error" });
           return;
         }
         if (!hasNewPaymentSchedule && prepaymentEffect !== "pending_bank_schedule" && simulationEffect == null) {
-          setToast({ message: "Selecciona una opción de cronograma: calcula la simulación o selecciona 'Banco todavía no entrega cronograma'.", type: "error" });
+          setToast({ message: `Selecciona una opción de cronograma: calcula la simulación o selecciona '${pendingScheduleChoiceText}'.`, type: "error" });
           return;
         }
       }
@@ -580,17 +635,17 @@ export function DebtOperationForm({
         return;
       }
     } else if (operationType === "prepayment") {
-      if (isBankFixedSchedule) {
+      if (isUniversalFixedSchedule) {
         if ((simulationEffect != null) && !hasNewPrepaymentSchedule && (!effectiveSimulation || !effectiveSimulation.canPersist || !simulationAccepted)) {
-          setToast({ message: "Calcula y confirma la simulación, o selecciona 'Banco todavía no entrega cronograma' antes de guardar el prepago.", type: "error" });
+          setToast({ message: `Calcula y confirma la simulación, o selecciona '${pendingScheduleChoiceText}' antes de guardar el prepago.`, type: "error" });
           return;
         }
         if (hasNewPrepaymentSchedule && prepaymentEffect === "pending_bank_schedule") {
-          setToast({ message: "Adjunta el nuevo cronograma o selecciona 'Banco todavía no entrega cronograma', pero no ambos.", type: "error" });
+          setToast({ message: `Adjunta el nuevo cronograma o selecciona '${pendingScheduleChoiceText}', pero no ambos.`, type: "error" });
           return;
         }
         if (!hasNewPrepaymentSchedule && prepaymentEffect !== "pending_bank_schedule" && simulationEffect == null) {
-          setToast({ message: "Selecciona una opción de cronograma: calcula la simulación o selecciona 'Banco todavía no entrega cronograma'.", type: "error" });
+          setToast({ message: `Selecciona una opción de cronograma: calcula la simulación o selecciona '${pendingScheduleChoiceText}'.`, type: "error" });
           return;
         }
       }
@@ -839,6 +894,20 @@ export function DebtOperationForm({
         </div>
       )}
 
+      {isNonBankFixedSchedule && (operationType === "payment" || operationType === "prepayment" || operationType === "installment_advance") && (
+        <div className="mb-6 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-800">
+          <p className="text-sm font-black tracking-wide">DEUDA CON CRONOGRAMA</p>
+          <p className="mt-1 text-sm font-semibold">Esta operación usa la estructura contractual de la deuda, sin asumir un acreedor bancario. Los importes desconocidos permanecen pendientes de confirmar.</p>
+        </div>
+      )}
+
+      {isNonBankFixedSchedule && (operationType === "prepayment" || (operationType === "payment" && numExtraPrincipal > 0)) && (
+        <div className="mb-6 rounded-2xl border border-indigo-200 bg-indigo-50 p-4 text-indigo-950">
+          <p className="text-xs font-black uppercase tracking-wider text-indigo-800">MOTOR CONTRACTUAL UNIVERSAL</p>
+          <p className="mt-1 text-sm font-semibold">El principal se reduce de forma inmediata. El interés futuro solo se proyecta con reglas conocidas; comisiones, seguros o totales sin fórmula quedan <strong>por confirmar</strong> y no se inventan cuotas contractuales.</p>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
@@ -852,12 +921,38 @@ export function DebtOperationForm({
             />
           </div>
 
-          {bankPrepaymentScenario && (
-            <div className="sm:col-span-2 rounded-2xl border-2 border-blue-200 bg-blue-50/70 p-4 space-y-4" aria-label="Opciones de prepago bancario">
+          {requiresPaymentExcessClassification && (
+            <div className="sm:col-span-2 rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 space-y-3" aria-label="Clasificación del excedente de pago" data-testid="payment-excess-classification">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-amber-800">EXCEDENTE DETECTADO</p>
+                <h3 className="mt-1 text-lg font-black text-slate-900">Pagaste {getCurrencySymbol(debt.currencyCode)} {paymentExcess!.toFixed(2)} por encima de la obligación seleccionada.</h3>
+                <p className="mt-1 text-sm font-semibold text-amber-950">¿Cómo aplicó el {creditorTerm} ese importe? No lo asignaremos automáticamente al capital.</p>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <button type="button" onClick={() => { setPaymentExcessClassification("extra_principal"); setExtraPrincipalAmount(paymentExcess!.toFixed(2)); }} className={`rounded-2xl border p-4 text-left transition ${paymentExcessClassification === "extra_principal" ? "border-emerald-600 bg-white ring-2 ring-emerald-200" : "border-amber-100 bg-white hover:border-emerald-400"}`}>
+                  <span className="block text-sm font-black text-emerald-950">Abono extraordinario al capital</span>
+                  <span className="mt-1 block text-xs text-slate-600">Reduce el principal inmediatamente.</span>
+                </button>
+                <button type="button" onClick={() => { setPaymentExcessClassification("installment_advance"); setExtraPrincipalAmount("0"); }} className={`rounded-2xl border p-4 text-left transition ${paymentExcessClassification === "installment_advance" ? "border-purple-600 bg-white ring-2 ring-purple-200" : "border-amber-100 bg-white hover:border-purple-400"}`}>
+                  <span className="block text-sm font-black text-purple-950">Adelanto de cuotas</span>
+                  <span className="mt-1 block text-xs text-slate-600">Usa la operación separada para cubrir cuotas futuras.</span>
+                </button>
+                <button type="button" onClick={() => { setPaymentExcessClassification("other"); setExtraPrincipalAmount("0"); setBreakdownComplete(false); }} className={`rounded-2xl border p-4 text-left transition ${paymentExcessClassification === "other" ? "border-slate-600 bg-white ring-2 ring-slate-200" : "border-amber-100 bg-white hover:border-slate-400"}`}>
+                  <span className="block text-sm font-black text-slate-950">Otra aplicación</span>
+                  <span className="mt-1 block text-xs text-slate-600">Conserva el pago sin inventar una reducción de principal.</span>
+                </button>
+              </div>
+              {paymentExcessClassification === "other" && <p className="rounded-xl bg-white p-3 text-xs font-bold text-slate-700">El desglose queda pendiente de confirmación. Completa solo los componentes que el {creditorTerm} haya informado.</p>}
+              {paymentExcessClassification === "installment_advance" && <p className="rounded-xl bg-white p-3 text-xs font-bold text-purple-900">Cancela este formulario y selecciona “Adelanto de cuotas” para que el sistema guarde las cuotas futuras cubiertas, sin convertirlas en prepago.</p>}
+            </div>
+          )}
+
+          {universalPrepaymentScenario && (
+            <div className="sm:col-span-2 rounded-2xl border-2 border-blue-200 bg-blue-50/70 p-4 space-y-4" aria-label={`Opciones de prepago ${creditorTerm}`}>
               <div>
                 <p className="text-xs font-black uppercase tracking-wider text-blue-800">CAMBIO DESPUÉS DEL PREPAGO</p>
                 <h3 className="mt-1 text-lg font-black text-slate-900">¿Qué cronograma quieres registrar?</h3>
-                <p className="mt-1 text-sm text-slate-700">El capital baja inmediatamente por la cuota y el abono extraordinario. El cronograma estimado nunca reemplaza al del banco.</p>
+                <p className="mt-1 text-sm text-slate-700">El capital baja inmediatamente por la cuota y el abono extraordinario. El cronograma estimado nunca reemplaza al del {creditorTerm}.</p>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <button type="button" aria-pressed={prepaymentEffect === "reduce_term" && !hasSelectedSchedule} onClick={() => chooseBankPrepaymentPath("reduce_term")} className={`rounded-2xl border p-4 text-left transition ${prepaymentEffect === "reduce_term" && !hasSelectedSchedule ? "border-blue-600 bg-white ring-2 ring-blue-200" : "border-blue-100 bg-white hover:border-blue-400"}`}>
@@ -869,27 +964,27 @@ export function DebtOperationForm({
                   <span className="mt-1 block text-xs text-slate-600">Mantener las fechas futuras y recalcular el importe.</span>
                 </button>
                 <button type="button" aria-pressed={hasSelectedSchedule} onClick={() => chooseBankPrepaymentPath("official")} className={`rounded-2xl border p-4 text-left transition ${hasSelectedSchedule ? "border-emerald-600 bg-white ring-2 ring-emerald-200" : "border-blue-100 bg-white hover:border-emerald-400"}`}>
-                  <span className="block text-sm font-black text-emerald-950">TENGO EL NUEVO CRONOGRAMA DEL BANCO</span>
+                  <span className="block text-sm font-black text-emerald-950">TENGO EL NUEVO CRONOGRAMA DEL {creditorTerm.toUpperCase()}</span>
                   <span className="mt-1 block text-xs text-slate-600">Cargar sus cuotas oficiales completas y conservar la versión anterior.</span>
                 </button>
                 <button type="button" aria-pressed={prepaymentEffect === "pending_bank_schedule"} onClick={() => chooseBankPrepaymentPath("pending_bank_schedule")} className={`rounded-2xl border p-4 text-left transition ${prepaymentEffect === "pending_bank_schedule" ? "border-amber-600 bg-white ring-2 ring-amber-200" : "border-blue-100 bg-white hover:border-amber-400"}`}>
-                  <span className="block text-sm font-black text-amber-950">BANCO TODAVÍA NO ME ENTREGA</span>
+                  <span className="block text-sm font-black text-amber-950">{pendingScheduleLabel}</span>
                   <span className="mt-1 block text-xs text-slate-600">Guardar el principal y dejar pendiente el cronograma, sin inventar cuotas.</span>
                 </button>
               </div>
 
               {hasSelectedSchedule && (
-                <div className="rounded-2xl border border-emerald-200 bg-white p-4 space-y-3" data-testid="official-bank-schedule-editor">
+                <div className="rounded-2xl border border-emerald-200 bg-white p-4 space-y-3" data-testid={isBankFixedSchedule ? "official-bank-schedule-editor" : "official-creditor-schedule-editor"}>
                   <div>
-                    <h4 className="text-base font-black text-emerald-950">NUEVO CRONOGRAMA OFICIAL DEL BANCO</h4>
-                    <p className="mt-1 text-sm font-semibold text-slate-700">Ingresa únicamente las cuotas del nuevo cronograma entregado por el banco.</p>
-                    <p className="mt-1 text-xs font-bold text-emerald-800">Fuente fija: Contractual / oficial del banco.</p>
+                    <h4 className="text-base font-black text-emerald-950">NUEVO CRONOGRAMA DEL {creditorTerm.toUpperCase()}</h4>
+                    <p className="mt-1 text-sm font-semibold text-slate-700">Ingresa únicamente las cuotas del nuevo cronograma entregado por el {creditorTerm}.</p>
+                    <p className="mt-1 text-xs font-bold text-emerald-800">{isBankFixedSchedule ? "Fuente fija: Contractual / oficial del banco." : `Fuente: contractual / reportada por el ${creditorTerm}.`}</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => setScheduleInstallments([
                       ...scheduleInstallments,
-                      { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", reportedBalance: "" },
+                      { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", expectedTaxes: "", reportedBalance: "" },
                     ])}
                     className="rounded-xl bg-emerald-100 px-3 py-1.5 text-sm font-bold text-emerald-800 hover:bg-emerald-200"
                   >
@@ -904,7 +999,8 @@ export function DebtOperationForm({
                       <input aria-label={`Capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Interés nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Comisiones nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
-                      <input aria-label={`Saldo reportado por el banco nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Impuestos nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Impuestos (opcional)" value={s.expectedTaxes ?? ""} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedTaxes = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                       <input aria-label={`Saldo reportado por el ${creditorTerm} nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <div className="flex gap-2"><input aria-label={`Seguro nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" /><button type="button" onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))} className="text-xs font-bold text-red-600">Quitar</button></div>
                     </div>
                   ))}
@@ -930,9 +1026,9 @@ export function DebtOperationForm({
                         <div><p className="text-xs text-slate-500">Cuotas restantes</p><p className="font-black text-slate-900">{effectiveSimulation.status === "insufficient_data" ? "Por confirmar" : `${effectiveSimulation.oldRemainingInstallments} → ${effectiveSimulation.newRemainingInstallments}`}</p></div>
                         <div><p className="text-xs text-slate-500">Interés estimado</p><p className="font-black text-indigo-800">{effectiveSimulation.estimatedInterestSavings == null ? "Por confirmar" : `${currencySymbol} ${effectiveSimulation.newEstimatedInterest?.toFixed(2)} (ahorro ${effectiveSimulation.estimatedInterestSavings.toFixed(2)})`}</p></div>
                       </div>
-                      {effectiveSimulation.rows.length > 0 && (
+                      {effectiveSimulation.rows.length > 0 && effectiveSimulation.rows.every((row) => row.interest != null && row.fees != null && row.insurance != null && row.total != null) && (
                         <BankSchedulePreview
-                          rows={effectiveSimulation.rows.map((row) => ({ contractualInstallmentNumber: row.contractualInstallmentNumber, dueDate: row.dueDate, principal: row.principal, interest: row.interest, insurance: row.insurance, fees: row.fees, total: row.total, reportedBalance: row.remainingPrincipalBalance }))}
+                          rows={effectiveSimulation.rows.map((row) => ({ contractualInstallmentNumber: row.contractualInstallmentNumber, dueDate: row.dueDate, principal: row.principal, interest: row.interest ?? 0, insurance: row.insurance ?? 0, fees: row.fees ?? 0, total: row.total ?? 0, reportedBalance: row.remainingPrincipalBalance }))}
                           compact
                           balanceLabel="Saldo de capital estimado"
                           ariaLabel="Vista previa del cronograma estimado después del prepago"
@@ -1116,13 +1212,13 @@ export function DebtOperationForm({
                 className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-slate-900"
               />
               <p className="mt-1 text-xs text-indigo-900">Se registra en la misma operación y movimiento que el pago de cuota.</p>
-              {numExtraPrincipal > 0 && !bankPrepaymentScenario && (
+              {numExtraPrincipal > 0 && !universalPrepaymentScenario && (
                 <div className="mt-3">
-                  <label className="block text-xs font-bold text-indigo-950">Efecto solicitado al banco</label>
+                     <label className="block text-xs font-bold text-indigo-950">Efecto solicitado al {creditorTerm}</label>
                   <select value={prepaymentEffect} onChange={(e) => setPrepaymentEffect(e.target.value as PrepaymentEffect)} className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-4 py-2 text-sm text-slate-900">
                     <option value="reduce_term">Reducir plazo</option>
                     <option value="reduce_installment">Reducir cuota</option>
-                    <option value="pending_bank_schedule">Banco todavía no entrega cronograma</option>
+                    <option value="pending_bank_schedule">El {creditorTerm} todavía no entrega cronograma</option>
                     <option value="other">Otro</option>
                     <option value="unknown">Todavía no lo sé</option>
                   </select>
@@ -1131,7 +1227,7 @@ export function DebtOperationForm({
             </div>
           )}
 
-          {operationType === "payment" && isBankFixedSchedule && numExtraPrincipal > 0 && !bankPrepaymentScenario && (
+          {operationType === "payment" && isBankFixedSchedule && numExtraPrincipal > 0 && !universalPrepaymentScenario && (
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/30 p-4 sm:col-span-2 space-y-4">
               <div className="flex items-start gap-3">
                 <input
@@ -1154,14 +1250,14 @@ export function DebtOperationForm({
                   <div>
                     <label className="block text-sm font-semibold text-slate-700">Fuente</label>
                     <select value={newScheduleSource} onChange={(e) => setNewScheduleSource(e.target.value as "contractual" | "estimated")} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900">
-                      <option value="contractual">Contractual / oficial del banco</option>
+                       <option value="contractual">Contractual / oficial del {creditorTerm}</option>
                       <option value="estimated">Estimado por Caja Familiar</option>
                     </select>
-                    <p className="mt-1 text-xs text-slate-500">El saldo reportado por el banco no siempre corresponde al saldo de capital.</p>
+                     <p className="mt-1 text-xs text-slate-500">El saldo reportado por el {creditorTerm} no siempre corresponde al saldo de capital.</p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setScheduleInstallments([...scheduleInstallments, { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", reportedBalance: "" }])}
+                    onClick={() => setScheduleInstallments([...scheduleInstallments, { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", expectedTaxes: "", reportedBalance: "" }])}
                     className="rounded-xl bg-indigo-100 px-3 py-1.5 text-sm font-bold text-indigo-800 hover:bg-indigo-200"
                   >
                     Agregar cuota posterior al abono
@@ -1175,6 +1271,7 @@ export function DebtOperationForm({
                       <input aria-label={`Capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Interés nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Comisiones nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Impuestos nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Impuestos (opcional)" value={s.expectedTaxes ?? ""} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedTaxes = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <input aria-label={`Saldo reportado por el banco nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                       <div className="flex gap-2"><input aria-label={`Seguro nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" /><button type="button" onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))} className="text-xs font-bold text-red-600">Quitar</button></div>
                     </div>
@@ -1345,14 +1442,14 @@ export function DebtOperationForm({
           </div>
         )}
 
-        {operationType === "prepayment" && !bankPrepaymentScenario && (
+        {operationType === "prepayment" && !universalPrepaymentScenario && (
           <div className="rounded-2xl border border-slate-200 p-4 space-y-4">
             <div>
               <label className="block text-sm font-bold text-slate-800">¿Qué efecto esperas del abono al capital?</label>
               <select value={prepaymentEffect} onChange={(e) => setPrepaymentEffect(e.target.value as PrepaymentEffect)} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900">
                 <option value="reduce_term">Reducir plazo</option>
                 <option value="reduce_installment">Reducir cuota</option>
-                <option value="pending_bank_schedule">Banco todavía no entrega cronograma</option>
+                <option value="pending_bank_schedule">El {creditorTerm} todavía no entrega cronograma</option>
                 <option value="other">Otro</option>
                 <option value="unknown">Todavía no lo sé</option>
               </select>
@@ -1374,17 +1471,17 @@ export function DebtOperationForm({
                 <div>
                   <label className="block text-sm font-semibold text-slate-700">Fuente del nuevo cronograma</label>
                   <select value={newScheduleSource} onChange={(e) => setNewScheduleSource(e.target.value as "contractual" | "estimated")} className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm">
-                    <option value="contractual">Contractual / oficial del banco</option>
+                    <option value="contractual">Contractual / oficial del {creditorTerm}</option>
                     <option value="estimated">Estimado por Caja Familiar</option>
                   </select>
-                  <p className="mt-1 text-xs text-slate-500">El saldo reportado por el banco no siempre corresponde al saldo de capital.</p>
+                  <p className="mt-1 text-xs text-slate-500">El saldo reportado por el {creditorTerm} no siempre corresponde al saldo de capital.</p>
                 </div>
                 <button
                   type="button"
                     onClick={() =>
                     setScheduleInstallments([
                       ...scheduleInstallments,
-                       { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", reportedBalance: "" },
+                       { installmentNumber: scheduleInstallments.length + 1, dueDate: localDateString(new Date()), expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", expectedTaxes: "", reportedBalance: "" },
                     ])
                   }
                   className="rounded-xl bg-blue-50 px-3 py-1.5 text-sm font-bold text-blue-700 hover:bg-blue-100"
@@ -1400,7 +1497,8 @@ export function DebtOperationForm({
                     <input aria-label={`Capital nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <input aria-label={`Interés nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <input aria-label={`Comisiones nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
-                    <input aria-label={`Saldo reportado por el banco nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                    <input aria-label={`Impuestos nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Impuestos (opcional)" value={s.expectedTaxes ?? ""} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedTaxes = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                    <input aria-label={`Saldo reportado por el ${creditorTerm} nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                     <div className="flex gap-2"><input aria-label={`Seguro nueva cuota ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" /><button type="button" onClick={() => setScheduleInstallments(scheduleInstallments.filter((_, i) => i !== idx))} className="text-sm font-bold text-red-600">Eliminar</button></div>
                   </div>
                 ))}
@@ -1427,7 +1525,7 @@ export function DebtOperationForm({
               onClick={() =>
                 setScheduleInstallments([
                   ...scheduleInstallments,
-                  { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", reportedBalance: "" },
+                  { installmentNumber: scheduleInstallments.length + 1, dueDate: "", expectedAmount: "", expectedPrincipal: "", expectedInterest: "", expectedFees: "", expectedInsurance: "", expectedTaxes: "", reportedBalance: "" },
                 ])
               }
               className="rounded-xl bg-amber-100 px-3 py-1.5 text-sm font-bold text-amber-900 hover:bg-amber-200"
@@ -1442,7 +1540,8 @@ export function DebtOperationForm({
                 <input aria-label={`Total cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Total" value={s.expectedAmount} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedAmount = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Capital cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Capital" value={s.expectedPrincipal} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedPrincipal = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Interés cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Interés" value={s.expectedInterest} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInterest = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
-                <input aria-label={`Comisiones cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                      <input aria-label={`Comisiones cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Comisiones" value={s.expectedFees} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedFees = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
+                <input aria-label={`Impuestos cuota restaurada ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Impuestos (opcional)" value={s.expectedTaxes ?? ""} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedTaxes = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <input aria-label={`Saldo reportado por el banco cuota restaurada ${idx + 1}`} type="number" min="0" step="0.01" placeholder="Saldo según cronograma" value={s.reportedBalance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].reportedBalance = e.target.value; setScheduleInstallments(copy); }} className="rounded-lg border border-slate-300 px-2 py-1 text-sm" />
                 <div className="flex justify-end">
                   <input aria-label={`Seguro cuota restaurada ${idx + 1}`} type="number" step="0.01" placeholder="Seguro" value={s.expectedInsurance} onChange={(e) => { const copy = [...scheduleInstallments]; copy[idx].expectedInsurance = e.target.value; setScheduleInstallments(copy); }} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-2 py-1 text-sm" />
