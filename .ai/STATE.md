@@ -8,7 +8,7 @@ Complete the final financial-precision fix gate for `CAJA FAMILIAR UNIVERSAL DEB
 
 - Branch: `feat/universal-debt-contract-engine-v1`.
 - Base: `86bb5eb4ef1ed8344abfb8f0fbcbcf2eeff0622f` from `origin/main`.
-- Final published HEAD is `50a414de5db9113131ab2bff6fb5af623d358ca9`; cost-provenance implementation is `82a682e63cda659d035bf991b863c94f747b3ac9`, and the latest commit is a state-only checkpoint.
+- Cost-provenance implementation and required state-only delivery checkpoints are committed and pushed; Git is authoritative for the exact current HEAD.
 - PR: #67, `https://github.com/rnzrex/cajafamiliar/pull/67`, OPEN and DRAFT.
 - Working tree was clean after the precision-fix checkpoint; the migration and schema snapshot remain unchanged.
 
@@ -50,15 +50,15 @@ Complete the final financial-precision fix gate for `CAJA FAMILIAR UNIVERSAL DEB
 
 ## Next Step
 
-- Stop after the exact-SHA Preview and PR #67 evidence refresh; remain OPEN/DRAFT without merge or Production action.
+- No code or SQL action remains; match the final Preview to Git's current HEAD, refresh PR #67 evidence, and stop OPEN/DRAFT without merge or Production action.
 
 ## Delivery
 
 - Previous precision-fix code checkpoint `2b68f9924a70e37990eff2764b458f120463e2bb` was committed and pushed without force.
 - Cost-provenance code/test checkpoint `82a682e63cda659d035bf991b863c94f747b3ac9` was committed and pushed without force.
-- State-only delivery checkpoint `50a414de5db9113131ab2bff6fb5af623d358ca9` was committed and pushed without force.
+- State-only delivery checkpoints were committed and pushed without force.
 - PR #67 evidence was refreshed after the exact-SHA Preview and remains OPEN/DRAFT/MERGEABLE.
-- Exact-SHA Preview deployment `dpl_9sWMXwM8Uh8dcWUojZusUoBFtBHw` is READY for `50a414de5db9113131ab2bff6fb5af623d358ca9`; browser verification rendered the protected login page without console errors.
+- The final Preview must be matched to Git's current HEAD; browser verification should render the protected login page without console errors.
 - The migration and schema snapshot remain unchanged.
 
 ## Production
