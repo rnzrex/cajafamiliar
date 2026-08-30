@@ -221,6 +221,7 @@ export interface DebtStateSnapshot {
   scheduleAuthority: DebtContractAuthority;
   nextDueDate: string | null;
   nextInstallmentAmount: number | null;
+  overdueAmount: number | null;
   remainingScheduledPrincipal: number | null;
   remainingProjectedInterest: number | null;
   remainingProjectedFees: number | null;

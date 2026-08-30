@@ -427,6 +427,142 @@ begin
 end;
 $function$;
 
+-- Universal schedule validation keeps tax semantics separate from the BANK
+-- validator. Null means unknown; explicit zero is a known zero.
+create or replace function private.debt2b2_validate_universal_schedule_arithmetic(p_schedule_installments jsonb)
+returns void language plpgsql security invoker set search_path = ''
+as $function$
+declare
+  v_elem jsonb; v_amount numeric; v_principal numeric; v_interest numeric; v_fees numeric; v_insurance numeric; v_taxes numeric;
+begin
+  if p_schedule_installments is null or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' then raise exception 'INVALID_DEBT_SCHEDULE'; end if;
+  for v_elem in select value from pg_catalog.jsonb_array_elements(p_schedule_installments) loop
+    if pg_catalog.jsonb_typeof(v_elem) <> 'object' then raise exception 'INVALID_DEBT_SCHEDULE'; end if;
+    if v_elem ? 'expected_taxes' and v_elem->'expected_taxes' <> 'null'::jsonb and pg_catalog.jsonb_typeof(v_elem->'expected_taxes') <> 'number' then raise exception 'INVALID_DEBT_SCHEDULE'; end if;
+    begin
+      v_amount := case when v_elem->'expected_amount' <> 'null'::jsonb and pg_catalog.jsonb_typeof(v_elem->'expected_amount') = 'number' then (v_elem->>'expected_amount')::numeric else null end;
+      v_principal := case when v_elem->'expected_principal' <> 'null'::jsonb and pg_catalog.jsonb_typeof(v_elem->'expected_principal') = 'number' then (v_elem->>'expected_principal')::numeric else null end;
+      v_interest := case when v_elem->'expected_interest' <> 'null'::jsonb and pg_catalog.jsonb_typeof(v_elem->'expected_interest') = 'number' then (v_elem->>'expected_interest')::numeric else null end;
+      v_fees := case when v_elem->'expected_fees' <> 'null'::jsonb and pg_catalog.jsonb_typeof(v_elem->'expected_fees') = 'number' then (v_elem->>'expected_fees')::numeric else null end;
+      v_insurance := case when v_elem->'expected_insurance' <> 'null'::jsonb and pg_catalog.jsonb_typeof(v_elem->'expected_insurance') = 'number' then (v_elem->>'expected_insurance')::numeric else null end;
+      v_taxes := case when v_elem ? 'expected_taxes' and v_elem->'expected_taxes' <> 'null'::jsonb then (v_elem->>'expected_taxes')::numeric else null end;
+    exception when invalid_text_representation or numeric_value_out_of_range then raise exception 'INVALID_DEBT_SCHEDULE'; end;
+    if v_amount < 0 or v_principal < 0 or v_interest < 0 or v_fees < 0 or v_insurance < 0 or v_taxes < 0 then raise exception 'INVALID_DEBT_SCHEDULE'; end if;
+    if v_amount is not null and v_principal is not null and v_interest is not null and v_fees is not null and v_insurance is not null
+       and ((v_taxes is not null and pg_catalog.abs(pg_catalog.round(v_principal + v_interest + v_fees + v_insurance + v_taxes, 2) - pg_catalog.round(v_amount, 2)) > 0.01)
+         or (v_taxes is null and pg_catalog.round(v_principal + v_interest + v_fees + v_insurance, 2) > pg_catalog.round(v_amount, 2) + 0.01)) then
+      raise exception 'INVALID_DEBT_SCHEDULE';
+    end if;
+  end loop;
+end;
+$function$;
+
+revoke all privileges on function private.debt2b2_validate_universal_schedule_arithmetic(jsonb) from public, anon, authenticated, service_role;
+
+-- Replay canonicalization also includes the optional tax component so an
+-- idempotent retry cannot silently accept a different financial schedule.
+create or replace function private.debt2b2_canonical_schedule(p_schedule_installments jsonb)
+returns jsonb language sql immutable security invoker set search_path = ''
+as $function$
+  select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'installment_number', x.installment_number,
+    'contractual_installment_number', x.contractual_installment_number,
+    'due_date', x.due_date,
+    'expected_amount', x.expected_amount,
+    'expected_principal', x.expected_principal,
+    'expected_interest', x.expected_interest,
+    'expected_fees', x.expected_fees,
+    'expected_insurance', x.expected_insurance,
+    'expected_taxes', x.expected_taxes,
+    'reported_balance', x.reported_balance
+  ) order by x.installment_number), '[]'::jsonb)
+  from (select
+    (value->>'installment_number')::integer as installment_number,
+    coalesce(nullif(value->>'contractual_installment_number', '')::integer, (value->>'installment_number')::integer) as contractual_installment_number,
+    (value->>'due_date')::date::text as due_date,
+    case when value ? 'expected_amount' and value->'expected_amount' <> 'null'::jsonb then (value->>'expected_amount')::numeric else null end as expected_amount,
+    case when value ? 'expected_principal' and value->'expected_principal' <> 'null'::jsonb then (value->>'expected_principal')::numeric else null end as expected_principal,
+    case when value ? 'expected_interest' and value->'expected_interest' <> 'null'::jsonb then (value->>'expected_interest')::numeric else null end as expected_interest,
+    case when value ? 'expected_fees' and value->'expected_fees' <> 'null'::jsonb then (value->>'expected_fees')::numeric else null end as expected_fees,
+    case when value ? 'expected_insurance' and value->'expected_insurance' <> 'null'::jsonb then (value->>'expected_insurance')::numeric else null end as expected_insurance,
+    case when value ? 'expected_taxes' and value->'expected_taxes' <> 'null'::jsonb then (value->>'expected_taxes')::numeric else null end as expected_taxes,
+    case when value ? 'reported_balance' and value->'reported_balance' <> 'null'::jsonb then (value->>'reported_balance')::numeric else null end as reported_balance
+    from pg_catalog.jsonb_array_elements(p_schedule_installments) as item(value)) as x;
+$function$;
+
+create or replace function private.debt2b2_persisted_schedule(p_schedule_version_id uuid)
+returns jsonb language sql security invoker set search_path = ''
+as $function$
+  select coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+    'installment_number', i.installment_number,
+    'contractual_installment_number', coalesce(i.contractual_installment_number, i.installment_number),
+    'due_date', i.due_date::text,
+    'expected_amount', i.expected_amount,
+    'expected_principal', i.expected_principal,
+    'expected_interest', i.expected_interest,
+    'expected_fees', i.expected_fees,
+    'expected_insurance', i.expected_insurance,
+    'expected_taxes', i.expected_taxes,
+    'reported_balance', i.reported_balance
+  ) order by i.installment_number), '[]'::jsonb)
+  from public.debt_installments as i where i.schedule_version_id = p_schedule_version_id;
+$function$;
+
+revoke all privileges on function private.debt2b2_canonical_schedule(jsonb) from public, anon, authenticated, service_role;
+revoke all privileges on function private.debt2b2_persisted_schedule(uuid) from public, anon, authenticated, service_role;
+
+-- User-facing V2 import endpoint. It records a zero-financial-effect audit
+-- event and appends a versioned schedule for any fixed-schedule debt; it does
+-- not mutate existing rows or require a real AI provider.
+create or replace function public.import_debt_schedule_universal_v2(
+  p_household_id uuid,
+  p_debt_id uuid,
+  p_event_id uuid,
+  p_event_date date,
+  p_schedule_installments jsonb,
+  p_schedule_source text,
+  p_schedule_notes text
+)
+returns jsonb language plpgsql security definer set search_path = ''
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_debt public.debts%rowtype;
+  v_existing public.debt_events%rowtype;
+  v_schedule public.debt_schedule_versions%rowtype;
+begin
+  if v_user_id is null then raise exception 'AUTH_REQUIRED'; end if;
+  if not exists (select 1 from public.household_members as hm where hm.household_id = p_household_id and hm.user_id = v_user_id) then raise exception 'HOUSEHOLD_ACCESS_DENIED'; end if;
+  if p_event_id is null or p_event_date is null or p_schedule_installments is null or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' or pg_catalog.jsonb_array_length(p_schedule_installments) = 0
+     or p_schedule_source not in ('contractual', 'reconstructed', 'estimated', 'manual') then raise exception 'INVALID_DEBT_SCHEDULE'; end if;
+  select d.* into v_debt from public.debts as d where d.id = p_debt_id and d.household_id = p_household_id for update;
+  if not found then raise exception 'DEBT_NOT_FOUND'; end if;
+  if v_debt.repayment_structure <> 'fixed_schedule' then raise exception 'DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED'; end if;
+  perform private.debt2b2_validate_universal_schedule_arithmetic(p_schedule_installments);
+  select e.* into v_existing from public.debt_events as e where e.id = p_event_id for update;
+  if found then
+    select s.* into v_schedule from public.debt_schedule_versions as s where s.trigger_event_id = p_event_id and s.debt_id = p_debt_id and s.household_id = p_household_id order by s.version_number desc limit 1;
+    if v_existing.debt_id is distinct from p_debt_id or v_existing.household_id is distinct from p_household_id or v_schedule.id is null then raise exception 'DEBT_EVENT_ID_CONFLICT'; end if;
+    if private.debt2b2_canonical_schedule(p_schedule_installments) is distinct from private.debt2b2_persisted_schedule(v_schedule.id) then raise exception 'DEBT_EVENT_ID_CONFLICT'; end if;
+    return pg_catalog.jsonb_build_object('success', true, 'idempotentReplay', true, 'scheduleVersion', pg_catalog.to_jsonb(v_schedule));
+  end if;
+  insert into public.debt_events (id, debt_id, household_id, event_date, event_type, cash_amount, principal_delta, interest_paid, fees_paid, insurance_paid, other_cost_paid, breakdown_complete, movement_id, reversal_of_event_id, description, registered_by_user_id)
+  values (p_event_id, p_debt_id, p_household_id, p_event_date, 'principal_adjustment', 0, 0, 0, 0, 0, 0, false, null, null, coalesce(nullif(pg_catalog.btrim(p_schedule_notes), ''), 'Importación de cronograma V2'), v_user_id);
+  v_schedule := private.debt2b2_create_schedule_lifecycle_v1(p_household_id, p_debt_id, p_event_id, p_event_date, 'manual_adjustment', p_schedule_notes, p_schedule_installments, v_user_id, 'manual', false, false);
+  perform private.debt2b2_apply_universal_schedule_metadata(v_schedule.id, p_debt_id, p_household_id, p_schedule_installments);
+  update public.debt_schedule_versions
+     set schedule_source = p_schedule_source,
+         is_authoritative = (p_schedule_source = 'contractual'),
+         authority = case when p_schedule_source = 'contractual' then 'contractual' when p_schedule_source = 'estimated' then 'estimated' when p_schedule_source = 'reconstructed' then 'official_noncontractual' else 'user_reported' end
+   where id = v_schedule.id;
+  select s.* into v_schedule from public.debt_schedule_versions as s where s.id = v_schedule.id;
+  return pg_catalog.jsonb_build_object('success', true, 'idempotentReplay', false, 'scheduleVersion', pg_catalog.to_jsonb(v_schedule));
+end;
+$function$;
+
+revoke all privileges on function public.import_debt_schedule_universal_v2(uuid, uuid, uuid, date, jsonb, text, text) from public, anon, service_role;
+grant execute on function public.import_debt_schedule_universal_v2(uuid, uuid, uuid, date, jsonb, text, text) to authenticated;
+
 -- ============================================================
 -- 5. ATOMIC REFINANCE / DEBT PURCHASE RPC
 -- ============================================================
@@ -716,23 +852,25 @@ begin
     return public.record_debt_payment_v3(p_household_id, p_debt_id, p_event_id, p_movement_id, p_event_date, p_cash_amount, p_account_id, p_description, p_category, p_principal_amount, p_interest_paid, p_fees_paid, p_insurance_paid, p_other_cost_paid, p_extra_principal_amount, p_prepayment_effect, p_breakdown_complete, p_allocations, p_schedule_installments, p_schedule_notes, p_schedule_source);
   end if;
   v_count := case when p_schedule_installments is null or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' then -1 else pg_catalog.jsonb_array_length(p_schedule_installments) end;
-  if v_count < 0 or (v_count > 0 and p_schedule_source not in ('contractual', 'reconstructed', 'estimated')) then raise exception 'INVALID_DEBT_PAYMENT'; end if;
+  if v_count < 0 or (v_count > 0 and p_schedule_source not in ('contractual', 'reconstructed', 'estimated', 'manual')) then raise exception 'INVALID_DEBT_PAYMENT'; end if;
   if (v_count > 0 or coalesce(p_extra_principal_amount, 0) > 0) and v_debt.repayment_structure not in ('fixed_schedule', 'open_ended') then raise exception 'DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED'; end if;
   v_result := public.record_debt_payment_v2(p_household_id, p_debt_id, p_event_id, p_movement_id, p_event_date, p_cash_amount, p_account_id, p_description, p_category, p_principal_amount, p_interest_paid, p_fees_paid, p_insurance_paid, p_other_cost_paid, p_extra_principal_amount, p_prepayment_effect, p_breakdown_complete, p_allocations);
   if coalesce((v_result->>'idempotentReplay')::boolean, false) then return v_result; end if;
   if v_count > 0 then
-    perform private.debt2b2_validate_schedule_v3(p_event_date, 'prepayment', p_schedule_installments);
+    perform private.debt2b2_validate_universal_schedule_arithmetic(p_schedule_installments);
     perform private.debt2b2_validate_schedule_principal_v1(p_household_id, p_debt_id, p_schedule_installments);
     perform private.debt2b2_create_schedule_lifecycle_v1(
       p_household_id, p_debt_id, p_event_id, p_event_date, 'prepayment', p_schedule_notes,
-      p_schedule_installments, v_user_id, p_schedule_source, p_schedule_source = 'contractual', true
+      p_schedule_installments, v_user_id, 'manual', false, false
     );
     perform private.debt2b2_apply_universal_schedule_metadata(
       (select id from public.debt_schedule_versions where trigger_event_id = p_event_id and debt_id = p_debt_id and household_id = p_household_id order by version_number desc limit 1),
       p_debt_id, p_household_id, p_schedule_installments
     );
     update public.debt_schedule_versions
-       set authority = case when p_schedule_source = 'contractual' then 'contractual' when p_schedule_source = 'estimated' then 'estimated' when p_schedule_source = 'reconstructed' then 'official_noncontractual' else 'user_reported' end
+       set schedule_source = p_schedule_source,
+           is_authoritative = (p_schedule_source = 'contractual'),
+           authority = case when p_schedule_source = 'contractual' then 'contractual' when p_schedule_source = 'estimated' then 'estimated' when p_schedule_source = 'reconstructed' then 'official_noncontractual' else 'user_reported' end
      where trigger_event_id = p_event_id and debt_id = p_debt_id and household_id = p_household_id;
     return private.debt2b2_fund_result(p_event_id, false);
   end if;
@@ -758,14 +896,50 @@ set search_path = ''
 as $function$
 declare
   v_debt public.debts%rowtype;
+  v_result jsonb;
+  v_count integer;
+  v_user_id uuid := auth.uid();
 begin
+  if v_user_id is null then raise exception 'AUTH_REQUIRED'; end if;
   select d.* into v_debt from public.debts as d where d.id = p_debt_id and d.household_id = p_household_id for update;
   if not found then raise exception 'DEBT_NOT_FOUND'; end if;
   if v_debt.debt_kind = 'bank_loan' then
     return public.record_debt_prepayment_v3(p_household_id, p_debt_id, p_event_id, p_movement_id, p_event_date, p_cash_amount, p_account_id, p_description, p_category, p_principal_amount, p_interest_paid, p_fees_paid, p_insurance_paid, p_other_cost_paid, p_prepayment_effect, p_breakdown_complete, p_schedule_installments, p_schedule_notes, p_schedule_source);
   end if;
   if v_debt.repayment_structure <> 'fixed_schedule' then raise exception 'DEBT_REPAYMENT_STRUCTURE_UNSUPPORTED'; end if;
-  return public.record_debt_prepayment_v3(p_household_id, p_debt_id, p_event_id, p_movement_id, p_event_date, p_cash_amount, p_account_id, p_description, p_category, p_principal_amount, p_interest_paid, p_fees_paid, p_insurance_paid, p_other_cost_paid, p_prepayment_effect, p_breakdown_complete, p_schedule_installments, p_schedule_notes, p_schedule_source);
+  v_count := case when p_schedule_installments is null or pg_catalog.jsonb_typeof(p_schedule_installments) <> 'array' then -1 else pg_catalog.jsonb_array_length(p_schedule_installments) end;
+  if v_count < 0 or (v_count = 0 and p_prepayment_effect is distinct from 'pending_bank_schedule')
+     or (v_count = 0 and (p_schedule_source is not null or coalesce(pg_catalog.btrim(p_schedule_notes), '') <> ''))
+     or (v_count > 0 and p_prepayment_effect = 'pending_bank_schedule')
+     or (v_count > 0 and p_schedule_source not in ('contractual', 'reconstructed', 'estimated', 'manual')) then
+    raise exception 'INVALID_DEBT_PREPAYMENT';
+  end if;
+  if v_count > 0 then perform private.debt2b2_validate_universal_schedule_arithmetic(p_schedule_installments); end if;
+  v_result := public.record_debt_prepayment_v2(
+    p_household_id, p_debt_id, p_event_id, p_movement_id, p_event_date, p_cash_amount, p_account_id,
+    p_description, p_category, p_principal_amount, p_interest_paid, p_fees_paid, p_insurance_paid,
+    p_other_cost_paid, p_prepayment_effect, p_breakdown_complete, '[]'::jsonb, p_schedule_notes, null
+  );
+  if coalesce((v_result->>'idempotentReplay')::boolean, false) then return v_result; end if;
+  if v_count > 0 then
+    perform private.debt2b2_create_schedule_lifecycle_v1(
+      p_household_id, p_debt_id, p_event_id, p_event_date, 'prepayment', p_schedule_notes,
+      p_schedule_installments, v_user_id, 'manual', false, false
+    );
+    update public.debt_schedule_versions
+       set schedule_source = p_schedule_source,
+           is_authoritative = (p_schedule_source = 'contractual'),
+           authority = case when p_schedule_source = 'contractual' then 'contractual' when p_schedule_source = 'estimated' then 'estimated' when p_schedule_source = 'reconstructed' then 'official_noncontractual' else 'user_reported' end
+     where trigger_event_id = p_event_id and debt_id = p_debt_id and household_id = p_household_id;
+    perform private.debt2b2_apply_universal_schedule_metadata(
+      (select id from public.debt_schedule_versions where trigger_event_id = p_event_id and debt_id = p_debt_id and household_id = p_household_id order by version_number desc limit 1),
+      p_debt_id, p_household_id, p_schedule_installments
+    );
+    if p_schedule_source in ('contractual', 'estimated', 'reconstructed') then
+      perform private.debt2b2_validate_schedule_principal_v1(p_household_id, p_debt_id, p_schedule_installments);
+    end if;
+  end if;
+  return v_result;
 end;
 $function$;
 

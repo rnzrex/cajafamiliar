@@ -1,30 +1,27 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const container = process.env.UNIVERSAL_DEBT_DB_CONTAINER ?? "universal_debt_contract_engine_v1";
 const database = process.env.UNIVERSAL_DEBT_DB_NAME ?? "postgres";
+const databaseUser = process.env.UNIVERSAL_DEBT_DB_USER ?? "supabase_admin";
+const runSuffix = randomBytes(4).toString("hex");
+const id = (sequence) => `00000000-0000-4000-8000-${runSuffix}${String(sequence).padStart(4, "0")}`;
+const movementId = (label) => `${label}-${runSuffix}`;
 const ids = {
-  user: "00000000-0000-4000-8000-000000002001",
-  household: "00000000-0000-4000-8000-000000002002",
-  account: "00000000-0000-4000-8000-000000002003",
-  source: "00000000-0000-4000-8000-000000002004",
-  sourceEvent: "00000000-0000-4000-8000-000000002005",
-  sourceMovement: "universal-source-payment",
-  scheduleEvent: "00000000-0000-4000-8000-000000002006",
-  link: "00000000-0000-4000-8000-000000002007",
-  target: "00000000-0000-4000-8000-000000002008",
-  reversalEvent: "00000000-0000-4000-8000-000000002009",
-  contributionSource: "00000000-0000-4000-8000-000000002010",
-  contributionLink: "00000000-0000-4000-8000-000000002011",
-  contributionTarget: "00000000-0000-4000-8000-000000002012",
-  contributionEvent: "00000000-0000-4000-8000-000000002013",
-  contributionMovement: "universal-contribution",
-  costsMovement: "universal-refinance-costs",
+  user: id(1), household: id(2), account: id(3), source: id(4), sourceEvent: id(5),
+  sourceMovement: movementId("universal-source-payment"), scheduleEvent: id(6), link: id(7), target: id(8), reversalEvent: id(9),
+  contributionSource: id(10), contributionLink: id(11), contributionTarget: id(12), contributionEvent: id(13),
+  contributionMovement: movementId("universal-contribution"), costsMovement: movementId("universal-refinance-costs"),
+  lifecycleSource: id(14), lifecyclePrepaymentEvent: id(15), lifecyclePrepaymentMovement: movementId("universal-lifecycle-prepayment"),
+  lifecyclePaymentEvent: id(16), lifecyclePaymentMovement: movementId("universal-lifecycle-payment"), lifecycleExtraEvent: id(17), lifecycleExtraMovement: movementId("universal-lifecycle-extra"),
+  lifecycleScheduleEvent: id(18), lifecyclePartialEvent: id(19), lifecyclePartialMovement: movementId("universal-lifecycle-partial"), lifecyclePartialReversal: id(20),
+  lifecycleAdvanceEvent: id(21), lifecycleAdvanceMovement: movementId("universal-lifecycle-advance"), taxSource: id(22), taxScheduleEvent: id(23), taxPrepaymentEvent: id(24), taxPrepaymentMovement: movementId("universal-tax-prepayment"),
 };
 
 async function rawSql(sql) {
-  const result = await execFileAsync("docker", ["exec", container, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", database, "-At", "-F", "|", "-c", sql], { maxBuffer: 4 * 1024 * 1024 });
+  const result = await execFileAsync("docker", ["exec", container, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-U", databaseUser, "-d", database, "-At", "-F", "|", "-c", sql], { maxBuffer: 4 * 1024 * 1024 });
   return result.stdout.trim();
 }
 
@@ -51,7 +48,7 @@ function assertEqual(actual, expected, label) {
 
 await rawSql(`
   insert into auth.users (id, aud, role, email, confirmed_at)
-  values ('${ids.user}', 'authenticated', 'authenticated', 'universal-local@example.invalid', now())
+  values ('${ids.user}', 'authenticated', 'authenticated', 'universal-local-${runSuffix}@example.invalid', now())
   on conflict (id) do nothing;
   insert into public.households (id, name) values ('${ids.household}', 'Universal local household') on conflict (id) do nothing;
   insert into public.household_members (household_id, user_id, role, display_name)
@@ -80,6 +77,96 @@ const contract = JSON.stringify({
 await sql(`select public.upsert_debt_financing_contract_v1('${ids.household}', '${ids.source}', '${contract}'::jsonb);`);
 await sql(`select public.create_debt_document_import_job_v2('${ids.household}', '${ids.source}', 'schedule', 'official_noncontractual', 'external_ai', 'mock', 1, '{}'::text[], '{"schema":"CAJA_FAMILIAR_DEBT_DOCUMENT_V2","contains_raw_document":false}'::jsonb);`);
 
+await sql(`
+  select public.create_debt_v2(
+    '${ids.household}', '${ids.lifecycleSource}', 'Universal fixed lifecycle', 'Proveedor universal', 'other', 'PEN',
+    '2027-01-01', '2027-01-01', 1000, 1000, 3, 200, 'fixed', 'monthly', null, '2027-03-01',
+    null, null, 'fixture de ciclo universal', '[]'::jsonb, '[]'::jsonb, 'fixed_schedule', 'unknown', null, null, null
+  );
+`);
+const lifecycleContract = JSON.stringify({
+  contract_authority: "user_reported", principal_basis: "financed_principal_only",
+  financed_principal_amount: 1000, opening_principal_amount: 1000, repayment_structure: "fixed_schedule",
+  amortization_method: "fixed_installment", installment_amount_mode: "fixed", payment_frequency: "monthly",
+  first_due_date: "2027-03-01", interest_rate_type: "nominal_annual_simple", interest_rate_percent: 23,
+  interest_rate_basis: "actual_days_360", day_count_basis: "actual_days_360", fee_rule_type: "unknown",
+  fee_rule: {}, prepayment_terms: {}, authority_notes: "Contrato universal reportado para smoke local.",
+}).replaceAll("'", "''");
+await sql(`select public.upsert_debt_financing_contract_v1('${ids.household}', '${ids.lifecycleSource}', '${lifecycleContract}'::jsonb);`);
+
+const pendingPrepayment = await sql(`select public.record_debt_prepayment_universal_v1(
+  '${ids.household}', '${ids.lifecycleSource}', '${ids.lifecyclePrepaymentEvent}', '${ids.lifecyclePrepaymentMovement}',
+  '2027-01-10', 100, '${ids.account}', 'Abono anticipado universal', 'Pago de deuda', 100, 0, 0, 0, 0,
+  'pending_bank_schedule', true, '[]'::jsonb, null, null
+);`);
+if (!pendingPrepayment.includes('"idempotentReplay": false')) throw new Error(`standalone prepayment: ${pendingPrepayment}`);
+assertEqual(await rawSql(`select round(private.debt2b2_current_principal('${ids.household}', '${ids.lifecycleSource}'), 2)`), "900.00", "principal after standalone prepayment");
+assertEqual(await rawSql(`select event_type || '|' || principal_delta::text from public.debt_events where id='${ids.lifecyclePrepaymentEvent}'`), "principal_prepayment|-100", "prepayment event");
+const pendingReplay = await sql(`select public.record_debt_prepayment_universal_v1(
+  '${ids.household}', '${ids.lifecycleSource}', '${ids.lifecyclePrepaymentEvent}', '${ids.lifecyclePrepaymentMovement}',
+  '2027-01-10', 100, '${ids.account}', 'Abono anticipado universal', 'Pago de deuda', 100, 0, 0, 0, 0,
+  'pending_bank_schedule', true, '[]'::jsonb, null, null
+);`);
+if (!pendingReplay.includes('"idempotentReplay": true')) throw new Error(`prepayment idempotency: ${pendingReplay}`);
+
+await sql(`select public.record_debt_payment_universal_v1(
+  '${ids.household}', '${ids.lifecycleSource}', '${ids.lifecyclePaymentEvent}', '${ids.lifecyclePaymentMovement}',
+  '2027-01-20', 100, '${ids.account}', 'Pago universal', 'Pago de deuda', 100, 0, 0, 0, 0, 0,
+  null, true, '[]'::jsonb, '[]'::jsonb, null, null
+);`);
+await sql(`select public.record_debt_payment_universal_v1(
+  '${ids.household}', '${ids.lifecycleSource}', '${ids.lifecycleExtraEvent}', '${ids.lifecycleExtraMovement}',
+  '2027-01-25', 150, '${ids.account}', 'Pago con abono extra', 'Pago de deuda', 100, 0, 0, 0, 0, 50,
+  'reduce_term', true, '[]'::jsonb, '[]'::jsonb, null, null
+);`);
+assertEqual(await rawSql(`select round(private.debt2b2_current_principal('${ids.household}', '${ids.lifecycleSource}'), 2)`), "650.00", "principal after payment and extra");
+
+const lifecycleSchedule = JSON.stringify([
+  { installment_number: 1, contractual_installment_number: 1, due_date: "2027-03-01", expected_amount: 200, expected_principal: 200, expected_interest: 0, expected_fees: 0, expected_insurance: 0, expected_taxes: 0, row_role: "installment", phase: "post_prepayment", evidence: { source: "local-smoke" } },
+  { installment_number: 2, contractual_installment_number: 2, due_date: "2027-04-01", expected_amount: 210, expected_principal: 200, expected_interest: 0, expected_fees: 0, expected_insurance: 0, expected_taxes: 10, row_role: "installment", phase: "post_prepayment", evidence: { source: "local-smoke" } },
+  { installment_number: 3, contractual_installment_number: 3, due_date: "2027-05-01", expected_amount: 250, expected_principal: 250, expected_interest: 0, expected_fees: 0, expected_insurance: 0, expected_taxes: 0, row_role: "installment", phase: "post_prepayment", evidence: { source: "local-smoke" } },
+]).replaceAll("'", "''");
+await sql(`select public.import_debt_schedule_universal_v2('${ids.household}', '${ids.lifecycleSource}', '${ids.lifecycleScheduleEvent}', '2027-02-01', '${lifecycleSchedule}'::jsonb, 'contractual', 'Cronograma universal contractual con impuesto explícito');`);
+assertEqual(await rawSql(`select authority || '|' || schedule_source from public.debt_schedule_versions where trigger_event_id='${ids.lifecycleScheduleEvent}'`), "contractual|contractual", "universal schedule authority");
+assertEqual(await rawSql(`select expected_taxes::text from public.debt_installments where debt_id='${ids.lifecycleSource}' and installment_number=2`), "10", "positive tax persisted");
+
+const firstLifecycleInstallment = await rawSql(`select id::text from public.debt_installments where debt_id='${ids.lifecycleSource}' and installment_number=1 order by created_at desc limit 1`);
+const firstLifecycleAllocation = JSON.stringify([{ installment_id: firstLifecycleInstallment, allocated_amount: 100 }]).replaceAll("'", "''");
+await sql(`select public.record_debt_payment_universal_v1(
+  '${ids.household}', '${ids.lifecycleSource}', '${ids.lifecyclePartialEvent}', '${ids.lifecyclePartialMovement}',
+  '2027-02-10', 100, '${ids.account}', 'Pago parcial universal', 'Pago de deuda', 100, 0, 0, 0, 0, 0,
+  null, true, '${firstLifecycleAllocation}'::jsonb, '[]'::jsonb, null, null
+);`);
+assertEqual(await rawSql(`select round(private.debt2b2_current_principal('${ids.household}', '${ids.lifecycleSource}'), 2)`), "550.00", "principal after partial allocation");
+assertEqual(await rawSql(`select round(allocated_amount, 2) from public.debt_event_installment_allocations where event_id='${ids.lifecyclePartialEvent}'`), "100.00", "partial allocation amount");
+await sql(`select public.reverse_debt_event_v1('${ids.household}', '${ids.lifecycleSource}', '${ids.lifecyclePartialReversal}', '${ids.lifecyclePartialEvent}', '2027-02-11', 'Reversión del pago parcial', '[]'::jsonb, '');`);
+assertEqual(await rawSql(`select round(private.debt2b2_current_principal('${ids.household}', '${ids.lifecycleSource}'), 2)`), "650.00", "principal after partial reversal");
+
+const advanceAllocation = JSON.stringify([{ installment_id: firstLifecycleInstallment, allocated_amount: 200 }]).replaceAll("'", "''");
+await sql(`select public.record_debt_installment_advance_universal_v1(
+  '${ids.household}', '${ids.lifecycleSource}', '${ids.lifecycleAdvanceEvent}', '${ids.lifecycleAdvanceMovement}',
+  '2027-02-12', 200, '${ids.account}', 'Adelanto universal', 'Pago de deuda', 200, 0, 0, 0, 0, true, '${advanceAllocation}'::jsonb
+);`);
+assertEqual(await rawSql(`select round(private.debt2b2_current_principal('${ids.household}', '${ids.lifecycleSource}'), 2)`), "450.00", "principal after installment advance");
+
+await sql(`select public.create_debt_v2(
+  '${ids.household}', '${ids.taxSource}', 'Universal tax schedule', 'Proveedor fiscal', 'other', 'PEN',
+  '2027-01-01', '2027-01-01', 1000, 1000, 1, 1100, 'fixed', 'monthly', null, '2027-03-01',
+  null, null, 'tax fixture', '[]'::jsonb, '[]'::jsonb, 'fixed_schedule', 'unknown', null, null, null
+);`);
+const taxSchedule = JSON.stringify([{ installment_number: 1, contractual_installment_number: 1, due_date: "2027-03-01", expected_amount: 1100, expected_principal: 1000, expected_interest: 0, expected_fees: 0, expected_insurance: 0, expected_taxes: 100, row_role: "installment", phase: "contractual", evidence: { source: "local-smoke" } }]).replaceAll("'", "''");
+await sql(`select public.import_debt_schedule_universal_v2('${ids.household}', '${ids.taxSource}', '${ids.taxScheduleEvent}', '2027-02-01', '${taxSchedule}'::jsonb, 'contractual', 'Impuesto positivo');`);
+assertEqual(await rawSql(`select expected_taxes::text from public.debt_installments where debt_id='${ids.taxSource}'`), "100", "tax-only component persisted");
+const taxPrepaymentSchedule = JSON.stringify([{ installment_number: 1, contractual_installment_number: 1, due_date: "2027-04-01", expected_amount: 1000, expected_principal: 900, expected_interest: 0, expected_fees: 0, expected_insurance: 0, expected_taxes: 100, row_role: "installment", phase: "post_prepayment", evidence: { source: "local-smoke" } }]).replaceAll("'", "''");
+await sql(`select public.record_debt_prepayment_universal_v1(
+  '${ids.household}', '${ids.taxSource}', '${ids.taxPrepaymentEvent}', '${ids.taxPrepaymentMovement}',
+  '2027-02-02', 100, '${ids.account}', 'Prepago con impuesto', 'Pago de deuda', 100, 0, 0, 0, 0,
+  'other', true, '${taxPrepaymentSchedule}'::jsonb, 'Cronograma posterior con impuesto', 'contractual'
+);`);
+assertEqual(await rawSql(`select round(private.debt2b2_current_principal('${ids.household}', '${ids.taxSource}'), 2)`), "900.00", "principal after tax prepayment");
+assertEqual(await rawSql(`select schedule_source || '|' || authority from public.debt_schedule_versions where trigger_event_id='${ids.taxPrepaymentEvent}'`), "contractual|contractual", "tax prepayment schedule authority");
+assertEqual(await rawSql(`select expected_taxes::text from public.debt_installments where debt_id='${ids.taxSource}' order by created_at desc limit 1`), "100", "tax prepayment component persisted");
+
 const postPaymentSchedule = JSON.stringify([{ installment_number: 1, contractual_installment_number: 1, due_date: "2027-03-01", expected_amount: 850, expected_principal: 850, expected_interest: 0, expected_fees: 0, expected_insurance: 0, expected_taxes: 0, row_role: "installment", phase: "post_payment", evidence: { source: "local-smoke" } }]).replaceAll("'", "''");
 await sql(`select public.record_debt_payment_universal_v1('${ids.household}', '${ids.source}', '${ids.scheduleEvent}', '${ids.sourceMovement}', '2027-02-01', 150, '${ids.account}', 'Pago universal', 'Pago de deuda', 100, 0, 0, 0, 0, 50, 'reduce_term', true, '[]'::jsonb, '${postPaymentSchedule}'::jsonb, 'Cronograma posterior', 'contractual');`);
 
@@ -99,7 +186,7 @@ assertEqual(await rawSql(`select status || '|' || round(settled_principal_amount
 assertEqual(await rawSql(`select status || '|' || round(opening_principal_balance, 2) from public.debts where id='${ids.source}'`), "refinanced|1000.00", "source liability status");
 assertEqual(await rawSql(`select round(private.debt2b2_current_principal('${ids.household}', '${ids.source}'), 2)`), "0.00", "source settled through liability transfer");
 assertEqual(await rawSql(`select status from public.debts where id='${ids.target}'`), "active", "target liability status");
-assertEqual(await rawSql(`select count(*) from public.debts where household_id='${ids.household}' and status='active' and is_archived=false`), "1", "portfolio excludes refinanced source");
+assertEqual(await rawSql(`select count(*) from public.debts where household_id='${ids.household}' and id <> '${ids.source}' and status='active' and is_archived=false`), "3", "portfolio excludes refinanced source");
 
 const refinanceReplay = await sql(`select public.refinance_debt_v1(
   '${ids.household}', '${ids.link}', '${ids.source}', '${ids.sourceEvent}', '${ids.target}', '2027-02-02',
@@ -126,4 +213,4 @@ assertEqual(await rawSql(`select movement_context || '|' || type || '|' || amoun
 assertEqual(await rawSql(`select round(refinance_costs_amount, 2) || '|' || refinance_costs_movement_id from public.debt_refinancing_links where id='${ids.contributionLink}'`), `25.00|${ids.costsMovement}`, "refinance costs lineage");
 await expectFailure(`select public.reverse_debt_refinancing_v1('${ids.household}', '${ids.contributionLink}', '${ids.contributionEvent}', '2027-02-05', 'Debe bloquearse');`, "DEBT_REFINANCE_REVERSAL_HAS_DEPENDENCIES");
 
-  console.log(JSON.stringify({ container, database, passed: true, cases: ["universal payment with schedule and row metadata", "authority/document V2", "cash-neutral refinance", "idempotent replay", "cross-household rejection", "portfolio excludes refinanced source", "safe reversal", "contribution and closing-cost movements", "contribution dependency guard"] }, null, 2));
+  console.log(JSON.stringify({ container, database, passed: true, cases: ["standalone non-bank prepayment pending schedule", "prepayment idempotent replay", "non-bank payments and extra principal", "contractual schedule replacement with positive taxes", "partial allocation and reversal", "installment advance", "tax-only component persistence", "contractual prepayment schedule with positive taxes", "universal payment with schedule and row metadata", "authority/document V2", "cash-neutral refinance", "idempotent replay", "cross-household rejection", "portfolio excludes refinanced source", "safe reversal", "contribution and closing-cost movements", "contribution dependency guard"] }, null, 2));

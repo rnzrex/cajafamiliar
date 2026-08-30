@@ -879,11 +879,42 @@ export async function saveDebtFinancingContract(input: DebtFinancingContractSave
   const { data, error } = await supabase.rpc("upsert_debt_financing_contract_v1", {
     p_household_id: householdId,
     p_debt_id: input.debtId,
-    p_contract: input.contract,
+    p_contract: toDebtFinancingContractRpc(input.contract),
   });
   if (error) throw mapDebtOperationError(error.message) ?? error;
   if (!data || typeof data !== "object") throw new Error("La RPC de términos universales no devolvió un resultado válido.");
   return fromDebtFinancingContractRow(data as Record<string, any>);
+}
+
+/** The client model is camelCase; the SECURITY DEFINER RPC accepts its stable SQL shape. */
+function toDebtFinancingContractRpc(contract: DebtFinancingContractSaveInput["contract"]): Record<string, unknown> {
+  return {
+    ...(contract as Record<string, unknown>),
+    contract_authority: contract.contractAuthority,
+    principal_basis: contract.principalBasis,
+    asset_price: contract.assetPrice,
+    down_payment_amount: contract.downPaymentAmount,
+    scheduled_principal_amount: contract.scheduledPrincipalAmount,
+    financed_principal_amount: contract.financedPrincipalAmount,
+    opening_principal_amount: contract.openingPrincipalAmount,
+    repayment_structure: contract.repaymentStructure,
+    amortization_method: contract.amortizationMethod,
+    installment_amount_mode: contract.installmentAmountMode,
+    payment_frequency: contract.paymentFrequency,
+    custom_frequency_days: contract.customFrequencyDays,
+    first_due_date: contract.firstDueDate,
+    interest_calculation_mode: (contract as Record<string, unknown>).interestCalculationMode ?? (contract as Record<string, unknown>).interest_calculation_mode,
+    periodic_rate_percent: (contract as Record<string, unknown>).periodicRatePercent ?? (contract as Record<string, unknown>).periodic_rate_percent,
+    periodic_rate_basis: (contract as Record<string, unknown>).periodicRateBasis ?? (contract as Record<string, unknown>).periodic_rate_basis,
+    interest_rate_type: contract.interestRateType,
+    interest_rate_percent: contract.interestRatePercent,
+    interest_rate_basis: contract.interestRateBasis,
+    day_count_basis: contract.dayCountBasis,
+    fee_rule_type: contract.feeRuleType,
+    fee_rule: contract.feeRule ?? {},
+    prepayment_terms: contract.prepaymentTerms ?? {},
+    authority_notes: contract.authorityNotes,
+  };
 }
 
 export async function createDebtDocumentImportJob(input: DebtDocumentImportJobInput): Promise<Record<string, any>> {
@@ -901,6 +932,29 @@ export async function createDebtDocumentImportJob(input: DebtDocumentImportJobIn
   });
   if (error) throw mapDebtOperationError(error.message) ?? error;
   if (!data || typeof data !== "object") throw new Error("La RPC de importación universal no devolvió un resultado válido.");
+  return data as Record<string, any>;
+}
+
+export async function importDebtScheduleUniversal(input: {
+  debtId: string;
+  eventId: string;
+  eventDate: string;
+  scheduleInstallments: DebtScheduleInstallmentInput[];
+  scheduleSource: ScheduleSource;
+  scheduleNotes?: string | null;
+}): Promise<Record<string, any>> {
+  if (!isSupabaseConfigured || !supabase) throw new DebtOperationUnavailableError();
+  const { data, error } = await supabase.rpc("import_debt_schedule_universal_v2", {
+    p_household_id: householdId,
+    p_debt_id: input.debtId,
+    p_event_id: input.eventId,
+    p_event_date: input.eventDate,
+    p_schedule_installments: input.scheduleInstallments.map(toDebtScheduleInstallmentRow),
+    p_schedule_source: input.scheduleSource,
+    p_schedule_notes: input.scheduleNotes ?? null,
+  });
+  if (error) throw mapDebtOperationError(error.message) ?? error;
+  if (!data || typeof data !== "object") throw new Error("La importación universal no devolvió un resultado válido.");
   return data as Record<string, any>;
 }
 
@@ -933,7 +987,7 @@ export async function refinanceDebt(input: DebtRefinanceInput): Promise<Record<s
     p_target_financed_principal_amount: input.targetFinancedPrincipalAmount,
     p_target_installments: (input.targetInstallments ?? []).map(toDebtScheduleInstallmentRow),
     p_target_schedule_source: input.targetScheduleSource ?? null,
-    p_target_contract: input.targetContract ?? null,
+    p_target_contract: input.targetContract ? toDebtFinancingContractRpc(input.targetContract as DebtFinancingContractSaveInput["contract"]) : null,
     p_contribution_movement_id: input.contributionMovementId ?? null,
     p_contribution_account_id: input.contributionAccountId ?? null,
     p_contribution_description: input.contributionDescription ?? null,

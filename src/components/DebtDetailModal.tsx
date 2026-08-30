@@ -46,6 +46,7 @@ import { getDebtReversalDependencyState } from "../utils/debtReversalDependencie
 import { DebtAnalysisPanel } from "./DebtAnalysisPanel";
 import { CreditCardDetailPanel } from "./CreditCardDetailPanel";
 import { DebtRefinanceForm } from "./DebtRefinanceForm";
+import { UniversalDebtDocumentImportPanel } from "./UniversalDebtDocumentImportPanel";
 
 interface DebtDetailModalProps {
   debt: Debt;
@@ -614,6 +615,12 @@ export function DebtDetailModal({
                   debt={debt}
                   currentPrincipal={debtIntelligence.currentPrincipal}
                   accounts={accounts}
+                  debtEvents={allEventsForDebt}
+                  scheduleVersions={scheduleVersions}
+                  installments={debtInstallments}
+                  allocations={allocations}
+                  carriedAllocations={carriedAllocations}
+                  debtFinancingContract={debtFinancingContract}
                   canWriteDebt={canWriteDebt && debt.status === "active" && !debt.isArchived}
                   onCancel={() => setIsRefinancing(false)}
                   onSaved={async () => {
@@ -621,6 +628,15 @@ export function DebtDetailModal({
                     await onRefresh();
                   }}
                   setToast={setToast}
+                />
+              )}
+              {hasUniversalFixedSchedule && debt.debtKind !== "bank_loan" && !isRefinancing && (
+                <UniversalDebtDocumentImportPanel
+                  debt={debt}
+                  expectedPrincipal={debtFinancingContract?.scheduledPrincipalAmount ?? debtFinancingContract?.financedPrincipalAmount ?? debt.originalPrincipal ?? debt.openingPrincipalBalance}
+                  canWriteDebt={canWriteDebt && debt.status === "active" && !debt.isArchived}
+                  setToast={setToast}
+                  onSaved={onRefresh}
                 />
               )}
               {isEditingMetadata ? (
