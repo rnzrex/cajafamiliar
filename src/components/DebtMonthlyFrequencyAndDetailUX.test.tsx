@@ -6,7 +6,7 @@ import { calculateNextPayment } from "../utils/debtNextPayment";
 import { effectivePeriodicRateFromTea, calculateAssistedInterestSuggestion } from "../utils/debtInterestEngine";
 import { buildDebtCreateInputPayload } from "../utils/debtFormMode";
 import { buildDebtIntelligenceItems } from "../utils/debtIntelligence";
-import { DebtForm } from "./DebtForm";
+import { DebtForm as DebtFormLegacy } from "./DebtFormLegacy";
 import { DebtDetailModal } from "./DebtDetailModal";
 
 describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX & Final Cleanup", () => {
@@ -35,7 +35,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX & Final Cleanup", () => {
   // 2. DebtForm single authoritative frequency control and no duplicate controls
   it("2. DebtForm renders exactly ONE 'Frecuencia de pago' label and NO duplicate '¿Cada cuánto pagas?'", () => {
     const html = renderToStaticMarkup(
-  <DebtForm
+  <DebtFormLegacy
   initialDebtKind="other"
         accounts={[]}
         categories={[]}
@@ -56,7 +56,7 @@ describe("HOTFIX-DEBT-TEA-02 & In-Page Debt Detail UX & Final Cleanup", () => {
   // 3. Single monthly due control when monthly frequency is active
   it("3. DebtForm renders at most ONE 'Día de pago mensual (1–31)' control", () => {
     const html = renderToStaticMarkup(
-  <DebtForm
+  <DebtFormLegacy
   initialDebtKind="other"
         accounts={[]}
         categories={[]}

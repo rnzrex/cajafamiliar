@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { DebtForm } from "./DebtForm";
+import { DebtForm as DebtFormLegacy } from "./DebtFormLegacy";
 import { DebtDetailModal } from "./DebtDetailModal";
 import { DebtOperationForm } from "./DebtOperationForm";
 import type { Debt, FinancialAccount, Category, DebtEvent } from "../types";
@@ -181,7 +181,7 @@ describe("DEBT-6B Flexible Debt Management UX Tests", () => {
 
   it("1. DebtForm onboarding allows selecting repayment structure and interest terms", () => {
     const html = renderToStaticMarkup(
-      <DebtForm
+      <DebtFormLegacy
         initialStep="details"
         initialDebtKind="other"
         accounts={mockAccounts}

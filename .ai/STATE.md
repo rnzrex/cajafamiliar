@@ -2,75 +2,93 @@
 
 ## Objective
 
-Complete the final financial-precision fix gate for `CAJA FAMILIAR UNIVERSAL DEBT CONTRACT ENGINE V1` on `feat/universal-debt-contract-engine-v1`, publish the validated code as OPEN/DRAFT PR #67, verify a new exact-SHA Preview, and stop before any Production action.
+Complete the final implementation and PostgreSQL 17 validation gate for
+DOCUMENT-FIRST DEBT ONBOARDING V1 on `feat/debt-document-first-onboarding-v1`,
+then publish the validated checkpoint as OPEN/DRAFT PR #68 and stop before
+Production SQL, merge, deploy, secrets, or real-document actions.
 
 ## Repository
 
-- Branch: `feat/universal-debt-contract-engine-v1`.
-- Base: `86bb5eb4ef1ed8344abfb8f0fbcbcf2eeff0622f` from `origin/main`.
-- Cost-provenance implementation and required state-only delivery checkpoints are committed and pushed; Git is authoritative for the exact current HEAD.
-- PR: #67, `https://github.com/rnzrex/cajafamiliar/pull/67`, OPEN and DRAFT.
-- Working tree was clean after the precision-fix checkpoint; the migration and schema snapshot remain unchanged.
+- Branch: `feat/debt-document-first-onboarding-v1`.
+- Base: `288fd3b7d648078d7aa3660f231705226b1b100c` from `origin/main`.
+- Starting remote HEAD: `40e1166cc6afac190b99c955572f8b5f95ab001e`.
+- PR: #68, expected OPEN/DRAFT/MERGEABLE.
+- Implementation checkpoint is published at the branch HEAD; Git is the
+  authority for the exact SHA and the final Preview must match it.
 
 ## Constraints
 
-- No Supabase Production SQL/schema/data, real financial documents, Gemini key/provider, Vercel env writes, Production frontend deployment, merge, or ready-for-review transition.
-- Additive migration only; no historical migration was changed.
-- Disposable PostgreSQL 17 local testing is allowed; all fixture data is local-only and sanitized.
-- Do not use the stale `supabase_db_caja-familiar` for the final BANK lifecycle gate because it lacks `recurring_payments.last_paid_month`.
+- No Production SQL, frontend deploy, merge, environment writes, Gemini key,
+  real document upload, or financial test data outside disposable local DBs.
+- Do not alter historical/applied migrations or weaken released BANK and
+  Universal behavior.
+- Local PostgreSQL 17 fixture data is synthetic and must not be committed.
 
 ## Completed
 
-- Corrected universal post-prepayment fee semantics: `unknown` and `contract_schedule_only` now return null fees instead of copying original schedule fees; fixed/percentage/supported formula fees still calculate.
-- Corrected refinance comparison semantics: omitted/null components remain unknown, explicit zero remains known, independently supplied complete totals remain usable, and costs/contributions are added exactly once.
-- Expanded the External AI V2 prompt with complete contract fields, rate/fee/prepayment semantics, authority evidence, null-versus-zero, no TCEA installment interest, no TNA-to-TEA conversion, all rows, and PII omission rules.
-- Extended the 129-row fixture through the same parser/mapper with principal basis, schedule-only fee semantics, null unknown tax percentage, official non-contractual authority, exact reconciliation, and no down-payment double count.
-- Preserved imported target contract authority in `DebtRefinanceForm` for contractual, official_noncontractual, user_reported, estimated, and unknown documents; unknown imported schedules remain loadable with source null.
-- Added regressions for both unknown fee modes, refinance component/cost/contribution precision, complete prompt semantics, 129-row contract semantics, and all refinance authority values.
-- Corrected universal post-prepayment insurance provenance: known percentage, per-installment fixed, upfront, and deterministically allocated total-credit-even rules calculate from their terms; positive or missing historical insurance without a rule remains null.
-- Corrected universal post-prepayment tax provenance: explicit zero remains known, while positive or missing historical tax amounts remain null in conservative V1.
-- Passed original principal, original term, and `debtInsuranceTerms` from `DebtOperationForm` into the universal simulator; strengthened the non-contractual estimate warning.
-- Preserved sanitized V2 `authorityEvidence` in the review and `bank_document_import_jobs.normalized_metadata` without changing authority classification.
+- Audited the document-first UI, parser/default extraction, service RPC payload,
+  existing generic/BANK onboarding paths, and the new onboarding migration.
+- Added explicit history modes for no rows paid, down-payment-only, and
+  consecutive fully paid contractual rows; partial/non-consecutive history is
+  rejected from the last-paid boundary path.
+- Preserved financed-principal semantics so the down payment is not subtracted
+  twice; added utility regressions for the 129-row real-estate fixture,
+  down-payment-only state, non-consecutive history, and null/zero taxes.
+- Hardened `create_debt_from_document_v1` with strict schedule validation,
+  sanitized persisted evidence, authority/source checks, full-fingerprint
+  idempotency with a UUID advisory lock, conflict rejection, and no movement or
+  debt-event creation.
+- Added the document-first entry regression and updated legacy/BANK UX tests to
+  exercise `DebtFormLegacy` directly now that the public `DebtForm` starts at
+  the document/manual choice screen.
+- Regenerated `supabase/schema.sql` from the local PostgreSQL 17 schema-only
+  dump after applying the current schema plus Universal and document-first
+  migrations. Historical `pg_catalog.integer` compatibility was only a
+  transient local load workaround; no historical migration was changed.
 
 ## Validation
 
-- Universal targeted suite: PASS — 2 files, 42 tests; migration hygiene PASS (additive-only, 13 required symbols, 0 forbidden terms).
+- Full Vitest: PASS — 77 files, 1,088 tests.
+- Typecheck: PASS (`npm run typecheck:api`). Build: PASS; only existing Vite
+  dynamic-import and large-chunk warnings.
+- `git diff --check`: PASS. Node syntax checks for all `scripts/*.mjs`: PASS.
+- Universal targeted suite: PASS — 2 files, 42 tests; migration hygiene PASS.
 - BANK reconstruction: PASS — 1 file, 11 tests.
 - BANK prepayment simulation: PASS — 1 file, 18 tests.
-- BANK external AI/import: PASS — 3 files, 29 tests.
-- BANK document V5: PASS — 6 files, 26 tests.
-- Full Vitest: PASS — 76 files, 1,079 tests.
-- Typecheck: PASS (`npm run typecheck:api`). Build: PASS; only existing dynamic-import and large-chunk warnings.
-- Node syntax checks for all `scripts/*.mjs` and `git diff --check` passed.
-- Clean disposable PostgreSQL 17 container `bank_lifecycle_clean_pg17` (schema snapshot plus unreleased universal migration, local-only grants/trigger harness adjustment) passed: BANK prepayment lifecycle scenarios 1–30, BANK V3, BANK V2, DEBT2B2, and universal SQL smoke.
-- Clean BANK lifecycle result is authoritative for this gate; the stale developer database failure was `last_paid_month` missing and is irrelevant to the clean result.
-- Clean PG17 RLS/grants audit: required new columns present, RLS enabled on financing contracts/refinance links/schedules/installments/document jobs, authenticated read/execute paths present for intended targets/RPCs.
-- Migration SHA-256: `549452ECDB96E92068E544B19804B7B3F56FA2DC28D7FBCED03A7FA2A0631848`.
-- Schema snapshot SHA-256: `093CBEB8DD4E5D6812C062BF48080379AE8F3E3C5B8254E4DB6630C3ADF60780`.
+- BANK External AI/import: PASS — 3 files, 29 tests.
+- BANK Document V5: PASS — 6 files, 26 tests.
+- Disposable `bank_lifecycle_clean_pg17`: PostgreSQL 17.6. BANK V2, BANK V3,
+  BANK prepayment lifecycle scenarios 1–30, DEBT2B2, and Universal SQL smoke
+  passed using temporary local role grants only.
+- Document-first SQL smoke passed with the 129-row synthetic fixture:
+  NEW_DEBT opening/live principal 76500, 129 installments, official_noncontractual
+  + reconstructed + non-authoritative, zero movements/events; separate
+  EXISTING_DEBT history 1–9 passed with opening/live principal 68000, nine
+  pretracking rows, 120 pending rows, and zero movements/events.
+- Negative SQL guards passed for BANK kind, invalid authority/source,
+  malformed schedule, and cross-household access.
+- Migration SHA-256: `304E7E155EF934782F735749A7059AAFEFFDEA4DA0D984D859F95D47DE2771A5`.
+- Schema snapshot SHA-256: `3D7EB08AC6E6D0B79AE66DFF2B05573DCEB1BF3390715921F386D03D4F32A80C`.
 
 ## Next Step
 
-- No code or SQL action remains; match the final Preview to Git's current HEAD, refresh PR #67 evidence, and stop OPEN/DRAFT without merge or Production action.
-
-## Delivery
-
-- Previous precision-fix code checkpoint `2b68f9924a70e37990eff2764b458f120463e2bb` was committed and pushed without force.
-- Cost-provenance code/test checkpoint `82a682e63cda659d035bf991b863c94f747b3ac9` was committed and pushed without force.
-- State-only delivery checkpoints were committed and pushed without force.
-- PR #67 evidence was refreshed after the exact-SHA Preview and remains OPEN/DRAFT/MERGEABLE.
-- The final Preview must be matched to Git's current HEAD; browser verification should render the protected login page without console errors.
-- The migration and schema snapshot remain unchanged.
+- Final implementation checkpoint is pushed and the exact-SHA Preview is
+  READY/HTTP 200. Report the completed gate and stop. Do not merge or touch
+  Production.
 
 ## Production
 
-- Production untouched. Observed Production baseline remains migration `20260827214244 bank_prepayment_schedule_lifecycle_v1`; no Production SQL, schema/data mutation, financial test data, real upload, frontend deployment, Vercel env change, Gemini key, or merge occurred.
+- Production untouched. No Production SQL/schema/data mutation, real upload,
+  Vercel env change, Gemini key, frontend deploy, or merge occurred.
 
 ## Relevant Files
 
-- `src/utils/universalDebtSimulation.ts` — provenance-safe universal post-prepayment fees, insurance, taxes, and estimate warnings.
-- `src/utils/universalDebtContract.ts` — null-safe refinance comparison.
-- `src/utils/universalDebtDocumentImport.ts` — complete External AI V2 prompt and sanitized authority evidence.
-- `src/components/DebtRefinanceForm.tsx` — preserves imported contract authority.
-- `src/utils/universalDebtContract.test.ts` — financial precision, cost provenance, and 129-row parser regressions.
-- `src/components/DebtRefinanceForm.test.tsx` — authority-preservation UX regressions.
-- `supabase/migrations/20260830100000_universal_debt_contract_engine_v1.sql` — unchanged additive migration under audit.
+- `src/components/DebtForm.tsx` — public document-first/manual entry chooser.
+- `src/components/DebtDocumentFirstOnboarding.tsx` — review, history choice,
+  down-payment handling, and final atomic create action.
+- `src/utils/debtDocumentFirstOnboarding.ts` — parser defaults, principal
+  derivation, history validation, and pretracking.
+- `src/services/debtDocumentFirstOnboarding.ts` — typed RPC request.
+- `supabase/migrations/20260830214500_debt_document_first_onboarding_v1.sql` —
+  atomic sanitized onboarding RPC.
+- `supabase/schema.sql` — regenerated PostgreSQL 17 schema snapshot.
