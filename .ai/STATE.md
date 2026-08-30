@@ -8,7 +8,7 @@ Complete the final financial-precision fix gate for `CAJA FAMILIAR UNIVERSAL DEB
 
 - Branch: `feat/universal-debt-contract-engine-v1`.
 - Base: `86bb5eb4ef1ed8344abfb8f0fbcbcf2eeff0622f` from `origin/main`.
-- Final code checkpoint pending push; the previous code checkpoint is `2b68f9924a70e37990eff2764b458f120463e2bb`.
+- Final cost-provenance code checkpoint is `82a682e63cda659d035bf991b863c94f747b3ac9`, pushed to `origin`; the previous code checkpoint is `2b68f9924a70e37990eff2764b458f120463e2bb`.
 - PR: #67, `https://github.com/rnzrex/cajafamiliar/pull/67`, OPEN and DRAFT.
 - Working tree was clean after the precision-fix checkpoint; the migration and schema snapshot remain unchanged.
 
@@ -50,12 +50,12 @@ Complete the final financial-precision fix gate for `CAJA FAMILIAR UNIVERSAL DEB
 
 ## Next Step
 
-- Commit and push the cost-provenance code/tests and this state update without force; refresh PR #67 and wait for a new exact-SHA Preview. Then stop OPEN/DRAFT without merge or Production action.
+- Refresh PR #67 evidence and wait for a new exact-SHA Preview for `82a682e63cda659d035bf991b863c94f747b3ac9`. Then stop OPEN/DRAFT without merge or Production action.
 
 ## Delivery
 
 - Previous precision-fix code checkpoint `2b68f9924a70e37990eff2764b458f120463e2bb` was committed and pushed without force.
-- The cost-provenance code/test checkpoint is pending commit and push.
+- Cost-provenance code/test checkpoint `82a682e63cda659d035bf991b863c94f747b3ac9` was committed and pushed without force.
 - PR #67 evidence must be refreshed after the new exact-SHA Preview and remain OPEN/DRAFT/MERGEABLE.
 - The migration and schema snapshot remain unchanged.
 
