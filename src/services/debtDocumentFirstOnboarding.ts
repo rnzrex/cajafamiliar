@@ -9,7 +9,7 @@ import type {
 } from "../types";
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 import { loadAppData, type DebtCreateResult } from "./dataRepository";
-import type { DocumentFirstOnboardingMode } from "../utils/debtDocumentFirstOnboarding";
+import type { DocumentFirstHistoryMode, DocumentFirstOnboardingMode } from "../utils/debtDocumentFirstOnboarding";
 
 export interface CreateDebtFromDocumentInput {
   member: HouseholdMember;
@@ -40,6 +40,7 @@ export interface CreateDebtFromDocumentInput {
   scheduleSource: ScheduleSource;
   scheduleAuthority: DebtContractAuthority;
   lastPaidInstallment: number;
+  historyMode: DocumentFirstHistoryMode;
   contract: Partial<DebtFinancingContract>;
   documentKind: "contract" | "schedule" | "refinance" | "statement" | "other";
   documentAuthority: DebtContractAuthority;
@@ -126,6 +127,7 @@ export async function createDebtFromDocument(input: CreateDebtFromDocumentInput)
     p_schedule_source: input.scheduleSource,
     p_schedule_authority: input.scheduleAuthority,
     p_last_paid_installment: input.lastPaidInstallment,
+    p_history_mode: input.historyMode,
     p_document_kind: input.documentKind,
     p_document_authority: input.documentAuthority,
     p_authority_evidence: input.authorityEvidence,

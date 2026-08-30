@@ -23,10 +23,11 @@ export const DOCUMENT_FIRST_EXTERNAL_AI_PROMPT = `${UNIVERSAL_EXTERNAL_AI_PROMPT
 REGLAS ADICIONALES PARA CREAR LA DEUDA DESDE EL DOCUMENTO:
 Dentro de contract incluye también, solo cuando el documento lo permita sin inventar: debtKind (bank_loan, family_loan, installment_purchase, mortgage, pledge u other), debtName (nombre corto descriptivo de la obligación, sin PII), creditorName (nombre comercial del acreedor, sin datos personales), currencyCode (PEN o USD), contractDate, currentPrincipalAmount (solo si el documento declara explícitamente un saldo de capital vigente; no lo deduzcas de pagos que no aparecen), openingPrincipalAmount con la misma semántica, termInstallments y tceaPercent. Para financiamiento directo de un vendedor/inmobiliaria con precio del bien, cuota inicial y cronograma, usa installment_purchase salvo que el documento demuestre otra categoría. No uses credit_card para cronogramas fijos.
 
-No decidas qué cuotas ya pagó realmente la persona salvo que el expediente lo demuestre de forma explícita. Caja Familiar preguntará esa historia real antes de guardar. La cuota inicial/down payment debe conservar rowRole=down_payment y no debe restarse por segunda vez del financedPrincipalAmount.`;
+No decidas qué cuotas ya pagó realmente la persona salvo que el expediente lo demuestre de forma explícita. Caja Familiar preguntará esa historia real antes de guardar. La cuota inicial/down payment debe conservar rowRole=down_payment y no debe restarse por segunda vez del financedPrincipalAmount. No confundas "todavía no he pagado nada de este cronograma" con "la cuota inicial no existe": el usuario puede haber pagado solo la cuota inicial. Para la historia consecutiva, marca únicamente cuotas contractuales completamente pagadas y consecutivas desde la número 1; pagos parciales o no consecutivos requieren un saldo de capital vigente informado por el acreedor y revisión manual.`;
 
 export type DocumentFirstSupportedDebtKind = Exclude<DebtKind, "credit_card">;
 export type DocumentFirstOnboardingMode = "NEW_DEBT" | "EXISTING_DEBT";
+export type DocumentFirstHistoryMode = "NO_ROWS_PAID" | "DOWN_PAYMENT_ONLY" | "CONSECUTIVE_FULLY_PAID";
 
 export interface DocumentFirstDefaults {
   debtKind: DocumentFirstSupportedDebtKind;
@@ -170,6 +171,70 @@ function maxContractualInstallment(schedule: DebtScheduleInstallmentInput[]): nu
   return Math.max(...schedule.map((row) => row.contractualInstallmentNumber ?? row.installmentNumber));
 }
 
+function contractualInstallmentNumber(row: DebtScheduleInstallmentInput): number {
+  return row.contractualInstallmentNumber ?? row.installmentNumber;
+}
+
+function nonSummarySchedule(schedule: DebtScheduleInstallmentInput[]): DebtScheduleInstallmentInput[] {
+  return schedule.filter((row) => row.rowRole !== "summary");
+}
+
+export function findDownPaymentInstallmentNumber(schedule: DebtScheduleInstallmentInput[]): number | null {
+  const downPayments = nonSummarySchedule(schedule).filter((row) => row.rowRole === "down_payment");
+  if (downPayments.length !== 1) return null;
+  const number = contractualInstallmentNumber(downPayments[0]);
+  return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+/**
+ * V1 only persists a deterministic history boundary. It must never turn a
+ * partial or non-consecutive payment report into a false "last paid" number.
+ */
+export function validateDocumentFirstHistorySelection(
+  schedule: DebtScheduleInstallmentInput[],
+  historyMode: DocumentFirstHistoryMode,
+  lastPaidInstallment: number,
+): string | null {
+  if (!Number.isInteger(lastPaidInstallment) || lastPaidInstallment < 0) {
+    return "La historia debe usar un número entero de cuota no negativo.";
+  }
+
+  const rows = nonSummarySchedule(schedule);
+  const numbers = rows.map(contractualInstallmentNumber);
+  if (new Set(numbers).size !== numbers.length) {
+    return "El cronograma tiene números contractuales duplicados; requiere revisión manual.";
+  }
+
+  if (historyMode === "NO_ROWS_PAID") {
+    return lastPaidInstallment === 0 ? null : "La opción sin filas pagadas debe usar límite 0.";
+  }
+
+  if (historyMode === "DOWN_PAYMENT_ONLY") {
+    const downPaymentNumber = findDownPaymentInstallmentNumber(schedule);
+    if (downPaymentNumber == null || downPaymentNumber !== 1) {
+      return "Solo se puede marcar la cuota inicial pagada cuando existe una única fila down_payment contractual número 1.";
+    }
+    if (lastPaidInstallment !== downPaymentNumber) {
+      return "La opción cuota inicial pagada debe marcar únicamente la fila down_payment.";
+    }
+    if (rows.some((row) => contractualInstallmentNumber(row) <= lastPaidInstallment && row.rowRole !== "down_payment")) {
+      return "La cuota inicial no puede representar también una cuota contractual ordinaria.";
+    }
+    return null;
+  }
+
+  if (lastPaidInstallment < 1) {
+    return "Para registrar cuotas pagadas, indica la última cuota completa y consecutiva desde la número 1.";
+  }
+  const numberSet = new Set(numbers);
+  for (let number = 1; number <= lastPaidInstallment; number += 1) {
+    if (!numberSet.has(number)) {
+      return "Solo se pueden marcar filas pagadas cuando son completas y consecutivas desde la cuota 1. Los pagos parciales o no consecutivos requieren saldo del acreedor y revisión manual.";
+    }
+  }
+  return null;
+}
+
 export function extractDocumentFirstDefaults(review: UniversalDebtDocumentImportReview): DocumentFirstDefaults {
   const raw = review.contract;
   const schedule = mapUniversalDocumentRowsToSchedule(review);
@@ -246,11 +311,16 @@ export function scheduleWithPretracking(
   schedule: DebtScheduleInstallmentInput[],
   onboardingMode: DocumentFirstOnboardingMode,
   lastPaidInstallment: number,
+  historyMode: DocumentFirstHistoryMode = onboardingMode === "NEW_DEBT" ? "NO_ROWS_PAID" : "CONSECUTIVE_FULLY_PAID",
 ): DebtScheduleInstallmentInput[] {
+  const downPaymentNumber = historyMode === "DOWN_PAYMENT_ONLY" ? findDownPaymentInstallmentNumber(schedule) : null;
   return schedule.map((row) => ({
     ...row,
     isPaidBeforeTracking: onboardingMode === "EXISTING_DEBT"
-      && (row.contractualInstallmentNumber ?? row.installmentNumber) <= lastPaidInstallment,
+      && historyMode !== "NO_ROWS_PAID"
+      && (historyMode === "DOWN_PAYMENT_ONLY"
+        ? downPaymentNumber != null && contractualInstallmentNumber(row) === downPaymentNumber && row.rowRole === "down_payment"
+        : contractualInstallmentNumber(row) <= lastPaidInstallment),
   }));
 }
 

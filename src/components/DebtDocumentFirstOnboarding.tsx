@@ -10,8 +10,11 @@ import {
   DOCUMENT_FIRST_EXTERNAL_AI_PROMPT,
   deriveOpeningPrincipalFromDocument,
   extractDocumentFirstDefaults,
+  findDownPaymentInstallmentNumber,
   periodicRateBasis,
   scheduleWithPretracking,
+  validateDocumentFirstHistorySelection,
+  type DocumentFirstHistoryMode,
   type DocumentFirstOnboardingMode,
 } from "../utils/debtDocumentFirstOnboarding";
 
@@ -49,7 +52,7 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
   const [responseText, setResponseText] = useState("");
   const [review, setReview] = useState<UniversalDebtDocumentImportReview | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [onboardingMode, setOnboardingMode] = useState<DocumentFirstOnboardingMode | null>(null);
+  const [historyMode, setHistoryMode] = useState<DocumentFirstHistoryMode | null>(null);
   const [lastPaidInstallment, setLastPaidInstallment] = useState("0");
   const [currentPrincipalOverride, setCurrentPrincipalOverride] = useState("");
   const [nameOverride, setNameOverride] = useState("");
@@ -58,12 +61,19 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
   const [saving, setSaving] = useState(false);
 
   const defaults = useMemo(() => review ? extractDocumentFirstDefaults(review) : null, [review]);
-  const lastPaid = onboardingMode === "EXISTING_DEBT" ? Math.max(0, Math.trunc(Number(lastPaidInstallment) || 0)) : 0;
+  const onboardingMode: DocumentFirstOnboardingMode | null = historyMode === "NO_ROWS_PAID" ? "NEW_DEBT" : historyMode ? "EXISTING_DEBT" : null;
+  const downPaymentNumber = defaults ? findDownPaymentInstallmentNumber(defaults.schedule) : null;
+  const lastPaid = historyMode === "NO_ROWS_PAID" ? 0 : historyMode === "DOWN_PAYMENT_ONLY"
+    ? downPaymentNumber ?? 0
+    : Math.max(0, Math.trunc(Number(lastPaidInstallment) || 0));
   const derivedOpeningPrincipal = defaults && onboardingMode
     ? deriveOpeningPrincipalFromDocument(defaults, onboardingMode, lastPaid)
     : null;
   const manualCurrentPrincipal = numericInput(currentPrincipalOverride);
   const effectiveOpeningPrincipal = manualCurrentPrincipal ?? derivedOpeningPrincipal;
+  const historyValidationMessage = defaults && historyMode
+    ? validateDocumentFirstHistorySelection(defaults.schedule, historyMode, lastPaid)
+    : null;
   const selectedDebtKind = debtKindOverride ?? (defaults && !defaults.requiresSpecializedFlow && (defaults.debtKind === "installment_purchase" || defaults.debtKind === "mortgage" || defaults.debtKind === "family_loan" || defaults.debtKind === "other") ? defaults.debtKind : "installment_purchase");
   const effectiveName = nameOverride.trim() || defaults?.debtName || "Financiamiento";
   const effectiveCreditor = creditorOverride.trim() || defaults?.creditorName || "";
@@ -78,7 +88,7 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
       setNameOverride(extracted.debtName);
       setCreditorOverride(extracted.creditorName);
       if (!extracted.requiresSpecializedFlow && (extracted.debtKind === "installment_purchase" || extracted.debtKind === "mortgage" || extracted.debtKind === "family_loan" || extracted.debtKind === "other")) setDebtKindOverride(extracted.debtKind);
-      setOnboardingMode(null);
+      setHistoryMode(null);
       setLastPaidInstallment("0");
       setCurrentPrincipalOverride("");
     } catch (error) {
@@ -110,8 +120,8 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
       setToast({ message: defaults.specializedReason ?? "Este documento debe continuar por un flujo especializado.", type: "error" });
       return;
     }
-    if (!onboardingMode) {
-      setToast({ message: "Indica si la deuda es nueva o si ya la vienes pagando.", type: "error" });
+    if (!historyMode || !onboardingMode) {
+      setToast({ message: "Indica qué filas contractuales ya estaban cubiertas antes de empezar a registrar la deuda.", type: "error" });
       return;
     }
     if (!effectiveCreditor) {
@@ -127,6 +137,10 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
       setToast({ message: `La última cuota pagada debe estar entre 0 y ${Math.max(0, maxContractual - 1)}.`, type: "error" });
       return;
     }
+    if (historyValidationMessage) {
+      setToast({ message: historyValidationMessage, type: "error" });
+      return;
+    }
     if (effectiveOpeningPrincipal == null || !Number.isFinite(effectiveOpeningPrincipal) || effectiveOpeningPrincipal <= 0) {
       setToast({ message: "No pudimos determinar el capital pendiente. Indícalo en la revisión antes de guardar.", type: "error" });
       return;
@@ -137,7 +151,7 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
       return;
     }
 
-    const schedule = scheduleWithPretracking(defaults.schedule, onboardingMode, lastPaid);
+    const schedule = scheduleWithPretracking(defaults.schedule, onboardingMode, lastPaid, historyMode);
     const nextRow = schedule.find((row) => !row.isPaidBeforeTracking && row.rowRole !== "down_payment") ?? schedule.find((row) => !row.isPaidBeforeTracking);
     const rateBasis = periodicRateBasis(defaults.interestRateBasis);
     setSaving(true);
@@ -171,6 +185,7 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
         scheduleSource: defaults.scheduleSource,
         scheduleAuthority: defaults.authority,
         lastPaidInstallment: lastPaid,
+        historyMode,
         contract: {
           contractAuthority: defaults.authority,
           principalBasis: defaults.principalBasis,
@@ -293,11 +308,14 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
 
               <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 space-y-4">
                 <div><p className="font-black text-indigo-950">SOLO FALTA TU HISTORIA REAL</p><p className="mt-1 text-sm text-indigo-900">El documento conoce el contrato, pero no debe inventar qué pagos hiciste realmente.</p></div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <button type="button" onClick={() => { setOnboardingMode("NEW_DEBT"); setLastPaidInstallment("0"); setCurrentPrincipalOverride(""); }} className={`rounded-xl border p-4 text-left ${onboardingMode === "NEW_DEBT" ? "border-indigo-600 bg-white ring-2 ring-indigo-600/20" : "border-indigo-200 bg-indigo-50/50"}`}><p className="font-black text-slate-900">Es nueva / todavía no he pagado cuotas</p><p className="mt-1 text-xs text-slate-600">El saldo inicial será el principal financiado que muestre el documento.</p></button>
-                  <button type="button" onClick={() => setOnboardingMode("EXISTING_DEBT")} className={`rounded-xl border p-4 text-left ${onboardingMode === "EXISTING_DEBT" ? "border-indigo-600 bg-white ring-2 ring-indigo-600/20" : "border-indigo-200 bg-indigo-50/50"}`}><p className="font-black text-slate-900">Ya la vengo pagando</p><p className="mt-1 text-xs text-slate-600">Indica la última cuota realmente pagada; Caja Familiar calculará el capital cuando sea seguro.</p></button>
+                <div className={`grid grid-cols-1 gap-3 ${downPaymentNumber != null ? "sm:grid-cols-3" : "sm:grid-cols-2"}`}>
+                  <button type="button" onClick={() => { setHistoryMode("NO_ROWS_PAID"); setLastPaidInstallment("0"); setCurrentPrincipalOverride(""); }} className={`rounded-xl border p-4 text-left ${historyMode === "NO_ROWS_PAID" ? "border-indigo-600 bg-white ring-2 ring-indigo-600/20" : "border-indigo-200 bg-indigo-50/50"}`}><p className="font-black text-slate-900">TODAVÍA NO HE PAGADO NADA DE ESTE CRONOGRAMA</p><p className="mt-1 text-xs text-slate-600">Ninguna fila contractual está cubierta. Si ya pagaste la cuota inicial, elige la opción específica de cuota inicial.</p></button>
+                  {downPaymentNumber != null && <button type="button" onClick={() => { setHistoryMode("DOWN_PAYMENT_ONLY"); setLastPaidInstallment(String(downPaymentNumber)); setCurrentPrincipalOverride(""); }} className={`rounded-xl border p-4 text-left ${historyMode === "DOWN_PAYMENT_ONLY" ? "border-indigo-600 bg-white ring-2 ring-indigo-600/20" : "border-indigo-200 bg-indigo-50/50"}`}><p className="font-black text-slate-900">YA PAGUÉ SOLO LA CUOTA INICIAL</p><p className="mt-1 text-xs text-slate-600">Marca únicamente la fila down_payment; el capital financiado sigue siendo {money(defaults.financedPrincipalAmount, defaults.currencyCode)}.</p></button>}
+                  <button type="button" onClick={() => setHistoryMode("CONSECUTIVE_FULLY_PAID")} className={`rounded-xl border p-4 text-left ${historyMode === "CONSECUTIVE_FULLY_PAID" ? "border-indigo-600 bg-white ring-2 ring-indigo-600/20" : "border-indigo-200 bg-indigo-50/50"}`}><p className="font-black text-slate-900">YA REALICÉ PAGOS CONSECUTIVOS Y COMPLETOS</p><p className="mt-1 text-xs text-slate-600">Indica la última cuota contractual completamente pagada desde la número 1. No uses esta opción para pagos parciales o no consecutivos.</p></button>
                 </div>
-                {onboardingMode === "EXISTING_DEBT" && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="text-sm font-bold text-indigo-950">Última cuota contractual realmente pagada<input type="number" min="0" step="1" value={lastPaidInstallment} onChange={(event) => { setLastPaidInstallment(event.target.value); setCurrentPrincipalOverride(""); }} className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 font-normal text-slate-900" /><span className="mt-1 block text-xs font-normal text-indigo-800">Usa 0 si todavía no pagaste ninguna cuota del cronograma.</span></label><label className="text-sm font-bold text-indigo-950">Capital pendiente informado por el acreedor (opcional)<input type="number" min="0" step="0.01" value={currentPrincipalOverride} onChange={(event) => setCurrentPrincipalOverride(event.target.value)} placeholder={derivedOpeningPrincipal == null ? "Necesario si no se puede calcular" : `Calculado: ${derivedOpeningPrincipal.toFixed(2)}`} className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 font-normal text-slate-900" /><span className="mt-1 block text-xs font-normal text-indigo-800">Si lo dejas vacío, usamos el cálculo seguro del cronograma. La cuota inicial no se resta dos veces.</span></label></div>}
+                {historyMode === "CONSECUTIVE_FULLY_PAID" && <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="text-sm font-bold text-indigo-950">Última cuota contractual completamente pagada<input type="number" min="1" step="1" value={lastPaidInstallment} onChange={(event) => { setLastPaidInstallment(event.target.value); setCurrentPrincipalOverride(""); }} className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 font-normal text-slate-900" /><span className="mt-1 block text-xs font-normal text-indigo-800">Solo filas consecutivas y totalmente pagadas desde la cuota 1. Un pago parcial/no consecutivo requiere el saldo vigente del acreedor y revisión manual.</span></label><label className="text-sm font-bold text-indigo-950">Capital pendiente informado por el acreedor (opcional)<input type="number" min="0" step="0.01" value={currentPrincipalOverride} onChange={(event) => setCurrentPrincipalOverride(event.target.value)} placeholder={derivedOpeningPrincipal == null ? "Necesario si no se puede calcular" : `Calculado: ${derivedOpeningPrincipal.toFixed(2)}`} className="mt-1 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2.5 font-normal text-slate-900" /><span className="mt-1 block text-xs font-normal text-indigo-800">Si lo dejas vacío, usamos el cálculo seguro del cronograma. La cuota inicial no se resta dos veces.</span></label></div>}
+                {historyMode === "DOWN_PAYMENT_ONLY" && <p className="rounded-xl border border-indigo-200 bg-white p-3 text-xs font-semibold text-indigo-800">Solo se marcará como cubierta la fila down_payment; no se creará un movimiento ni se restará {money(defaults.downPaymentAmount, defaults.currencyCode)} del principal financiado.</p>}
+                {historyValidationMessage && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-900">{historyValidationMessage}</p>}
                 {onboardingMode && <div className="rounded-xl border border-indigo-200 bg-white p-4"><p className="text-xs text-slate-500">Capital con el que empezará Caja Familiar</p><p className="text-xl font-black text-indigo-950">{money(effectiveOpeningPrincipal, defaults.currencyCode)}</p>{onboardingMode === "EXISTING_DEBT" && manualCurrentPrincipal == null && derivedOpeningPrincipal != null && <p className="mt-1 text-xs font-semibold text-indigo-700">Calculado desde principal financiado menos capital de cuotas pagadas; filas de cuota inicial/down payment quedan excluidas del descuento.</p>}</div>}
               </div>
 
@@ -305,7 +323,7 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
 
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" /><div><p className="font-black text-emerald-950">Nada se ha guardado todavía</p><p className="mt-1 text-sm text-emerald-900">Al confirmar se creará en una sola operación la deuda, su contrato financiero, el cronograma y la trazabilidad del documento. No se crea ingreso, movimiento de caja ni pago histórico.</p></div></div></div>
 
-              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between"><button type="button" onClick={() => { setReview(null); setErrorMessage(null); }} className="rounded-xl px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Volver a analizar</button><div className="flex gap-3"><button type="button" onClick={onCancel} className="rounded-xl px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Cancelar</button><button type="button" onClick={() => void save()} disabled={saving || !onboardingMode || review.reconciliation.status === "inconsistent"} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-black text-white shadow hover:bg-emerald-700 disabled:opacity-50">{saving ? "CREANDO..." : "CONFIRMAR Y CREAR DEUDA"}</button></div></div>
+              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between"><button type="button" onClick={() => { setReview(null); setErrorMessage(null); }} className="rounded-xl px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Volver a analizar</button><div className="flex gap-3"><button type="button" onClick={onCancel} className="rounded-xl px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Cancelar</button><button type="button" onClick={() => void save()} disabled={saving || !historyMode || Boolean(historyValidationMessage) || review.reconciliation.status === "inconsistent"} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-black text-white shadow hover:bg-emerald-700 disabled:opacity-50">{saving ? "CREANDO..." : "CONFIRMAR Y CREAR DEUDA"}</button></div></div>
             </>
           )}
         </div>

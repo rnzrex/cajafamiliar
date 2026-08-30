@@ -3,7 +3,7 @@ import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DebtForm } from "./DebtForm.js";
+import { DebtForm as DebtFormLegacy } from "./DebtFormLegacy.js";
 import { BANK_LOAN_SUBTYPE_OPTIONS, AMORTIZATION_METHOD_OPTIONS } from "../utils/bankCreditFormHelper.js";
 import * as dataRepository from "../services/dataRepository.js";
 import { addMonthsClamped } from "../utils/debtEstimation.js";
@@ -39,7 +39,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
   it("advances from type selection to bank details and toggles estimation", async () => {
     const user = userEvent.setup();
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -70,7 +70,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
   it("selects the contract entry method without auto-advancing", async () => {
     const user = userEvent.setup();
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -102,7 +102,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
   it("requires a positive integer last paid installment for existing debt", () => {
     const setToast = vi.fn();
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={setToast}
@@ -152,7 +152,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
   it("keeps the original first due date and blocks live baseline mismatches", async () => {
     const user = userEvent.setup();
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -194,7 +194,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
   it("accepts pending-only official rows when current principal is supplied", async () => {
     const user = userEvent.setup();
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -222,7 +222,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
   it("blocks pending-only official rows when current principal is unavailable", async () => {
     const user = userEvent.setup();
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -250,7 +250,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     const fetchSpy = vi.fn().mockRejectedValue(new Error("network must not be needed for external import"));
     vi.stubGlobal("fetch", fetchSpy);
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -298,7 +298,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     const user = userEvent.setup();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -331,7 +331,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     const user = userEvent.setup();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -380,7 +380,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
       reportedBalance: { amount: 3961.09, label: "Saldo Capital", inferredKind: "principal_balance" as const, confidence: 0.99 },
     };
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -407,7 +407,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
       schedule: BANK_EXTERNAL_AI_ALFIN_FIXTURE.schedule.map((row, index) => index === 0 ? { ...row, reportedBalance: 3961.09 } : row),
     };
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -442,7 +442,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     const user = userEvent.setup();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -472,7 +472,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
     const onSaved = vi.fn();
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}
@@ -505,7 +505,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     const fetchSpy = vi.fn().mockRejectedValue(new Error("network must not be needed for external import"));
     vi.stubGlobal("fetch", fetchSpy);
     render(
-      <DebtForm
+      <DebtFormLegacy
         accounts={[]}
         categories={[]}
         setToast={() => {}}

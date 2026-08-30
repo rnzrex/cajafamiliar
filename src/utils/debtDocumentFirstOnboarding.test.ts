@@ -6,7 +6,9 @@ import {
   DOCUMENT_FIRST_EXTERNAL_AI_PROMPT,
   deriveOpeningPrincipalFromDocument,
   extractDocumentFirstDefaults,
+  findDownPaymentInstallmentNumber,
   scheduleWithPretracking,
+  validateDocumentFirstHistorySelection,
 } from "./debtDocumentFirstOnboarding";
 
 function realEstateReview() {
@@ -67,6 +69,8 @@ describe("document-first debt onboarding", () => {
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("currentPrincipalAmount");
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("No decidas qué cuotas ya pagó realmente");
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("no debe restarse por segunda vez");
+    expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("pagado solo la cuota inicial");
+    expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("parciales o no consecutivos");
   });
 
   it("extracts the 129-row proforma into creation defaults without collapsing authority", () => {
@@ -96,10 +100,45 @@ describe("document-first debt onboarding", () => {
 
   it("marks historical schedule rows as pretracking without manufacturing payment events", () => {
     const defaults = extractDocumentFirstDefaults(realEstateReview());
-    const schedule = scheduleWithPretracking(defaults.schedule, "EXISTING_DEBT", 9);
+    const schedule = scheduleWithPretracking(defaults.schedule, "EXISTING_DEBT", 9, "CONSECUTIVE_FULLY_PAID");
     expect(schedule.slice(0, 9).every((row) => row.isPaidBeforeTracking)).toBe(true);
     expect(schedule[9].isPaidBeforeTracking).toBe(false);
     expect(schedule[0]).toMatchObject({ rowRole: "down_payment", expectedPrincipal: 8500 });
+  });
+
+  it("models a paid down payment without reducing the financed principal", () => {
+    const defaults = extractDocumentFirstDefaults(realEstateReview());
+    expect(findDownPaymentInstallmentNumber(defaults.schedule)).toBe(1);
+    expect(validateDocumentFirstHistorySelection(defaults.schedule, "NO_ROWS_PAID", 0)).toBeNull();
+    expect(validateDocumentFirstHistorySelection(defaults.schedule, "DOWN_PAYMENT_ONLY", 1)).toBeNull();
+    const schedule = scheduleWithPretracking(defaults.schedule, "EXISTING_DEBT", 1, "DOWN_PAYMENT_ONLY");
+    expect(schedule[0].isPaidBeforeTracking).toBe(true);
+    expect(schedule[1].isPaidBeforeTracking).toBe(false);
+    expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 1)).toBe(76500);
+  });
+
+  it("rejects partial or non-consecutive history instead of silently marking rows", () => {
+    const defaults = extractDocumentFirstDefaults(realEstateReview());
+    const nonConsecutive = defaults.schedule.filter((row) => (row.contractualInstallmentNumber ?? row.installmentNumber) !== 2);
+    expect(validateDocumentFirstHistorySelection(nonConsecutive, "CONSECUTIVE_FULLY_PAID", 9)).toContain("consecutivas");
+    expect(validateDocumentFirstHistorySelection(defaults.schedule, "CONSECUTIVE_FULLY_PAID", 0)).toContain("última cuota");
+  });
+
+  it("preserves positive, explicit-zero, and unknown tax semantics", () => {
+    const review = parseUniversalDebtExternalAiResponse(JSON.stringify({
+      schema: CAJA_FAMILIAR_DEBT_DOCUMENT_V2,
+      kind: "schedule",
+      authority: "contractual",
+      authorityEvidence: "official_schedule",
+      contract: { debtKind: "family_loan", creditorName: "ACREEDOR", financedPrincipalAmount: 100 },
+      rows: [
+        { sourceRowNumber: 1, contractualInstallmentNumber: 1, dueDate: "2027-01-01", expectedAmount: 116, expectedPrincipal: 100, expectedInterest: 10, expectedFees: 5, expectedInsurance: 0, expectedTaxes: 1, rowRole: "installment" },
+        { sourceRowNumber: 2, contractualInstallmentNumber: 2, dueDate: "2027-02-01", expectedAmount: 100, expectedPrincipal: 100, expectedInterest: 0, expectedFees: 0, expectedInsurance: 0, expectedTaxes: 0, rowRole: "installment" },
+        { sourceRowNumber: 3, contractualInstallmentNumber: 3, dueDate: "2027-03-01", expectedAmount: 100, expectedPrincipal: 100, expectedInterest: 0, expectedFees: 0, expectedInsurance: 0, expectedTaxes: null, rowRole: "installment" },
+      ],
+    }));
+    const defaults = extractDocumentFirstDefaults(review);
+    expect(defaults.schedule.map((row) => row.expectedTaxes)).toEqual([1, 0, null]);
   });
 
   it("routes bank documents to the existing specialized BANK onboarding", () => {

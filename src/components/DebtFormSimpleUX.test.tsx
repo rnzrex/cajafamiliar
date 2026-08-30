@@ -2,6 +2,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { DebtForm } from "./DebtForm";
+import { DebtForm as DebtFormLegacy } from "./DebtFormLegacy";
 import {
   buildDebtCreateInputPayload,
   buildPledgeCollateralList,
@@ -203,9 +204,29 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
   });
 
   describe("Component Rendering & Form UX Tests", () => {
-    it("1. DebtForm onboarding allows selecting repayment structure and interest terms", () => {
+    it("DebtForm presents document-first as the recommended entry without opening the legacy form", () => {
       const html = renderToStaticMarkup(
         <DebtForm
+          initialStep="details"
+          initialDebtKind="other"
+          accounts={mockAccounts}
+          categories={mockCategories}
+          onSaved={mockOnSaved}
+          onCancel={mockOnCancel}
+          setToast={mockSetToast}
+        />
+      );
+
+      expect(html).toContain("Analizar documento con IA");
+      expect(html).toContain("Recomendado");
+      expect(html).toContain("Ingresar datos manualmente");
+      expect(html).toContain("No crea la deuda hasta que pulses");
+      expect(html).not.toContain("¿Cómo funciona el pago de esta deuda / empeño?");
+    });
+
+    it("1. DebtForm onboarding allows selecting repayment structure and interest terms", () => {
+      const html = renderToStaticMarkup(
+        <DebtFormLegacy
           initialStep="details"
           initialDebtKind="other"
           accounts={mockAccounts}
@@ -226,7 +247,7 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
 
     it("2. currency is select, not free text with PEN and USD options", () => {
       const html = renderToStaticMarkup(
-        <DebtForm
+        <DebtFormLegacy
           initialStep="details"
           initialDebtKind="other"
           accounts={mockAccounts}
@@ -244,7 +265,7 @@ describe("DEBT-6A Simple Debt Onboarding UX & Production Helpers Integrity", () 
 
     it("3. simple debt registration works without advanced fields", () => {
       const html = renderToStaticMarkup(
-        <DebtForm
+        <DebtFormLegacy
           initialStep="details"
           initialDebtKind="other"
           accounts={mockAccounts}
