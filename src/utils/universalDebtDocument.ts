@@ -7,6 +7,8 @@ export type UniversalDebtDocumentKind = "contract" | "schedule" | "refinance" | 
 
 export interface UniversalDebtDocumentRow {
   sourceRowNumber: number;
+  /** Whether the source row number came from a valid positive input value. */
+  sourceRowNumberValid?: boolean;
   contractualInstallmentNumber: number | null;
   dueDate: string | null;
   openingBalance: number | null;
@@ -67,7 +69,9 @@ export function normalizeUniversalDebtDocument(input: {
   const droppedRows: number[] = [];
   const rows: UniversalDebtDocumentRow[] = [];
   input.rows.forEach((raw, index) => {
-    const sourceRowNumber = nullablePositiveInteger(raw.sourceRowNumber ?? raw.source_row_number ?? index + 1) ?? index + 1;
+    const rawSourceRowNumber = raw.sourceRowNumber ?? raw.source_row_number;
+    const sourceRowNumberValid = nullablePositiveInteger(rawSourceRowNumber) != null;
+    const sourceRowNumber = nullablePositiveInteger(rawSourceRowNumber ?? index + 1) ?? index + 1;
     const dueDate = raw.dueDate == null && raw.due_date == null ? null : String(raw.dueDate ?? raw.due_date);
     const hasFinancialValue = ["expectedAmount", "expected_amount", "expectedPrincipal", "expected_principal", "reportedBalance", "reported_balance"]
       .some((key) => raw[key] != null && raw[key] !== "");
@@ -89,6 +93,7 @@ export function normalizeUniversalDebtDocument(input: {
     }
     rows.push({
       sourceRowNumber,
+      sourceRowNumberValid,
       contractualInstallmentNumber: nullablePositiveInteger(raw.contractualInstallmentNumber ?? raw.contractual_installment_number ?? raw.installmentNumber ?? raw.installment_number),
       dueDate,
       openingBalance,

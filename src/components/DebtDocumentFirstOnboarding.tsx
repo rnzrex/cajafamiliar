@@ -5,18 +5,20 @@ import type { DebtCreateResult } from "../services/dataRepository";
 import { createDebtFromDocument } from "../services/debtDocumentFirstOnboarding";
 import { localDateString } from "../utils/date";
 import { makeUuid } from "../utils/storage";
-import { parseUniversalDebtExternalAiResponse, type UniversalDebtDocumentImportReview } from "../utils/universalDebtDocumentImport";
+import { parseUniversalDebtExternalAiResponse } from "../utils/universalDebtDocumentImport";
 import {
   DOCUMENT_FIRST_EXTERNAL_AI_PROMPT,
   deriveOpeningPrincipalFromDocument,
   extractDocumentFirstDefaults,
   findDownPaymentInstallmentNumber,
+  normalizeDocumentFirstReview,
   periodicRateBasis,
   scheduleWithPretracking,
   validateDocumentFirstHistorySelection,
   type DocumentFirstHistoryMode,
   type DocumentFirstOnboardingMode,
 } from "../utils/debtDocumentFirstOnboarding";
+import type { DocumentFirstSemanticReview } from "../utils/debtDocumentFirstOnboarding";
 
 interface DebtDocumentFirstOnboardingProps {
   currentMember?: HouseholdMember;
@@ -50,7 +52,7 @@ const GENERIC_KIND_OPTIONS: Array<{ value: "installment_purchase" | "mortgage" |
 export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true, onSaved, onCancel, onBack, onUseSpecializedFlow, setToast }: DebtDocumentFirstOnboardingProps) {
   const [debtId] = useState(() => makeUuid());
   const [responseText, setResponseText] = useState("");
-  const [review, setReview] = useState<UniversalDebtDocumentImportReview | null>(null);
+  const [review, setReview] = useState<DocumentFirstSemanticReview | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [historyMode, setHistoryMode] = useState<DocumentFirstHistoryMode | null>(null);
   const [lastPaidInstallment, setLastPaidInstallment] = useState("0");
@@ -77,11 +79,12 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
   const selectedDebtKind = debtKindOverride ?? (defaults && !defaults.requiresSpecializedFlow && (defaults.debtKind === "installment_purchase" || defaults.debtKind === "mortgage" || defaults.debtKind === "family_loan" || defaults.debtKind === "other") ? defaults.debtKind : "installment_purchase");
   const effectiveName = nameOverride.trim() || defaults?.debtName || "Financiamiento";
   const effectiveCreditor = creditorOverride.trim() || defaults?.creditorName || "";
+  const reviewWarnings = review ? [...new Set([...review.warnings, ...review.normalizationWarnings])] : [];
 
   const analyze = () => {
     try {
       setErrorMessage(null);
-      const parsed = parseUniversalDebtExternalAiResponse(responseText);
+      const parsed = normalizeDocumentFirstReview(parseUniversalDebtExternalAiResponse(responseText));
       const extracted = extractDocumentFirstDefaults(parsed);
       if (extracted.schedule.length === 0) throw new Error("El JSON no contiene filas de cronograma con fecha de vencimiento.");
       setReview(parsed);
@@ -122,6 +125,10 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
     }
     if (!historyMode || !onboardingMode) {
       setToast({ message: "Indica qué filas contractuales ya estaban cubiertas antes de empezar a registrar la deuda.", type: "error" });
+      return;
+    }
+    if (review.blockingIssues.length > 0) {
+      setToast({ message: "Corrige los bloqueos de validación documental antes de crear la deuda.", type: "error" });
       return;
     }
     if (!effectiveCreditor) {
@@ -220,7 +227,8 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
           isAuthoritative: review.isAuthoritative,
           reconciliation: review.reconciliation,
           rowCount: schedule.length,
-          warnings: review.warnings,
+          warnings: reviewWarnings,
+          blockingIssues: review.blockingIssues,
           principalSemantics: {
             assetPrice: defaults.assetPrice,
             downPaymentAmount: defaults.downPaymentAmount,
@@ -271,10 +279,11 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
           <div className={`rounded-2xl border p-5 ${defaults.authority === "contractual" ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div><p className="text-xs font-black uppercase tracking-wider text-slate-600">DOCUMENTO ANALIZADO</p><p className="mt-1 text-lg font-black text-slate-950">{defaults.authority === "contractual" ? "CONTRACTUAL" : defaults.authority === "official_noncontractual" ? "PROFORMA / NO CONTRACTUAL" : defaults.authority === "estimated" ? "ESTIMADO" : defaults.authority === "user_reported" ? "REPORTADO POR EL USUARIO" : "AUTORIDAD POR CONFIRMAR"}</p></div>
-              <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-700">{defaults.schedule.length} FILAS</span>
+              <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-slate-700">{defaults.totalScheduleRows} FILAS</span>
             </div>
             {defaults.authority === "official_noncontractual" && <p className="mt-3 text-sm font-semibold text-amber-950">Este documento sirve para proyectar la deuda, pero no tiene fuerza contractual por sí solo. Podrás reemplazarlo luego por el contrato o cronograma contractual.</p>}
-            <p className="mt-2 text-xs text-slate-700">Reconciliación: <strong>{review.reconciliation.status === "exact" || review.reconciliation.status === "within_tolerance" ? "EXACTA" : review.reconciliation.status === "inconsistent" ? "INCONSISTENTE" : "POR CONFIRMAR"}</strong> · Evidencia de autoridad: <strong>{review.authorityEvidence}</strong></p>
+            <p className="mt-2 text-xs text-slate-700">Autoridad documental: <strong>{review.authorityEvidence}</strong> · Reconciliación estructural: <strong>{review.blockingIssues.length > 0 ? "REQUIERE REVISIÓN" : review.reconciliation.status === "exact" || review.reconciliation.status === "within_tolerance" ? "VALIDADA / EXACTA" : review.reconciliation.status === "inconsistent" ? "INCONSISTENTE" : "POR CONFIRMAR"}</strong></p>
+            {review.blockingIssues.length === 0 && (review.reconciliation.status === "exact" || review.reconciliation.status === "within_tolerance") && <p className="mt-2 text-xs font-semibold text-emerald-900">La proforma sigue siendo no contractual, pero su aritmética y estructura fueron validadas.</p>}
           </div>
 
           {defaults.requiresSpecializedFlow ? (
@@ -294,15 +303,16 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Valor del bien</p><p className="font-black">{money(defaults.assetPrice, defaults.currencyCode)}</p></div>
-                  <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Cuota inicial</p><p className="font-black">{money(defaults.downPaymentAmount, defaults.currencyCode)}</p></div>
-                  <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Principal programado</p><p className="font-black">{money(defaults.scheduledPrincipalAmount, defaults.currencyCode)}</p></div>
+                  <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Cuota inicial</p><p className="font-black">{money(defaults.downPaymentAmount, defaults.currencyCode)}</p>{review.blockingIssues.length === 0 && defaults.principalBasis === "asset_price_including_down_payment" && defaults.downPaymentAmount != null && defaults.assetPrice != null && defaults.financedPrincipalAmount != null && downPaymentNumber === 1 && <p className="mt-1 text-[11px] text-slate-600">Validada con precio − financiado y fila down_payment.</p>}</div>
+                  <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Principal programado</p><p className="font-black">{money(defaults.scheduledPrincipalAmount, defaults.currencyCode)}</p>{review.blockingIssues.length === 0 && defaults.scheduledPrincipalAmount != null && (review.reconciliation.status === "exact" || review.reconciliation.status === "within_tolerance") && <p className="mt-1 text-[11px] text-slate-600">Validado con la suma del cronograma.</p>}</div>
                   <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Principal financiado</p><p className="font-black">{money(defaults.financedPrincipalAmount, defaults.currencyCode)}</p></div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 text-sm">
                   <div><p className="text-xs text-slate-500">Tasa</p><p className="font-bold">{defaults.interestRatePercent == null ? "POR CONFIRMAR" : `${defaults.interestRatePercent}% · ${defaults.interestRateType}`}</p></div>
                   <div><p className="text-xs text-slate-500">Base de días</p><p className="font-bold">{defaults.dayCountBasis}</p></div>
                   <div><p className="text-xs text-slate-500">Regla de gastos</p><p className="font-bold">{defaults.feeRuleType}</p></div>
-                  <div><p className="text-xs text-slate-500">Plazo / filas</p><p className="font-bold">{defaults.termInstallments ?? defaults.schedule.length}</p></div>
+                  <div><p className="text-xs text-slate-500">Filas del cronograma</p><p className="font-bold">{defaults.totalScheduleRows}</p><p className="text-[11px] text-slate-500">{defaults.totalScheduleRows - defaults.postInitialObligationRows > 0 ? `${defaults.totalScheduleRows - defaults.postInitialObligationRows} inicial + ${defaults.postInitialObligationRows} posteriores` : `${defaults.postInitialObligationRows} obligaciones`}</p></div>
+                  <div><p className="text-xs text-slate-500">Cuotas posteriores a la inicial</p><p className="font-bold">{defaults.postInitialObligationRows}</p><p className="text-[11px] text-slate-500">Plazo informado: {defaults.termInstallments ?? "POR CONFIRMAR"}</p></div>
                 </div>
               </div>
 
@@ -319,11 +329,12 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
                 {onboardingMode && <div className="rounded-xl border border-indigo-200 bg-white p-4"><p className="text-xs text-slate-500">Capital con el que empezará Caja Familiar</p><p className="text-xl font-black text-indigo-950">{money(effectiveOpeningPrincipal, defaults.currencyCode)}</p>{onboardingMode === "EXISTING_DEBT" && manualCurrentPrincipal == null && derivedOpeningPrincipal != null && <p className="mt-1 text-xs font-semibold text-indigo-700">Calculado desde principal financiado menos capital de cuotas pagadas; filas de cuota inicial/down payment quedan excluidas del descuento.</p>}</div>}
               </div>
 
-              {review.warnings.length > 0 && <div className="space-y-2">{review.warnings.map((warning) => <p key={warning} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{warning}</p>)}</div>}
+              {review.blockingIssues.length > 0 && <div className="space-y-2" role="alert"><p className="font-black text-red-900">NO SE PUEDE CREAR TODAVÍA</p>{review.blockingIssues.map((issue) => <p key={issue} className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-900">{issue}</p>)}</div>}
+              {reviewWarnings.length > 0 && <div className="space-y-2">{reviewWarnings.map((warning) => <p key={warning} className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900">{warning}</p>)}</div>}
 
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-start gap-2"><CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" /><div><p className="font-black text-emerald-950">Nada se ha guardado todavía</p><p className="mt-1 text-sm text-emerald-900">Al confirmar se creará en una sola operación la deuda, su contrato financiero, el cronograma y la trazabilidad del documento. No se crea ingreso, movimiento de caja ni pago histórico.</p></div></div></div>
 
-              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between"><button type="button" onClick={() => { setReview(null); setErrorMessage(null); }} className="rounded-xl px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Volver a analizar</button><div className="flex gap-3"><button type="button" onClick={onCancel} className="rounded-xl px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Cancelar</button><button type="button" onClick={() => void save()} disabled={saving || !historyMode || Boolean(historyValidationMessage) || review.reconciliation.status === "inconsistent"} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-black text-white shadow hover:bg-emerald-700 disabled:opacity-50">{saving ? "CREANDO..." : "CONFIRMAR Y CREAR DEUDA"}</button></div></div>
+              <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between"><button type="button" onClick={() => { setReview(null); setErrorMessage(null); }} className="rounded-xl px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Volver a analizar</button><div className="flex gap-3"><button type="button" onClick={onCancel} className="rounded-xl px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-100">Cancelar</button><button type="button" onClick={() => void save()} disabled={saving || !historyMode || Boolean(historyValidationMessage) || review.blockingIssues.length > 0 || review.reconciliation.status === "inconsistent"} className="rounded-xl bg-emerald-600 px-5 py-2.5 font-black text-white shadow hover:bg-emerald-700 disabled:opacity-50">{saving ? "CREANDO..." : "CONFIRMAR Y CREAR DEUDA"}</button></div></div>
             </>
           )}
         </div>

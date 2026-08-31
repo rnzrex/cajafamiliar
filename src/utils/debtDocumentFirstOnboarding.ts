@@ -17,17 +17,38 @@ import {
   mapUniversalDocumentRowsToSchedule,
   type UniversalDebtDocumentImportReview,
 } from "./universalDebtDocumentImport";
+import { reconcileUniversalDebtDocument, type UniversalDebtDocumentRow } from "./universalDebtDocument";
+
+const DOCUMENT_FIRST_NUMBERING_PROMPT = `
+
+REGLAS CRÍTICAS PARA UNA PROFORMA CON CRONOGRAMA:
+- contractualInstallmentNumber debe salir ÚNICAMENTE de la columna numérica claramente identificada como Cuota, N° cuota, Nro. cuota, Installment o Installment number.
+- Nunca derives contractualInstallmentNumber de códigos CI001, LS001, CASH, códigos de fila, conceptos, operaciones o referencias internas.
+- Si la tabla numera las cuotas 1..N, conserva exactamente esa numeración y sourceRowNumber en el orden de la tabla.
+- Si rowRole es CASH y el documento lo presenta como pago inicial, usa rowRole=down_payment.
+- Para financiamiento directo con precio del bien: cuando esté explícito, assetPrice - downPaymentAmount = financedPrincipalAmount.
+- No sumes cuotas introductorias de capital a downPaymentAmount: son conceptos distintos.
+- Si el cronograma incluye la fila down_payment, scheduledPrincipalAmount puede ser el precio total del bien aunque financedPrincipalAmount sea menor.
+- termInstallments es el plazo de cuotas posteriores cuando el documento así lo indique; no lo confundas con el total de filas extraídas.
+- Antes de devolver JSON verifica números contractuales únicos, suma del capital, relación precio/cuota inicial/principal financiado, filas totales y ausencia de duplicados.`;
 
 export const DOCUMENT_FIRST_EXTERNAL_AI_PROMPT = `${UNIVERSAL_EXTERNAL_AI_PROMPT}
 
 REGLAS ADICIONALES PARA CREAR LA DEUDA DESDE EL DOCUMENTO:
 Dentro de contract incluye también, solo cuando el documento lo permita sin inventar: debtKind (bank_loan, family_loan, installment_purchase, mortgage, pledge u other), debtName (nombre corto descriptivo de la obligación, sin PII), creditorName (nombre comercial del acreedor, sin datos personales), currencyCode (PEN o USD), contractDate, currentPrincipalAmount (solo si el documento declara explícitamente un saldo de capital vigente; no lo deduzcas de pagos que no aparecen), openingPrincipalAmount con la misma semántica, termInstallments y tceaPercent. Para financiamiento directo de un vendedor/inmobiliaria con precio del bien, cuota inicial y cronograma, usa installment_purchase salvo que el documento demuestre otra categoría. No uses credit_card para cronogramas fijos.
 
-No decidas qué cuotas ya pagó realmente la persona salvo que el expediente lo demuestre de forma explícita. Caja Familiar preguntará esa historia real antes de guardar. La cuota inicial/down payment debe conservar rowRole=down_payment y no debe restarse por segunda vez del financedPrincipalAmount. No confundas "todavía no he pagado nada de este cronograma" con "la cuota inicial no existe": el usuario puede haber pagado solo la cuota inicial. Para la historia consecutiva, marca únicamente cuotas contractuales completamente pagadas y consecutivas desde la número 1; pagos parciales o no consecutivos requieren un saldo de capital vigente informado por el acreedor y revisión manual.`;
+No decidas qué cuotas ya pagó realmente la persona salvo que el expediente lo demuestre de forma explícita. Caja Familiar preguntará esa historia real antes de guardar. La cuota inicial/down payment debe conservar rowRole=down_payment y no debe restarse por segunda vez del financedPrincipalAmount. No confundas "todavía no he pagado nada de este cronograma" con "la cuota inicial no existe": el usuario puede haber pagado solo la cuota inicial. Para la historia consecutiva, marca únicamente cuotas contractuales completamente pagadas y consecutivas desde la número 1; pagos parciales o no consecutivos requieren un saldo de capital vigente informado por el acreedor y revisión manual.
+${DOCUMENT_FIRST_NUMBERING_PROMPT}`;
 
 export type DocumentFirstSupportedDebtKind = Exclude<DebtKind, "credit_card">;
 export type DocumentFirstOnboardingMode = "NEW_DEBT" | "EXISTING_DEBT";
 export type DocumentFirstHistoryMode = "NO_ROWS_PAID" | "DOWN_PAYMENT_ONLY" | "CONSECUTIVE_FULLY_PAID";
+
+export interface DocumentFirstSemanticReview extends UniversalDebtDocumentImportReview {
+  canonicalContract: Record<string, unknown>;
+  blockingIssues: string[];
+  normalizationWarnings: string[];
+}
 
 export interface DocumentFirstDefaults {
   debtKind: DocumentFirstSupportedDebtKind;
@@ -61,6 +82,8 @@ export interface DocumentFirstDefaults {
   scheduleSource: ScheduleSource;
   authority: DebtContractAuthority;
   schedule: DebtScheduleInstallmentInput[];
+  totalScheduleRows: number;
+  postInitialObligationRows: number;
   warnings: string[];
 }
 
@@ -179,6 +202,162 @@ function nonSummarySchedule(schedule: DebtScheduleInstallmentInput[]): DebtSched
   return schedule.filter((row) => row.rowRole !== "summary");
 }
 
+function roundCents(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function sameCents(left: number | null, right: number | null): boolean {
+  return left != null && right != null && Math.abs(left - right) <= 0.01;
+}
+
+function semanticRows(review: UniversalDebtDocumentImportReview): UniversalDebtDocumentRow[] {
+  return review.normalized.rows.filter((row) => row.rowRole !== "summary");
+}
+
+function safeSourceOrder(review: UniversalDebtDocumentImportReview, rows: UniversalDebtDocumentRow[]): boolean {
+  if (rows.length === 0 || review.normalized.rows.some((row) => row.rowRole === "summary")) return false;
+  if (rows.some((row) => row.dueDate == null || Number.isNaN(Date.parse(`${row.dueDate}T00:00:00Z`)))) return false;
+  if (rows.some((row) => row.sourceRowNumberValid === false)) return false;
+  for (let index = 0; index < rows.length; index += 1) {
+    if (rows[index].sourceRowNumber !== index + 1) return false;
+    if (index > 0 && String(rows[index - 1].dueDate) > String(rows[index].dueDate)) return false;
+  }
+  return true;
+}
+
+function hasNumberingProblem(rows: UniversalDebtDocumentRow[]): boolean {
+  if (rows.length === 0) return true;
+  const numbers = rows.map((row) => row.contractualInstallmentNumber);
+  return numbers.some((number) => number == null)
+    || new Set(numbers).size !== numbers.length
+    || numbers.some((number, index) => number !== index + 1);
+}
+
+function schedulePrincipal(rows: UniversalDebtDocumentRow[]): number | null {
+  if (rows.length === 0 || rows.some((row) => row.expectedPrincipal == null || !Number.isFinite(row.expectedPrincipal))) return null;
+  return roundCents(rows.reduce((sum, row) => sum + (row.expectedPrincipal ?? 0), 0));
+}
+
+/**
+ * Document-first-only semantic gate. The source contract stays untouched in
+ * review.contract; canonicalContract contains only safe, reviewable fixes.
+ */
+export function normalizeDocumentFirstReview(review: UniversalDebtDocumentImportReview): DocumentFirstSemanticReview {
+  const blockingIssues: string[] = [];
+  const normalizationWarnings: string[] = [];
+  const canonicalContract: Record<string, unknown> = { ...review.contract };
+  const rows = semanticRows(review);
+  let normalizedRows = [...review.normalized.rows];
+
+  if (hasNumberingProblem(rows)) {
+    const safe = safeSourceOrder(review, rows);
+    const explicitNumbers = rows.map((row) => row.contractualInstallmentNumber);
+    const allExplicitNumbers = explicitNumbers.every((number): number is number => number != null);
+    const uniqueExplicitNumbers = new Set(explicitNumbers).size === explicitNumbers.length;
+    const hasExplicitOutlier = rows.some((row) => row.contractualInstallmentNumber != null
+      && (row.contractualInstallmentNumber < 1 || row.contractualInstallmentNumber > rows.length))
+      || (allExplicitNumbers && uniqueExplicitNumbers && explicitNumbers.some((number, index) => number !== index + 1));
+    if (safe && !hasExplicitOutlier) {
+      normalizedRows = normalizedRows.map((row) => row.rowRole === "summary"
+        ? row
+        : { ...row, contractualInstallmentNumber: row.sourceRowNumber });
+      normalizationWarnings.push("Se normalizó la numeración contractual usando el orden explícito de las filas porque la IA devolvió números duplicados o inválidos.");
+    } else {
+      blockingIssues.push("La numeración contractual está duplicada o no es válida y no cumple las condiciones seguras para usar el orden de las filas; requiere revisión manual.");
+    }
+  }
+
+  const canonicalRows = normalizedRows.filter((row) => row.rowRole !== "summary");
+  const downPayments = canonicalRows.filter((row) => row.rowRole === "down_payment");
+  if (downPayments.length > 1) {
+    blockingIssues.push("El documento contiene varias filas de cuota inicial; no se puede determinar cuál es la cuota inicial real.");
+  }
+
+  const rawAssetPrice = finiteNumber(pick(review.contract, "assetPrice", "asset_price"));
+  const rawFinancedPrincipal = finiteNumber(pick(review.contract, "financedPrincipalAmount", "financed_principal_amount", "financedAmount", "financed_amount"));
+  const rawDownPayment = finiteNumber(pick(review.contract, "downPaymentAmount", "down_payment_amount"));
+  const rawScheduledPrincipal = finiteNumber(pick(review.contract, "scheduledPrincipalAmount", "scheduled_principal_amount"));
+  const basis = principalBasis(pick(review.contract, "principalBasis", "principal_basis"));
+  const downPaymentRowPrincipal = downPayments.length === 1 && downPayments[0].expectedPrincipal != null && Number.isFinite(downPayments[0].expectedPrincipal)
+    ? roundCents(downPayments[0].expectedPrincipal)
+    : null;
+  const derivedDownPayment = rawAssetPrice != null && rawFinancedPrincipal != null
+    ? roundCents(rawAssetPrice - rawFinancedPrincipal)
+    : null;
+
+  if (basis === "asset_price_including_down_payment") {
+    if (rawAssetPrice != null && rawFinancedPrincipal != null && derivedDownPayment != null && derivedDownPayment < -0.01) {
+      blockingIssues.push("El precio del bien es menor que el principal financiado; no se puede reconciliar la cuota inicial.");
+    }
+    if (rawAssetPrice != null && rawFinancedPrincipal != null && downPaymentRowPrincipal != null && derivedDownPayment != null && !sameCents(derivedDownPayment, downPaymentRowPrincipal)) {
+      blockingIssues.push("La cuota inicial de la fila down_payment no coincide con precio del bien menos principal financiado.");
+    } else if (derivedDownPayment != null && downPaymentRowPrincipal != null && sameCents(derivedDownPayment, downPaymentRowPrincipal)) {
+      if (rawDownPayment == null || !sameCents(rawDownPayment, derivedDownPayment)) {
+        normalizationWarnings.push(`Se corrigió la cuota inicial informada por la IA de ${rawDownPayment ?? "POR CONFIRMAR"} a ${derivedDownPayment.toFixed(2)} con dos evidencias independientes: diferencia del bien/principal financiado y fila down_payment.`);
+      }
+      canonicalContract.downPaymentAmount = derivedDownPayment;
+    } else if (rawDownPayment == null && derivedDownPayment != null) {
+      canonicalContract.downPaymentAmount = derivedDownPayment;
+      normalizationWarnings.push(`Se calculó la cuota inicial como ${derivedDownPayment.toFixed(2)} usando precio del bien menos principal financiado; la fila down_payment debe permanecer visible para confirmación.`);
+    } else if (rawDownPayment == null && downPaymentRowPrincipal != null) {
+      canonicalContract.downPaymentAmount = downPaymentRowPrincipal;
+      normalizationWarnings.push(`Se tomó la cuota inicial ${downPaymentRowPrincipal.toFixed(2)} de la fila down_payment porque faltaba el valor contractual.`);
+    }
+    const canonicalDownPayment = finiteNumber(canonicalContract.downPaymentAmount);
+    if (rawAssetPrice != null && rawFinancedPrincipal != null && canonicalDownPayment != null && !sameCents(rawAssetPrice, canonicalDownPayment + rawFinancedPrincipal)) {
+      blockingIssues.push("Precio del bien, cuota inicial y principal financiado no reconcilian dentro de un centavo.");
+    }
+    if (downPayments.length === 1 && (canonicalRows.findIndex((row) => row.rowRole === "down_payment") !== 0 || (downPayments[0].contractualInstallmentNumber ?? 0) !== 1)) {
+      blockingIssues.push("La fila down_payment debe ser la primera fila contractual número 1.");
+    }
+  }
+
+  const completeSchedulePrincipal = schedulePrincipal(canonicalRows);
+  if (completeSchedulePrincipal != null) {
+    const canonicalDownPayment = finiteNumber(canonicalContract.downPaymentAmount);
+    const includesDownPayment = downPayments.length === 1;
+    if (basis === "asset_price_including_down_payment" && rawAssetPrice != null && includesDownPayment) {
+      if (!sameCents(completeSchedulePrincipal, rawAssetPrice)) {
+        blockingIssues.push(`La suma del capital del cronograma (${completeSchedulePrincipal.toFixed(2)}) no coincide con el precio del bien (${rawAssetPrice.toFixed(2)}).`);
+      } else {
+        canonicalContract.scheduledPrincipalAmount = rawAssetPrice;
+        if (rawScheduledPrincipal == null || !sameCents(rawScheduledPrincipal, rawAssetPrice)) {
+          normalizationWarnings.push(`Se corrigió el principal programado informado por la IA de ${rawScheduledPrincipal ?? "POR CONFIRMAR"} a ${rawAssetPrice.toFixed(2)} con la suma completa del capital del cronograma.`);
+        }
+      }
+    } else if (rawScheduledPrincipal != null && !sameCents(rawScheduledPrincipal, completeSchedulePrincipal)) {
+      blockingIssues.push(`El principal programado informado (${rawScheduledPrincipal.toFixed(2)}) contradice la suma completa del cronograma (${completeSchedulePrincipal.toFixed(2)}).`);
+    } else if (rawScheduledPrincipal == null) {
+      canonicalContract.scheduledPrincipalAmount = completeSchedulePrincipal;
+    }
+    if (basis === "asset_price_including_down_payment" && rawAssetPrice != null && canonicalDownPayment != null && rawFinancedPrincipal != null && !sameCents(rawAssetPrice, canonicalDownPayment + rawFinancedPrincipal)) {
+      blockingIssues.push("La identidad de financiamiento del bien no reconcilia con el cronograma completo.");
+    }
+  }
+
+  if (canonicalRows.some((row) => row.dueDate == null)) {
+    blockingIssues.push("El cronograma contiene filas financieras sin fecha de vencimiento; no se puede crear una cuota incompleta.");
+  }
+
+  const finalScheduledPrincipal = finiteNumber(canonicalContract.scheduledPrincipalAmount);
+  const reconciliation = reconcileUniversalDebtDocument(
+    normalizedRows,
+    finalScheduledPrincipal ?? review.reconciliation.expectedPrincipal,
+  );
+  if (reconciliation.status === "inconsistent") {
+    blockingIssues.push("La reconciliación estructural del cronograma sigue siendo inconsistente después de la normalización.");
+  }
+
+  return {
+    ...review,
+    normalized: { ...review.normalized, rows: normalizedRows },
+    reconciliation,
+    canonicalContract,
+    blockingIssues: [...new Set(blockingIssues)],
+    normalizationWarnings: [...new Set(normalizationWarnings)],
+  };
+}
+
 export function findDownPaymentInstallmentNumber(schedule: DebtScheduleInstallmentInput[]): number | null {
   const downPayments = nonSummarySchedule(schedule).filter((row) => row.rowRole === "down_payment");
   if (downPayments.length !== 1) return null;
@@ -235,8 +414,8 @@ export function validateDocumentFirstHistorySelection(
   return null;
 }
 
-export function extractDocumentFirstDefaults(review: UniversalDebtDocumentImportReview): DocumentFirstDefaults {
-  const raw = review.contract;
+export function extractDocumentFirstDefaults(review: UniversalDebtDocumentImportReview & Partial<Pick<DocumentFirstSemanticReview, "canonicalContract" | "normalizationWarnings">>): DocumentFirstDefaults {
+  const raw = review.canonicalContract ?? review.contract;
   const schedule = mapUniversalDocumentRowsToSchedule(review);
   const detectedKind = debtKind(pick(raw, "debtKind", "debt_kind"), raw);
   const creditorName = text(pick(raw, "creditorName", "creditor_name", "creditorLabel", "creditor_label", "lenderName", "lender_name"));
@@ -246,6 +425,10 @@ export function extractDocumentFirstDefaults(review: UniversalDebtDocumentImport
   const source = review.scheduleSource ?? "manual";
   const structure = repaymentStructure(pick(raw, "repaymentStructure", "repayment_structure"), schedule);
   const unsupported = detectedKind === "bank_loan" || detectedKind === "pledge";
+  const hasDownPayment = schedule.some((row) => row.rowRole === "down_payment");
+  const postInitialObligationRows = hasDownPayment
+    ? schedule.filter((row) => contractualInstallmentNumber(row) > 1).length
+    : schedule.length;
   const specializedReason = detectedKind === "bank_loan"
     ? "Los créditos bancarios mantienen su onboarding especializado porque necesitan perfil bancario, seguros y reglas BANK V3."
     : detectedKind === "pledge"
@@ -284,7 +467,9 @@ export function extractDocumentFirstDefaults(review: UniversalDebtDocumentImport
     scheduleSource: source,
     authority: review.normalized.authority,
     schedule,
-    warnings: [...review.warnings],
+    totalScheduleRows: schedule.length,
+    postInitialObligationRows,
+    warnings: [...new Set([...review.warnings, ...(review.normalizationWarnings ?? [])])],
   };
 }
 

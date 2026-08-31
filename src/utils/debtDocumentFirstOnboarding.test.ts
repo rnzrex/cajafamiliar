@@ -7,6 +7,7 @@ import {
   deriveOpeningPrincipalFromDocument,
   extractDocumentFirstDefaults,
   findDownPaymentInstallmentNumber,
+  normalizeDocumentFirstReview,
   scheduleWithPretracking,
   validateDocumentFirstHistorySelection,
 } from "./debtDocumentFirstOnboarding";
@@ -62,6 +63,39 @@ function realEstateReview() {
   }));
 }
 
+function malformedRealProformaReview(unsafeSourceOrder = false, contradictoryExplicitOrder = false) {
+  const fixture = createDirectRealEstateFixture();
+  return normalizeDocumentFirstReview(parseUniversalDebtExternalAiResponse(JSON.stringify({
+    schema: CAJA_FAMILIAR_DEBT_DOCUMENT_V2,
+    kind: "schedule",
+    authority: "official_noncontractual",
+    authorityEvidence: "proforma_non_binding",
+    contract: {
+      debtKind: "installment_purchase",
+      debtName: "Proforma saneada",
+      creditorName: "ACREEDOR INMOBILIARIO",
+      currencyCode: "PEN",
+      assetPrice: 85000,
+      downPaymentAmount: 17000,
+      financedPrincipalAmount: 76500,
+      scheduledPrincipalAmount: 76500,
+      principalBasis: "asset_price_including_down_payment",
+      repaymentStructure: "fixed_schedule",
+      termInstallments: 128,
+      interestRateType: "nominal_annual_simple",
+      interestRatePercent: 23,
+      dayCountBasis: "actual_days_360",
+    },
+    rows: fixture.rows.map((row, index) => ({
+      ...row,
+      sourceRowNumber: unsafeSourceOrder && index === 1 ? 99 : row.sourceRowNumber,
+      contractualInstallmentNumber: contradictoryExplicitOrder
+        ? index === 0 ? 2 : index === 1 ? 1 : row.contractualInstallmentNumber
+        : index === 1 ? 1 : row.contractualInstallmentNumber,
+    })),
+  })));
+}
+
 describe("document-first debt onboarding", () => {
   it("requests onboarding identity and real-history semantics in the external prompt", () => {
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("debtKind");
@@ -71,6 +105,10 @@ describe("document-first debt onboarding", () => {
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("no debe restarse por segunda vez");
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("pagado solo la cuota inicial");
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("parciales o no consecutivos");
+    expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("Cuota, N° cuota, Nro. cuota");
+    expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("CI001");
+    expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("No sumes cuotas introductorias");
+    expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("termInstallments");
   });
 
   it("extracts the 129-row proforma into creation defaults without collapsing authority", () => {
@@ -89,6 +127,46 @@ describe("document-first debt onboarding", () => {
     expect(defaults.authority).toBe("official_noncontractual");
     expect(defaults.scheduleSource).toBe("reconstructed");
     expect(defaults.schedule).toHaveLength(129);
+    expect(defaults.totalScheduleRows).toBe(129);
+    expect(defaults.postInitialObligationRows).toBe(128);
+  });
+
+  it("normalizes the real proforma defect using only a safe contiguous source order", () => {
+    const review = malformedRealProformaReview();
+    const defaults = extractDocumentFirstDefaults(review);
+    expect(review.blockingIssues).toEqual([]);
+    expect(review.normalizationWarnings.join(" ")).toContain("números duplicados");
+    expect(review.normalizationWarnings.join(" ")).toContain("cuota inicial");
+    expect(review.normalizationWarnings.join(" ")).toContain("principal programado");
+    expect(review.reconciliation.status).toBe("exact");
+    expect(defaults.assetPrice).toBe(85000);
+    expect(defaults.downPaymentAmount).toBe(8500);
+    expect(defaults.financedPrincipalAmount).toBe(76500);
+    expect(defaults.scheduledPrincipalAmount).toBe(85000);
+    expect(defaults.termInstallments).toBe(128);
+    expect(defaults.schedule).toHaveLength(129);
+    expect(defaults.schedule.map((row) => row.contractualInstallmentNumber)).toEqual(Array.from({ length: 129 }, (_, index) => index + 1));
+  });
+
+  it("keeps the real history capital correct after safe normalization", () => {
+    const defaults = extractDocumentFirstDefaults(malformedRealProformaReview());
+    expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 8)).toBe(69062.5);
+    expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 9)).toBe(68000);
+  });
+
+  it("blocks duplicate numbering when source rows are not a safe contiguous sequence", () => {
+    const review = malformedRealProformaReview(true);
+    expect(review.blockingIssues.join(" ")).toContain("numeración contractual");
+    expect(review.normalizationWarnings.join(" ")).not.toContain("números duplicados");
+    expect(review.normalized.rows[1].contractualInstallmentNumber).toBe(1);
+    expect(review.normalized.rows[1].sourceRowNumber).toBe(99);
+  });
+
+  it("blocks a contradictory explicit sequence instead of repairing it by row order", () => {
+    const review = malformedRealProformaReview(false, true);
+    expect(review.blockingIssues.join(" ")).toContain("numeración contractual");
+    expect(review.normalizationWarnings.join(" ")).not.toContain("números duplicados");
+    expect(review.normalized.rows.slice(0, 2).map((row) => row.contractualInstallmentNumber)).toEqual([2, 1]);
   });
 
   it("uses financed principal for a new debt and never subtracts the down payment twice", () => {
