@@ -35,10 +35,10 @@ function issueList(issues: BankDocumentCompletenessIssue[], tone: "required" | "
   );
 }
 
-function coverageCopy(completeness: BankDocumentCompletenessResult): { title: string; message: string; className: string } {
+function coverageCopy(completeness: BankDocumentCompletenessResult, contractual: boolean): { title: string; message: string; className: string } {
   const coverage = completeness.scheduleCoverage;
   if (coverage.status === "full") {
-    return { title: "CRONOGRAMA COMPLETO", message: `Encontramos las ${coverage.foundInstallments} de ${coverage.expectedInstallments} cuotas.`, className: "border-emerald-200 bg-emerald-50 text-emerald-950" };
+    return { title: contractual ? "CRONOGRAMA CONTRACTUAL DETECTADO" : "CRONOGRAMA COMPLETO", message: contractual ? `Encontramos ${coverage.foundInstallments}/${coverage.expectedInstallments} cuotas contractuales. La fuente financiera se conserva como contractual.` : `Encontramos las ${coverage.foundInstallments} de ${coverage.expectedInstallments} cuotas.`, className: "border-emerald-200 bg-emerald-50 text-emerald-950" };
   }
   if (coverage.status === "partial" && coverage.pendingOnly) {
     return { title: "CRONOGRAMA PENDIENTE", message: `Encontramos todas las cuotas pendientes: ${coverage.firstContractualInstallment} a ${coverage.lastContractualInstallment}.`, className: "border-blue-200 bg-blue-50 text-blue-950" };
@@ -64,7 +64,8 @@ function FieldBadge({ label, field, extraction }: { label: string; field: string
 }
 
 export function BankDocumentReviewPanel({ extraction, validation, completeness, sourceLabel }: BankDocumentReviewPanelProps) {
-  const coverage = coverageCopy(completeness);
+  const contractual = validation.scheduleSource === "contractual";
+  const coverage = coverageCopy(completeness, contractual);
   const reconciliationStatus = validation.reconciliation?.status;
   const source = validation.scheduleSource === "contractual" ? "contractual" : validation.scheduleSource === "reconstructed" ? "reconstructed" : "estimated";
   return (
@@ -123,7 +124,7 @@ export function BankDocumentReviewPanel({ extraction, validation, completeness, 
         {completeness.optionalMissing.length > 0 && <details className="rounded-xl border border-slate-200 bg-slate-50 p-3"><summary className="cursor-pointer text-[11px] font-black uppercase tracking-wide text-slate-600">Opcional · {completeness.optionalMissing.length}</summary><div className="mt-2">{issueList(completeness.optionalMissing, "optional")}</div></details>}
       </section>
 
-      {reconciliationStatus && <p role="status" className="text-xs font-bold text-slate-700">Validación matemática: {reconciliationStatus === "exact" ? "exacta" : reconciliationStatus === "within_tolerance" ? "dentro de tolerancia" : reconciliationStatus === "inconsistent" ? "REVISAR" : "datos insuficientes"}. Fuente financiera: {source}.</p>}
+      {reconciliationStatus && <p role="status" className="text-xs font-bold text-slate-700">{reconciliationStatus === "inconsistent" && contractual ? "Revisión matemática: existe una diferencia; el cronograma documental se conserva y se revisará contra tu historial real." : `Validación matemática: ${reconciliationStatus === "exact" ? "exacta" : reconciliationStatus === "within_tolerance" ? "dentro de tolerancia" : reconciliationStatus === "inconsistent" ? "REVISAR" : "datos insuficientes"}.`} Fuente financiera: {source}.</p>}
     </section>
   );
 }

@@ -171,3 +171,30 @@ financial/document/secrets restrictions remain active.
   a new Production SQL orchestration gate.
 - Guard-correction files are modified locally and ready to commit/push; no
   application behavior was changed.
+
+## BANK Document-First Zero-Rework / Ripley Regression — 2026-08-31
+
+- Objective: implement the sanitized contractual-schedule regression fix on
+  `fix/bank-document-first-zero-rework-ripley-v1`, based on
+  `6cb4f26530d44df85b46427532c6471adf2e4626`; no SQL, migrations, schema/RLS,
+  secrets, Gemini keys, Production writes, real debt, or merge.
+- Implemented contractual authority separate from math reconciliation,
+  row-K `reportedBalance` opening principal precedence, reactive existing-debt
+  baseline, historical/future anomaly gating, final schedule-date precedence,
+  insurance semantics, warning compaction, UI copy, and external-AI prompt
+  rules.
+- Added sanitized fixture `src/utils/bankRipleyRegressionFixture.ts` and
+  utility/UI regression coverage. No real Ripley document or PII is present.
+- Validation: full Vitest **80 files / 1120 tests passed**; targeted external
+  import **29**, document V5 **26**, reconstruction **11**, prepayment
+  simulation **18**, universal contract **42**, and Ripley utility/UI **34**
+  tests passed. `npm run typecheck:api` and `npm run build` passed; build only
+  emitted existing dynamic-import/large-chunk warnings; `git diff --check`
+  passed.
+- Local SQL smoke suites were attempted only against the local Docker
+  container. They remain unavailable/not applicable because the container
+  schema is missing legacy relations (`debt_event_installment_allocations` and
+  bank V2 tables); no Production database was accessed or changed.
+- Next: final diff/status audit, commit and push this branch, create/update the
+  DRAFT PR with the requested title, and verify only the automatic Vercel
+  Preview. Keep Production, secrets, merge, and frontend release untouched.

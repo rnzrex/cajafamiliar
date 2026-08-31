@@ -1,6 +1,8 @@
-import { deriveCurrentPrincipalBalance } from "./bankContractReconciliation.js";
+import { deriveOpeningPrincipalFromOfficialSchedule } from "./bankContractReconciliation.js";
 import type { BankDocumentExtraction, BankDocumentScheduleExtractionRow } from "./bankDocumentExtraction.js";
 import type { BankFinancialValidationResult } from "./bankDocumentFinancialValidation.js";
+import { compactBankDocumentWarnings } from "./bankDocumentContinuation.js";
+import { evaluateBankDocumentContinuation } from "./bankDocumentContinuation.js";
 
 export type BankDocumentCompletenessStatus = "complete" | "needs_review" | "missing_required_data";
 export type BankScheduleCoverageStatus = "full" | "partial" | "not_found" | "unknown";
@@ -85,7 +87,12 @@ function hasExplicitScheduleReference(extraction: BankDocumentExtraction): boole
 
 function currentPrincipalIsKnown(extraction: BankDocumentExtraction, context: BankDocumentCompletenessContext): boolean {
   if (finiteNonNegative(context.currentPrincipal)) return true;
-  return extraction.reportedBalance.inferredKind === "principal_balance" && finiteNonNegative(extraction.reportedBalance.amount);
+  if (extraction.reportedBalance.inferredKind === "principal_balance" && finiteNonNegative(extraction.reportedBalance.amount)) return true;
+  return deriveOpeningPrincipalFromOfficialSchedule({
+    originalPrincipal: extraction.originalPrincipal ?? extraction.financedAmount,
+    rows: extraction.schedule,
+    lastPaidContractualInstallment: context.onboardingMode === "EXISTING_DEBT" ? context.installmentsPaidBeforeTracking : 0,
+  }).amount != null;
 }
 
 function deriveHistoricalPrincipalIfPossible(extraction: BankDocumentExtraction, context: BankDocumentCompletenessContext): number | null {
@@ -95,12 +102,11 @@ function deriveHistoricalPrincipalIfPossible(extraction: BankDocumentExtraction,
   if (isExisting && (paidBefore == null || !Number.isInteger(paidBefore) || paidBefore < 1)) return null;
   const normalizedPaidBefore = paidBefore ?? 0;
   if (originalPrincipal == null || !finiteNonNegative(originalPrincipal) || !Number.isInteger(normalizedPaidBefore) || normalizedPaidBefore < 0 || normalizedPaidBefore === 0) return originalPrincipal ?? null;
-  if (extraction.schedule[0]?.contractualInstallmentNumber !== 1 || extraction.schedule.length < normalizedPaidBefore) return null;
-  try {
-    return deriveCurrentPrincipalBalance(originalPrincipal, extraction.schedule.slice(0, normalizedPaidBefore), normalizedPaidBefore);
-  } catch {
-    return null;
-  }
+  return deriveOpeningPrincipalFromOfficialSchedule({
+    originalPrincipal,
+    rows: extraction.schedule,
+    lastPaidContractualInstallment: normalizedPaidBefore,
+  }).amount;
 }
 
 function scheduleCoverage(extraction: BankDocumentExtraction): BankScheduleCoverage {
@@ -280,7 +286,20 @@ export function evaluateBankDocumentCompleteness(
     requiredIssues.push(issue("TERM_REQUIRED", "termInstallments", "required", "Falta el plazo total", "No encontramos el número total de cuotas del crédito.", "Busca el plazo en el contrato o consulta al banco."));
   }
   if (validation.reconstruction == null && validation.reconciliation?.status === "inconsistent") {
-    reviewIssues.push(issue("RECONCILIATION_INCONSISTENT", "schedule", "review", "Los importes no cuadran", "Los importes del cronograma no coinciden con los totales o controles del contrato.", "Revisa las filas, totales, seguros y gastos antes de guardar."));
+    const continuation = evaluateBankDocumentContinuation({
+      extraction,
+      validation,
+      onboardingMode: context.onboardingMode ?? "NEW_DEBT",
+      lastPaidContractualInstallment: context.installmentsPaidBeforeTracking,
+    });
+    if (continuation.historicalAnomaly) {
+      reviewIssues.push(issue("HISTORICAL_SCHEDULE_ANOMALY", "schedule", "review", "Diferencia aritmética histórica", "El documento bancario contiene una diferencia aritmética en una cuota histórica. Conservamos el cronograma original y usaremos el saldo contractual posterior a tu última cuota pagada.", "Confirma la última cuota pagada y el saldo de corte mostrado en el formulario."));
+    } else {
+      reviewIssues.push(issue("RECONCILIATION_INCONSISTENT", "schedule", "review", "Los importes necesitan revisión", "Los importes del cronograma no coinciden con los totales o controles del contrato.", "Revisa las filas, totales, seguros y gastos antes de guardar."));
+    }
+    if (continuation.futureIssues.length > 0) {
+      requiredIssues.push(issue("FUTURE_SCHEDULE_ANOMALY", "schedule", "required", "La diferencia afecta cuotas pendientes", "Encontramos una diferencia de continuidad en una cuota que todavía falta pagar.", "Confirma la fila futura y corrige o vuelve a importar el cronograma antes de guardar."));
+    }
   }
   for (const conflict of extraction.fieldConflicts) {
     const fieldLabel = conflict.field.toLowerCase().includes("tea") ? "TEA" : conflict.field;
@@ -292,8 +311,9 @@ export function evaluateBankDocumentCompleteness(
   if (extraction.tceaPercent == null) {
     optionalMissing.push(issue("TCEA_OPTIONAL", "tceaPercent", "optional", "TCEA no identificada", "La TCEA no es necesaria para guardar un cronograma oficial completo.", "Puedes consultarla en la hoja resumen si quieres conservarla."));
   }
-  if (extraction.extractionWarnings.length > 0) {
-    reviewIssues.push(...extraction.extractionWarnings.slice(0, 12).map((warning) => issue("EXTRACTION_WARNING", "extractionWarnings", "review", "La IA reportó una limitación", warning, "Revisa la página o dato señalado antes de confirmar.")));
+  const actionableWarnings = compactBankDocumentWarnings(extraction.extractionWarnings);
+  if (actionableWarnings.length > 0) {
+    reviewIssues.push(...actionableWarnings.map((warning) => issue("EXTRACTION_WARNING", "extractionWarnings", "review", "Revisión documental", warning, "Revisa la página o dato señalado antes de confirmar.")));
   }
 
   const uniqueRequired = uniqueIssues(requiredIssues);

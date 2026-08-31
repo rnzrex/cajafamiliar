@@ -39,6 +39,8 @@ export interface BankInsuranceExtraction {
   ratePercent: number | null;
   fixedAmount: number | null;
   totalAmount: number | null;
+  /** null means the documents do not prove whether the insurance is required. */
+  isRequired?: boolean | null;
   evidence?: BankExtractionEvidence[];
 }
 
@@ -232,6 +234,7 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
       ratePercent: numberOrNull(item.ratePercent),
       fixedAmount: numberOrNull(item.fixedAmount),
       totalAmount: numberOrNull(item.totalAmount),
+      isRequired: item.isRequired === true ? true : item.isRequired === false ? false : null,
       evidence: safeEvidence(item.evidence),
     }];
   }) : [];
@@ -281,6 +284,18 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
       const values = Array.isArray(item.values) ? item.values.flatMap((value) => typeof value === "number" || typeof value === "string" ? [value] : []) : [];
       return field && isSafeFieldKey(field) && values.length > 1 ? [{ field, values: values.slice(0, 6) }] : [];
     });
+  }
+  if (output.schedule.length > 0) {
+    // The final contractual schedule is the operational authority. A
+    // preliminary application day must not survive as a conflicting fixed day
+    // when the schedule supplies the actual due dates.
+    const days = new Set(output.schedule.map((row) => Number(row.dueDate.slice(8, 10))));
+    output.dueDateAdjustmentRule = "contractual_dates";
+    output.ordinaryDueDay = days.size === 1 ? [...days][0]! : null;
+    if (output.schedule[0]?.contractualInstallmentNumber === 1) {
+      output.firstDueDate = output.schedule[0].dueDate;
+    }
+    output.fieldConflicts = output.fieldConflicts.filter((conflict) => !new Set(["ordinaryDueDay", "dueDay", "paymentDay", "preliminaryDueDay"]).has(conflict.field));
   }
   if (output.schedule.length === 0 && output.termInstallments == null && output.financedAmount == null && output.totalContractAmount == null) {
     errors.push("El documento no contiene suficientes datos contractuales reconocibles.");

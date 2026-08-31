@@ -141,7 +141,10 @@ export function BankDocumentImportPanel({ onExtractionReady }: BankDocumentImpor
         if (uploaded === total) setStage("analyzing");
       }, controller.signal);
       setStage("validating");
-      onExtractionReady(analyzed.extraction, analyzed);
+      // The API response predates the client-only continuity classification;
+      // recompute the pure financial result locally so both import paths share
+      // the same contractual-authority and cut-off policy.
+      onExtractionReady(analyzed.extraction, financialValidation(analyzed.extraction));
       setStage("ready");
       setResultSummary(analyzed.extraction.schedule.length > 0
         ? `Encontramos ${analyzed.extraction.schedule.length} cuotas y comprobamos los cálculos antes de mostrarte el resultado.`
