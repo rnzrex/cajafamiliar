@@ -66,10 +66,10 @@ merge, secrets, or real-document actions.
 
 ## Next Step
 
-- Report the completed implementation gate and stop. If the orchestrator
-  requires HTTP-level Preview confirmation, Vercel Preview protection must be
-  authenticated first; current deployment metadata/build logs are available,
-  but the unauthenticated fetch redirects to Vercel SSO (HTTP 302).
+- Report the completed implementation gate and stop. The final pushed branch
+  has been verified with an exact-SHA READY Preview and HTTP 200. Do not make
+  further engineering, Production, SQL, merge, secret, or real-document
+  changes in this task.
 
 ## Production
 
