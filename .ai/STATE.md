@@ -195,6 +195,12 @@ financial/document/secrets restrictions remain active.
   container. They remain unavailable/not applicable because the container
   schema is missing legacy relations (`debt_event_installment_allocations` and
   bank V2 tables); no Production database was accessed or changed.
-- Next: final diff/status audit, commit and push this branch, create/update the
-  DRAFT PR with the requested title, and verify only the automatic Vercel
-  Preview. Keep Production, secrets, merge, and frontend release untouched.
+- Final code commit `e356733fa155d74c9677e97e11cfa8d57576a1f3` is pushed to
+  origin without force. PR #76 is OPEN/DRAFT against `main` with the requested
+  title. Automatic Vercel Preview is READY at
+  `https://cajafamiliar-65k4tr806-renzorex.vercel.app/`, deployment
+  `dpl_9qpWpSwqbYoWLYKYW5D7Lc921TAH`, and its Git SHA exactly matches the
+  pushed commit; read-only fetch returned HTTP 200. Build logs contain only the
+  known dynamic-import and large-chunk warnings.
+- Remaining next step is the external release/orchestrator audit. Keep
+  Production, secrets, merge, and frontend release untouched.
