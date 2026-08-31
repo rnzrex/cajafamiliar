@@ -4,18 +4,18 @@
 
 Complete the Document-First real proforma parsing fix V1 on
 `fix/debt-document-first-real-proforma-v1`, publish it as DRAFT PR #70, verify
-the exact-final-SHA Vercel Preview, and stop before Production, SQL, merge,
-secrets, or real-document actions.
+what the exact-SHA Vercel Preview permits, and stop before Production, SQL,
+merge, secrets, or real-document actions.
 
 ## Repository
 
 - Repository: `rnzrex/cajafamiliar`.
 - Base: `a0e430f297a6e9a4603ee8c6afb7ef87eac7110e` from `origin/main`.
 - Branch: `fix/debt-document-first-real-proforma-v1`.
-- Published implementation checkpoint: `0c35b2c2df795151857998d798ffbdaa30d88536`.
-- A final state-only checkpoint is being pushed after the implementation; Git
-  and PR #70 are authoritative for the resulting exact HEAD.
-- PR #70 is OPEN/DRAFT against `main`; no force push is permitted.
+- Implementation and operational-state checkpoints are published to the
+  remote branch without force push; Git and PR #70 are authoritative for the
+  exact final HEAD.
+- PR #70 is OPEN/DRAFT against `main` and must remain DRAFT.
 
 ## Constraints
 
@@ -66,9 +66,10 @@ secrets, or real-document actions.
 
 ## Next Step
 
-- Push this final state checkpoint, then verify the new Preview is READY,
-  HTTP 200, tied to the exact final Git SHA, and has no unexplained
-  error/fatal build logs. Leave PR #70 DRAFT and stop after reporting.
+- Report the completed implementation gate and stop. If the orchestrator
+  requires HTTP-level Preview confirmation, Vercel Preview protection must be
+  authenticated first; current deployment metadata/build logs are available,
+  but the unauthenticated fetch redirects to Vercel SSO (HTTP 302).
 
 ## Production
 
