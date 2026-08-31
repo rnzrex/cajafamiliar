@@ -35,7 +35,7 @@ REGLAS CRÍTICAS PARA UNA PROFORMA CON CRONOGRAMA:
 export const DOCUMENT_FIRST_EXTERNAL_AI_PROMPT = `${UNIVERSAL_EXTERNAL_AI_PROMPT}
 
 REGLAS ADICIONALES PARA CREAR LA DEUDA DESDE EL DOCUMENTO:
-Dentro de contract incluye también, solo cuando el documento lo permita sin inventar: debtKind (bank_loan, family_loan, installment_purchase, mortgage, pledge u other), debtName (nombre corto descriptivo de la obligación, sin PII), creditorName (nombre comercial del acreedor, sin datos personales), currencyCode (PEN o USD), contractDate, currentPrincipalAmount (solo si el documento declara explícitamente un saldo de capital vigente; no lo deduzcas de pagos que no aparecen), openingPrincipalAmount con la misma semántica, termInstallments y tceaPercent. Para financiamiento directo de un vendedor/inmobiliaria con precio del bien, cuota inicial y cronograma, usa installment_purchase salvo que el documento demuestre otra categoría. No uses credit_card para cronogramas fijos.
+Dentro de contract incluye también, solo cuando el documento lo permita sin inventar: debtKind (bank_loan, family_loan, installment_purchase, mortgage, pledge u other), debtName (nombre corto descriptivo de la obligación, sin PII), creditorName (nombre comercial del acreedor, sin datos personales), currencyCode (PEN o USD), contractDate, currentPrincipalAmount únicamente cuando la fuente etiqueta explícitamente un saldo CURRENT/VIGENTE a una fecha determinada; es evidencia documental, no confirmación de la historia real, nunca lo copies desde financedPrincipalAmount ni lo deduzcas de pagos que no aparecen. openingPrincipalAmount representa el principal de apertura del financiamiento y no equivale al principal vivo de hoy. Conserva ambos campos si están explícitos, pero no uses ninguno para congelar o sustituir la historia de pagos que confirme el usuario. Incluye también termInstallments y tceaPercent. Para financiamiento directo de un vendedor/inmobiliaria con precio del bien, cuota inicial y cronograma, usa installment_purchase salvo que el documento demuestre otra categoría. No uses credit_card para cronogramas fijos.
 
 No decidas qué cuotas ya pagó realmente la persona salvo que el expediente lo demuestre de forma explícita. Caja Familiar preguntará esa historia real antes de guardar. La cuota inicial/down payment debe conservar rowRole=down_payment y no debe restarse por segunda vez del financedPrincipalAmount. No confundas "todavía no he pagado nada de este cronograma" con "la cuota inicial no existe": el usuario puede haber pagado solo la cuota inicial. Para la historia consecutiva, marca únicamente cuotas contractuales completamente pagadas y consecutivas desde la número 1; pagos parciales o no consecutivos requieren un saldo de capital vigente informado por el acreedor y revisión manual.
 ${DOCUMENT_FIRST_NUMBERING_PROMPT}`;
@@ -478,7 +478,6 @@ export function deriveOpeningPrincipalFromDocument(
   onboardingMode: DocumentFirstOnboardingMode,
   lastPaidInstallment: number,
 ): number | null {
-  if (defaults.explicitCurrentPrincipal != null && defaults.explicitCurrentPrincipal >= 0) return defaults.explicitCurrentPrincipal;
   const financed = defaults.financedPrincipalAmount;
   if (financed == null || !Number.isFinite(financed) || financed < 0) return null;
   if (onboardingMode === "NEW_DEBT" || lastPaidInstallment <= 0) return financed;
