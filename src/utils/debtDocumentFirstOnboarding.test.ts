@@ -12,7 +12,11 @@ import {
   validateDocumentFirstHistorySelection,
 } from "./debtDocumentFirstOnboarding";
 
-function realEstateReview() {
+function realEstateReview(options: {
+  staleDocumentPrincipal?: boolean;
+  unknownContractualNumber?: number;
+  futureUnknownAfter?: number;
+} = {}) {
   const fixture = createDirectRealEstateFixture();
   return parseUniversalDebtExternalAiResponse(JSON.stringify({
     schema: CAJA_FAMILIAR_DEBT_DOCUMENT_V2,
@@ -30,6 +34,10 @@ function realEstateReview() {
       financedPrincipalAmount: fixture.financedPrincipalAmount,
       scheduledPrincipalAmount: fixture.scheduledPrincipalAmount,
       principalBasis: "asset_price_including_down_payment",
+      ...(options.staleDocumentPrincipal ? {
+        currentPrincipalAmount: 76500,
+        openingPrincipalAmount: 76500,
+      } : {}),
       repaymentStructure: "fixed_schedule",
       amortizationMethod: "irregular_contract",
       installmentAmountMode: "variable",
@@ -50,7 +58,11 @@ function realEstateReview() {
       dueDate: row.dueDate,
       openingBalance: row.openingBalance,
       expectedAmount: row.expectedAmount,
-      expectedPrincipal: row.expectedPrincipal,
+      expectedPrincipal: options.unknownContractualNumber != null && row.contractualInstallmentNumber === options.unknownContractualNumber
+        ? null
+        : options.futureUnknownAfter != null && (row.contractualInstallmentNumber ?? 0) > options.futureUnknownAfter
+          ? null
+          : row.expectedPrincipal,
       expectedInterest: row.expectedInterest,
       expectedFees: row.expectedFees,
       expectedInsurance: row.expectedInsurance,
@@ -101,6 +113,9 @@ describe("document-first debt onboarding", () => {
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("debtKind");
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("creditorName");
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("currentPrincipalAmount");
+    expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("CURRENT/VIGENTE");
+    expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("evidencia documental");
+    expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("no equivale al principal vivo de hoy");
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("No decidas qué cuotas ya pagó realmente");
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("no debe restarse por segunda vez");
     expect(DOCUMENT_FIRST_EXTERNAL_AI_PROMPT).toContain("pagado solo la cuota inicial");
@@ -174,6 +189,25 @@ describe("document-first debt onboarding", () => {
     expect(deriveOpeningPrincipalFromDocument(defaults, "NEW_DEBT", 0)).toBe(76500);
     expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 1)).toBe(76500);
     expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 9)).toBe(68000);
+  });
+
+  it("does not let stale documentary principal override confirmed history", () => {
+    const defaults = extractDocumentFirstDefaults(realEstateReview({ staleDocumentPrincipal: true }));
+    expect(defaults.explicitCurrentPrincipal).toBe(76500);
+    expect(deriveOpeningPrincipalFromDocument(defaults, "NEW_DEBT", 0)).toBe(76500);
+    expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 1)).toBe(76500);
+    expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 8)).toBe(69062.5);
+    expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 9)).toBe(68000);
+  });
+
+  it("returns unknown instead of stale documentary principal when a paid ordinary row lacks principal", () => {
+    const defaults = extractDocumentFirstDefaults(realEstateReview({ staleDocumentPrincipal: true, unknownContractualNumber: 8 }));
+    expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 8)).toBeNull();
+  });
+
+  it("calculates a known paid boundary even when future rows lack principal", () => {
+    const defaults = extractDocumentFirstDefaults(realEstateReview({ staleDocumentPrincipal: true, futureUnknownAfter: 8 }));
+    expect(deriveOpeningPrincipalFromDocument(defaults, "EXISTING_DEBT", 8)).toBe(69062.5);
   });
 
   it("marks historical schedule rows as pretracking without manufacturing payment events", () => {
