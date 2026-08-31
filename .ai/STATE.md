@@ -12,8 +12,10 @@ debt/document actions.
 - Repository: `rnzrex/cajafamiliar`.
 - Base/current main: `bdbe13b7698435bd5187203df61479b67b866505`.
 - Branch: `fix/debt-document-first-history-recalc-v1`.
-- Branch was created locally from the requested current main commit and the
-  implementation commit is `1d28e8627154e5865aae3b5be7705e29d7e823cc`.
+- Branch was created locally from the requested current main commit. The
+  implementation commit is `1d28e8627154e5865aae3b5be7705e29d7e823cc` and the
+  latest pre-refresh metadata checkpoint is
+  `4b7b775ba89da35cc8d1337deebc344c669bd1de`.
 - PR #72 is OPEN/DRAFT against `main`; no force push is permitted.
 
 ## Constraints
@@ -85,8 +87,11 @@ change, Gemini key, frontend deployment, financial operation, or merge.
 ## Published validation
 
 - Remote branch SHA: `1d28e8627154e5865aae3b5be7705e29d7e823cc`.
-- Exact Preview: `dpl_5CyAp6gLa79U1foLJD3AY2dZivnD`,
-  `https://cajafamiliar-cp4zb5ejp-renzorex.vercel.app/`, READY, HTTP 200.
+- Exact Preview for the latest pre-refresh checkpoint:
+  `dpl_EFRyLdBNUQYh4Xx4V9fTNFSXLwwM`,
+  `https://cajafamiliar-2bbe6ui6o-renzorex.vercel.app/`, READY, HTTP 200.
+- This final state refresh is metadata-only; use Git/PR #72 for the exact
+  branch SHA after this document is committed.
 - Preview build logs contain only the existing ineffective dynamic-import and
   large-chunk warnings; no fatal/error build event.
 - No Production deployment or Vercel environment mutation was performed.
