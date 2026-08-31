@@ -112,4 +112,45 @@ describe("Real loadAppData Execution Tests (Section 4, 5, 6, 7)", () => {
 
     await expect(loadAppData(member)).rejects.toThrow(TrustedOfflineSnapshotUnavailableError);
   });
+
+  it("loads financing contracts using debt_id as the primary key and never requests order=id", async () => {
+    vi.stubGlobal("navigator", { onLine: true });
+    const orderCalls = new Map<string, string[]>();
+    const financingContract = {
+      debt_id: "debt-document-1",
+      household_id: "h-test-123",
+      contract_authority: "official_noncontractual",
+      principal_basis: "financed_principal_only",
+      financed_principal_amount: 76500,
+      created_at: "2026-08-31T00:00:00.000Z",
+    };
+
+    const rowsByTable: Record<string, unknown[]> = {
+      debt_financing_contracts: [financingContract],
+    };
+    const makeBuilder = (table: string) => {
+      const builder: any = {
+        select: () => builder,
+        eq: () => builder,
+        order: (column: string) => {
+          const calls = orderCalls.get(table) ?? [];
+          calls.push(column);
+          orderCalls.set(table, calls);
+          return builder;
+        },
+        range: () => Promise.resolve({ data: rowsByTable[table] ?? [], error: null }),
+        maybeSingle: () => Promise.resolve({ data: { initial_balance: 0 }, error: null }),
+      };
+      return builder;
+    };
+
+    mockFrom.mockImplementation((table: string) => makeBuilder(table));
+
+    const result = await loadAppData(member);
+
+    expect(result.data.debtFinancingContracts).toEqual([
+      expect.objectContaining({ debtId: "debt-document-1", financedPrincipalAmount: 76500 }),
+    ]);
+    expect(orderCalls.get("debt_financing_contracts")).toEqual(["created_at", "debt_id"]);
+  });
 });

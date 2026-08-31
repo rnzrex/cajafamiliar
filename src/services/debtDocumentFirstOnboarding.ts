@@ -10,6 +10,7 @@ import type {
 import { householdId, isSupabaseConfigured, supabase } from "./supabaseClient";
 import { loadAppData, type DebtCreateResult } from "./dataRepository";
 import type { DocumentFirstHistoryMode, DocumentFirstOnboardingMode } from "../utils/debtDocumentFirstOnboarding";
+import { toSafeSupabaseError } from "../utils/supabaseError";
 
 export interface CreateDebtFromDocumentInput {
   member: HouseholdMember;
@@ -133,7 +134,7 @@ export async function createDebtFromDocument(input: CreateDebtFromDocumentInput)
     p_authority_evidence: input.authorityEvidence,
     p_normalized_metadata: input.normalizedMetadata,
   });
-  if (error) throw error;
+  if (error) throw toSafeSupabaseError(error);
   if (!data || typeof data !== "object") throw new Error("La creación documental no devolvió un resultado válido.");
 
   const refreshed = await loadAppData(input.member);

@@ -6,6 +6,7 @@ import { createDebtFromDocument } from "../services/debtDocumentFirstOnboarding"
 import { localDateString } from "../utils/date";
 import { makeUuid } from "../utils/storage";
 import { parseUniversalDebtExternalAiResponse } from "../utils/universalDebtDocumentImport";
+import { getSafeSupabaseErrorMessage } from "../utils/supabaseError";
 import {
   DOCUMENT_FIRST_EXTERNAL_AI_PROMPT,
   deriveOpeningPrincipalFromDocument,
@@ -241,7 +242,7 @@ export function DebtDocumentFirstOnboarding({ currentMember, canWriteDebt = true
       setToast({ message: `Deuda creada desde el documento con ${result.installments.length} filas de cronograma.`, type: "success" });
       await onSaved(result);
     } catch (error) {
-      setToast({ message: error instanceof Error ? error.message : "No se pudo crear la deuda desde el documento.", type: "error" });
+      setToast({ message: getSafeSupabaseErrorMessage(error, "No se pudo crear la deuda desde el documento."), type: "error" });
     } finally {
       setSaving(false);
     }
