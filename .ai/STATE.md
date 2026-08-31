@@ -3,18 +3,19 @@
 ## Objective
 
 Complete the Document-First real proforma parsing fix V1 on
-`fix/debt-document-first-real-proforma-v1`, publish it as a DRAFT PR, verify
-the exact-SHA Vercel Preview, and stop before Production, SQL, merge, secrets,
-or real-document actions.
+`fix/debt-document-first-real-proforma-v1`, publish it as DRAFT PR #70, verify
+the exact-final-SHA Vercel Preview, and stop before Production, SQL, merge,
+secrets, or real-document actions.
 
 ## Repository
 
 - Repository: `rnzrex/cajafamiliar`.
 - Base: `a0e430f297a6e9a4603ee8c6afb7ef87eac7110e` from `origin/main`.
 - Branch: `fix/debt-document-first-real-proforma-v1`.
-- Current local HEAD is the base; implementation changes are uncommitted.
-- Remote branch exists at the same base; no force push is permitted.
-- PR/Preview must be checked after the final push; keep PR DRAFT.
+- Published implementation checkpoint: `0c35b2c2df795151857998d798ffbdaa30d88536`.
+- A final state-only checkpoint is being pushed after the implementation; Git
+  and PR #70 are authoritative for the resulting exact HEAD.
+- PR #70 is OPEN/DRAFT against `main`; no force push is permitted.
 
 ## Constraints
 
@@ -23,7 +24,7 @@ or real-document actions.
   Gemini secrets, or merge.
 - Do not modify migrations or the existing document-first RPC.
 - Change only prompt, parsing/normalization, semantic validation, review UX,
-  and regression tests.
+  regression tests, and operational state documentation.
 
 ## Completed
 
@@ -32,7 +33,7 @@ or real-document actions.
   cannot become contractual numbers; documented CASH/down-payment, asset vs
   financed principal, introductory rows, scheduled principal, and term
   semantics.
-- Added Document-First-only semantic normalization. It may map duplicate or
+- Added Document-First-only semantic normalization. It maps duplicate or
   invalid contractual numbers to a contiguous source-row sequence only when
   source rows are valid contiguous 1..N, ordered, dated/non-decreasing, and
   free of summary rows or contradictory explicit numbering; otherwise it
@@ -51,21 +52,23 @@ or real-document actions.
 
 ## Validation
 
-- Before this checkpoint: full Vitest PASS — 78 files, 1,093 tests.
-- Before this checkpoint: `npm run typecheck:api` PASS; `npm run build` PASS
-  with only existing Vite dynamic-import/large-chunk warnings.
-- Before this checkpoint: Node syntax, `git diff --check`, Universal Contract
-  Engine, BANK reconstruction, BANK prepayment, BANK External AI/import, and
-  BANK Document V5 targeted suites PASS.
-- After the final UI/test polish, rerun the required full and targeted checks
-  before commit/push.
+- Full Vitest PASS — 78 files, 1,094 tests.
+- Document-First targeted PASS — 2 files, 14 tests.
+- Universal Contract Engine PASS — 2 files, 42 tests; migration hygiene
+  additive-only, 13 required symbols, 0 forbidden terms.
+- BANK reconstruction PASS — 1 file, 11 tests.
+- BANK prepayment PASS — 1 file, 18 tests.
+- BANK External AI/import PASS — 3 files, 29 tests.
+- BANK Document V5 PASS — 6 files, 26 tests.
+- `npm run typecheck:api`, `npm run build`, `git diff --check`, and all
+  `scripts/*.mjs` Node syntax checks pass. Build has only existing Vite
+  dynamic-import/large-chunk warnings.
 
 ## Next Step
 
-- Rerun validation, inspect the diff, commit the implementation plus this
-  state checkpoint, push without force, create/update the DRAFT PR, and verify
-  the Preview is READY/HTTP 200 with the exact final SHA and no unexplained
-  error/fatal logs.
+- Push this final state checkpoint, then verify the new Preview is READY,
+  HTTP 200, tied to the exact final Git SHA, and has no unexplained
+  error/fatal build logs. Leave PR #70 DRAFT and stop after reporting.
 
 ## Production
 
