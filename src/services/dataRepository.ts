@@ -40,7 +40,10 @@ async function fetchOptionalDebtRows(table: "debt_financing_contracts" | "debt_r
       supabase: supabase!,
       table,
       householdId,
-      orders: [{ column: "created_at", ascending: true }, { column: "id", ascending: true }],
+      orders: table === "debt_financing_contracts"
+        ? [{ column: "created_at", ascending: true }, { column: "debt_id", ascending: true }]
+        : [{ column: "created_at", ascending: true }, { column: "id", ascending: true }],
+      ...(table === "debt_financing_contracts" ? { pkField: "debt_id" } : {}),
     });
   } catch (error) {
     if (error instanceof RemoteAppDataLoadError && error.failedResource === table) {
