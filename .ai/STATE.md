@@ -12,9 +12,9 @@ debt/document actions.
 - Repository: `rnzrex/cajafamiliar`.
 - Base/current main: `bdbe13b7698435bd5187203df61479b67b866505`.
 - Branch: `fix/debt-document-first-history-recalc-v1`.
-- Branch was created locally from the requested current main commit and is
-  clean at the base before implementation.
-- PR and final Preview are pending; no force push is permitted.
+- Branch was created locally from the requested current main commit and the
+  implementation commit is `1d28e8627154e5865aae3b5be7705e29d7e823cc`.
+- PR #72 is OPEN/DRAFT against `main`; no force push is permitted.
 
 ## Constraints
 
@@ -65,9 +65,8 @@ All validation currently passes:
 
 ## Next Step
 
-Commit/push the validated client-only fix, create/update the DRAFT PR, and
-verify Preview READY/HTTP 200 with no unexplained fatal/error logs. Keep
-Production, SQL, secrets, real debt/document data, and merge untouched.
+Gate complete. Keep PR #72 DRAFT and stop. Do not modify Production, SQL,
+secrets, real debt/document data, or merge.
 
 ## Production
 
@@ -82,3 +81,12 @@ change, Gemini key, frontend deployment, financial operation, or merge.
 - `src/utils/debtDocumentFirstOnboarding.test.ts` — utility regressions.
 - `src/components/DebtDocumentFirstOnboarding.test.tsx` — jsdom UI regressions.
 - `.ai/STATE.md` — current handoff and safety state.
+
+## Published validation
+
+- Remote branch SHA: `1d28e8627154e5865aae3b5be7705e29d7e823cc`.
+- Exact Preview: `dpl_5CyAp6gLa79U1foLJD3AY2dZivnD`,
+  `https://cajafamiliar-cp4zb5ejp-renzorex.vercel.app/`, READY, HTTP 200.
+- Preview build logs contain only the existing ineffective dynamic-import and
+  large-chunk warnings; no fatal/error build event.
+- No Production deployment or Vercel environment mutation was performed.
