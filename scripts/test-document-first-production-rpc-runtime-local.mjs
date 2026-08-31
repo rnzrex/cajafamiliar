@@ -2,6 +2,11 @@ import { spawn } from "node:child_process";
 
 const container = process.env.DOCUMENT_FIRST_DB_CONTAINER ?? "supabase_db_caja-familiar";
 const migrationVersion = "20260831073542";
+const extendedFunctionSignature = "public.create_debt_v1(uuid,uuid,text,text,text,text,date,date,numeric,numeric,integer,numeric,text,text,integer,date,numeric,numeric,text,jsonb,jsonb,text,text,numeric,text)";
+const badInstallmentCast = "(v_elem->>'installment_number')::pg_catalog.integer";
+const goodInstallmentCast = "(v_elem->>'installment_number')::pg_catalog.int4";
+const normalizedSourceMd5 = "67ef098b10d245ce4b22423c6a58b07e";
+const rawCrlfSourceMd5 = "4b4e5de9d5c3757d0db3c969c450f7cf";
 const ids = {
   user: "00000000-0000-4000-8000-000000002501",
   household: "00000000-0000-4000-8000-000000002502",
@@ -223,10 +228,97 @@ try {
   const migrationApplied = await scalar(`select count(*) from supabase_migrations.schema_migrations where version = ${sqlString(migrationVersion)};`, "migration history");
   if (migrationApplied !== "1") throw new Error(`Migration ${migrationVersion} is not applied locally`);
 
-  const functionDefinition = await scalar(`select pg_catalog.pg_get_functiondef(${sqlString("public.create_debt_v1(uuid,uuid,text,text,text,text,date,date,numeric,numeric,integer,numeric,text,text,integer,date,numeric,numeric,text,jsonb,jsonb,text,text,numeric,text)")}::regprocedure);`, "RPC definition");
-  const correctedCast = "(v_elem->>'installment_number')::pg_catalog.int4";
-  const invalidCast = "(v_elem->>'installment_number')::pg_catalog.integer";
-  if (!functionDefinition.includes(correctedCast) || functionDefinition.includes(invalidCast)) throw new Error("create_debt_v1 does not contain only the corrected int4 cast");
+  const functionDefinition = await scalar(`select pg_catalog.pg_get_functiondef(${sqlString(extendedFunctionSignature)}::regprocedure);`, "RPC definition");
+  if (!functionDefinition.includes(goodInstallmentCast) || functionDefinition.includes(badInstallmentCast)) throw new Error("create_debt_v1 does not contain only the corrected int4 cast");
+
+  const fingerprintProof = await scalar(`
+    with function_source as (
+      select p.prosrc
+        from pg_catalog.pg_proc as p
+       where p.oid = ${sqlString(extendedFunctionSignature)}::regprocedure
+    ), reconstructed_bad_source as (
+      select pg_catalog.replace(prosrc, ${sqlString(goodInstallmentCast)}, ${sqlString(badInstallmentCast)}) as source
+        from function_source
+    ), lf_source as (
+      select pg_catalog.replace(pg_catalog.replace(source, chr(13) || chr(10), chr(10)), chr(13), chr(10)) as source
+        from reconstructed_bad_source
+    ), crlf_source as (
+      select pg_catalog.replace(source, chr(10), chr(13) || chr(10)) as source
+        from lf_source
+    ), normalized_sources as (
+      select
+        lf_source.source as lf_normalized,
+        crlf_source.source as crlf_raw,
+        pg_catalog.replace(pg_catalog.replace(crlf_source.source, chr(13) || chr(10), chr(10)), chr(13), chr(10)) as crlf_normalized
+        from lf_source
+        cross join crlf_source
+    )
+    select pg_catalog.md5(lf_normalized) || '|' || pg_catalog.md5(crlf_raw) || '|' || pg_catalog.md5(crlf_normalized)
+      from normalized_sources;
+  `, "EOL fingerprint proof");
+  if (fingerprintProof !== `${normalizedSourceMd5}|${rawCrlfSourceMd5}|${normalizedSourceMd5}`) {
+    throw new Error(`EOL fingerprint proof mismatch: ${fingerprintProof}`);
+  }
+  const [lfNormalizedFingerprint, rawCrlfFingerprint, crlfNormalizedFingerprint] = fingerprintProof.split("|");
+
+  await expectSqlError(`
+    do $guard$
+    declare
+      v_source text;
+      v_normalized_source text;
+    begin
+      select pg_catalog.replace(p.prosrc, ${sqlString(goodInstallmentCast)}, ${sqlString(badInstallmentCast)})
+        into v_source
+        from pg_catalog.pg_proc as p
+       where p.oid = ${sqlString(extendedFunctionSignature)}::regprocedure;
+      v_source := v_source || E'\\n-- semantic source mutation';
+      v_normalized_source := pg_catalog.replace(pg_catalog.replace(v_source, E'\\r\\n', E'\\n'), E'\\r', E'\\n');
+      if pg_catalog.md5(v_normalized_source) = ${sqlString(normalizedSourceMd5)} then
+        raise exception 'UNEXPECTED_GUARD_ACCEPTANCE';
+      end if;
+      raise exception 'EXPECTED_GUARD_REJECTION';
+    end
+    $guard$;
+  `, "EXPECTED_GUARD_REJECTION", "semantic source mutation guard proof");
+
+  await expectSqlError(`
+    do $guard$
+    declare
+      v_definition text;
+      v_bad_count integer;
+    begin
+      select pg_catalog.pg_get_functiondef(${sqlString(extendedFunctionSignature)}::regprocedure) into v_definition;
+      v_bad_count := (
+        pg_catalog.length(v_definition) -
+        pg_catalog.length(pg_catalog.replace(v_definition, ${sqlString(badInstallmentCast)}, ''))
+      ) / pg_catalog.length(${sqlString(badInstallmentCast)});
+      if v_bad_count = 1 then
+        raise exception 'UNEXPECTED_GUARD_ACCEPTANCE';
+      end if;
+      raise exception 'EXPECTED_GUARD_REJECTION';
+    end
+    $guard$;
+  `, "EXPECTED_GUARD_REJECTION", "missing bad cast guard proof");
+
+  await expectSqlError(`
+    do $guard$
+    declare
+      v_definition text;
+      v_bad_count integer;
+    begin
+      select pg_catalog.pg_get_functiondef(${sqlString(extendedFunctionSignature)}::regprocedure) into v_definition;
+      v_definition := pg_catalog.replace(v_definition, ${sqlString(goodInstallmentCast)}, ${sqlString("(v_elem->>'installment_number')::pg_catalog.text")});
+      v_bad_count := (
+        pg_catalog.length(v_definition) -
+        pg_catalog.length(pg_catalog.replace(v_definition, ${sqlString(badInstallmentCast)}, ''))
+      ) / pg_catalog.length(${sqlString(badInstallmentCast)});
+      if v_bad_count = 1 then
+        raise exception 'UNEXPECTED_GUARD_ACCEPTANCE';
+      end if;
+      raise exception 'EXPECTED_GUARD_REJECTION';
+    end
+    $guard$;
+  `, "EXPECTED_GUARD_REJECTION", "wrong cast guard proof");
 
   const schedule = acceptanceSchedule();
   const openingPrincipal = 69062.50;
@@ -266,6 +358,12 @@ try {
     migrationVersion,
     passed: true,
     acceptance: "129 rows, asset PEN 85000, down payment PEN 8500, financed PEN 76500, scheduled PEN 85000, opening PEN 69062.50, lastPaid=8",
+    eolFingerprintProof: {
+      lfNormalizedMd5: lfNormalizedFingerprint,
+      rawCrlfMd5: rawCrlfFingerprint,
+      crlfNormalizedMd5: crlfNormalizedFingerprint,
+    },
+    guardProofs: "semantic mutation, missing bad cast, and wrong cast rejected",
     zeroFinancialEffects: "0 debt events, 0 movements, 0 allocations",
     rollback: "invalid contract rejected with no partial rows",
   }, null, 2));

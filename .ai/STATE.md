@@ -110,3 +110,64 @@ Production remains untouched at main
 - `.ai/STATE.md` — operational handoff.
 
 
+
+## Production Gate Attempt — 2026-08-31
+
+- Linked Supabase CLI project confirmed as `dxogrdvgdbvbdyoepqtx` using
+  `supabase/.temp/project-ref`; the pooler IPv4 link was required because the
+  direct connection reported IPv6 unavailable.
+- Migration SHA-256 at gate start:
+  `C6F47915DCD7CAB042F32FB3B6873696E73A437F701AAA601868F9814DCF6030`.
+- Preflight history matched through `20260830214500`; dry-run showed exactly
+  one pending migration: `20260831073542_document_first_production_rpc_runtime_fix_v1.sql`.
+- `npx supabase db push --linked` was attempted once and failed closed before
+  the function replacement because Production `create_debt_v1` source MD5 is
+  `67ef098b10d245ce4b22423c6a58b07e`, not the audited guard fingerprint
+  `4b4e5de9d5c3757d0db3c969c450f7cf`. Production still has one bad cast and
+  zero corrected casts.
+- Remote migration history remains pending at `20260831073542`; no migration
+  was recorded. The post-attempt financial counts exactly equal the baseline:
+  debts=5, movements=1068, debt_events=0, debt_installments=18,
+  debt_schedule_versions=1, debt_event_installment_allocations=0,
+  debt_installment_carried_allocations=0, debt_financing_contracts=0,
+  debt_refinancing_links=0, bank_document_import_jobs=0.
+- Production `create_debt_from_document_v1` remains present with authenticated
+  EXECUTE=true. Function metadata observed before failure: owner `postgres`,
+  ACL `{postgres=X/postgres,authenticated=X/postgres}`, SECURITY DEFINER=true,
+  proconfig `search_path=""`.
+- PostgreSQL logs show the new fingerprint guard error at the attempt time;
+  the old `pg_catalog.integer` and `debt_financing_contracts.id` errors are
+  historical. No retry, migration edit, repair, reset, manual SQL, financial
+  RPC, or data write was performed after the fail-closed stop.
+
+## Current blocker
+
+Do not rerun Production migration. Resolve the difference between the local
+shortlisted audited function source and Production's source definition first;
+any corrected migration must be re-audited and re-hashed before a new gate.
+PR #74 remains OPEN/DRAFT, Production frontend remains on main, and all
+financial/document/secrets restrictions remain active.
+
+## Source Fingerprint EOL Correction — 2026-08-31
+
+- Root cause confirmed: the audited function source is byte-equivalent after
+  EOL normalization. Production raw LF MD5 is
+  `67ef098b10d245ce4b22423c6a58b07e`; the equivalent local/raw CRLF form is
+  `4b4e5de9d5c3757d0db3c969c450f7cf`; normalizing either to LF yields
+  `67ef098b10d245ce4b22423c6a58b07e`.
+- Changed only the pending migration guard to normalize CRLF and bare CR to LF
+  before comparing the expected MD5. The exact signature, bad/good cast tokens,
+  source replacement, metadata guards, and postconditions remain unchanged.
+- Extended the disposable PG17 smoke with LF/CRLF equivalence, semantic
+  mutation rejection, missing-cast rejection, and wrong-cast rejection.
+- New migration SHA-256:
+  `1372717D7DDE4386842AA9BC57ED348F124D32029ABB4C46D8B614BFD9BACDD6`.
+- Local PG17 migration reapplication and 129-row Document-First acceptance
+  passed; BANK lifecycle, Universal SQL, DEBT2B2, Document-First targeted
+  tests (4 files / 25 tests), Universal targeted tests (2 files / 42 tests),
+  typecheck, build, Node syntax, and diff checks passed.
+- No Production SQL retry was made. Production remains at
+  `20260830214500`; `20260831073542` remains pending. The next action requires
+  a new Production SQL orchestration gate.
+- Guard-correction files are modified locally and ready to commit/push; no
+  application behavior was changed.

@@ -3,18 +3,22 @@
 -- The original extended create_debt_v1 implementation contains one invalid
 -- runtime cast for the installment number. Rebuild the same function from its
 -- catalog definition, changing only that exact cast and failing closed if the
--- installed definition is not the expected one.
+-- installed definition is not the expected one. The source fingerprint is
+-- normalized to LF because the local Windows audit used CRLF while
+-- PostgreSQL pg_proc.prosrc stores LF; after EOL normalization the source is
+-- byte-equivalent.
 do $migration$
 declare
   v_signature constant text :=
     'public.create_debt_v1(uuid,uuid,text,text,text,text,date,date,numeric,numeric,integer,numeric,text,text,integer,date,numeric,numeric,text,jsonb,jsonb,text,text,numeric,text)';
   v_function oid;
   v_source text;
+  v_normalized_source text;
   v_definition text;
   v_updated_definition text;
   v_bad_token constant text := '(v_elem->>''installment_number'')::pg_catalog.integer';
   v_good_token constant text := '(v_elem->>''installment_number'')::pg_catalog.int4';
-  v_expected_source_md5 constant text := '4b4e5de9d5c3757d0db3c969c450f7cf';
+  v_expected_source_md5 constant text := '67ef098b10d245ce4b22423c6a58b07e';
   v_bad_count integer;
   v_good_count integer;
   v_owner oid;
@@ -43,7 +47,13 @@ begin
     from pg_catalog.pg_proc as p
    where p.oid = v_function;
 
-  if pg_catalog.md5(v_source) <> v_expected_source_md5 then
+  v_normalized_source := pg_catalog.replace(
+    pg_catalog.replace(v_source, E'\r\n', E'\n'),
+    E'\r',
+    E'\n'
+  );
+
+  if pg_catalog.md5(v_normalized_source) <> v_expected_source_md5 then
     raise exception 'create_debt_v1 source fingerprint did not match the expected audited definition';
   end if;
 
