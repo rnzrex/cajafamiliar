@@ -12,7 +12,7 @@ Production deployment, or merge.
 - Repository: `rnzrex/cajafamiliar`.
 - Requested base/current main: `52f4103f43ba75e81294c0d0a70c9fb931000b95`.
 - Branch: `fix/document-first-production-rpc-runtime-v1`.
-- Implementation is committed locally; push and PR publication are pending.
+- Implementation commit `04cf26dcba7dbff92cdeb207d382f6dbb2301bae` is pushed to origin; PR #74 is OPEN/DRAFT against `main`.
 - Production Supabase ref: `dxogrdvgdbvbdyoepqtx`.
 - Latest applied Production migration before this task: `20260830214500`
   (`debt_document_first_onboarding_v1`).
@@ -51,7 +51,7 @@ Production deployment, or merge.
 ## Validation completed
 
 - Full Vitest, one worker: **79 files, 1,101 tests passed**.
-- Document-First targeted suite: **4 files, 24 tests passed**.
+- Document-First targeted suite: **4 files, 25 tests passed**.
 - BANK reconstruction: **1 file, 11 tests passed**.
 - BANK prepayment simulation: **1 file, 18 tests passed**.
 - BANK External AI/import: **3 files, 29 tests passed**.
@@ -108,4 +108,5 @@ Production remains untouched at main
 - `src/services/dataRepository.authoritativeLoad.test.ts` — load regression.
 - `scripts/test-document-first-production-rpc-runtime-local.mjs` — PG17 smoke.
 - `.ai/STATE.md` — operational handoff.
+
 
