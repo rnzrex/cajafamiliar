@@ -7,9 +7,9 @@
   schema/RLS, Supabase Production writes, real financial/document data, PII,
   Gemini/API key, Vercel env writes, Production frontend deployment, merge,
   reset, clean, or force push.
-- Base: `354b54c66b67b6463adc0a45ff3266ccb00a91cb`. Published commit:
-  `99a23713246cd2d0cc853ac9c433052834b952c0` (remote matches; working tree
-  is clean before this state checkpoint).
+- Base: `354b54c66b67b6463adc0a45ff3266ccb00a91cb`. Implementation commit:
+  `99a23713246cd2d0cc853ac9c433052834b952c0`; subsequent commits are
+  state-only checkpoints. Git HEAD and the remote branch ref are authoritative.
 - Implementation: deterministic 0.3% credit-life inference only from matching
   contractual reported-balance rows; documentary/operational insurance split;
   auxiliary-policy exclusion; external JSON backward compatibility; warning
@@ -21,15 +21,15 @@
   large-chunk notices.
 - PR: #78 OPEN/DRAFT against `main`, title
   `BANK INSURANCE ZERO-REWORK V1 — deterministic insurance + warning compaction`.
-- Preview: Vercel deployment `dpl_J2PVuuJFwGnoRbKduTQdbWF5Exap`, READY, exact
-  SHA `99a23713246cd2d0cc853ac9c433052834b952c0`, URL
-  `https://cajafamiliar-brk3zgnjf-renzorex.vercel.app/`; build errors-only log
-  has no errors/fatals, only known warnings. After the user authenticated in
-  the Preview browser, the application document rendered successfully as
-  `Caja Familiar` with no console errors. Connector-only HTTP checks without
-  that browser session redirect to Vercel Authentication.
-- Next step: commit/push this state checkpoint, re-verify the resulting exact
-  SHA/Preview deployment, and stop. Do not mark PR ready or merge.
+- Preview: the implementation deployment was READY at
+  `https://cajafamiliar-brk3zgnjf-renzorex.vercel.app/`, exact implementation
+  SHA `99a23713246cd2d0cc853ac9c433052834b952c0`, with no build errors/fatals
+  and no browser console errors after user authentication. The later
+  state-only branch checkpoints trigger equivalent automatic Preview builds;
+  verify their exact SHA from Vercel before reporting. Connector-only HTTP
+  checks without the browser session redirect to Vercel Authentication.
+- Next step: stop. Do not mark PR ready, merge, deploy Production, add secrets,
+  or write financial/document test data.
 
 ## Objective
 
