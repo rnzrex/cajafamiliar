@@ -1,35 +1,54 @@
 # Shared Agent State
 
-## Current Active Handoff — BANK Insurance + Warning Zero-Rework V1 — 2026-09-01
+## Current Active Handoff — Financial Advisor 24/7 V1 Visual Gate Hotfix — 2026-09-01
 
-- Objective: publish and hold `fix/bank-insurance-zero-rework-v1` for the
-  deterministic insurance/warning release-gate audit. No SQL, migrations,
-  schema/RLS, Supabase Production writes, real financial/document data, PII,
-  Gemini/API key, Vercel env writes, Production frontend deployment, merge,
-  reset, clean, or force push.
-- Base: `354b54c66b67b6463adc0a45ff3266ccb00a91cb`. Implementation commit:
-  `99a23713246cd2d0cc853ac9c433052834b952c0`; subsequent commits are
-  state-only checkpoints. Git HEAD and the remote branch ref are authoritative.
-- Implementation: deterministic 0.3% credit-life inference only from matching
-  contractual reported-balance rows; documentary/operational insurance split;
-  auxiliary-policy exclusion; external JSON backward compatibility; warning
-  compaction; historical/future/new-debt anomaly gates; prepayment simulation
-  filtering; sanitized Ripley/UI regressions.
-- Validation: full Vitest `80 files / 1,131 tests passed`; targeted gate suite
-  `8 files / 130 tests passed`; `npm run typecheck:api`, `npm run build`, and
-  `git diff --check` passed. Build warnings are the existing dynamic-import and
-  large-chunk notices.
-- PR: #78 OPEN/DRAFT against `main`, title
-  `BANK INSURANCE ZERO-REWORK V1 — deterministic insurance + warning compaction`.
-- Preview: the implementation deployment was READY at
-  `https://cajafamiliar-brk3zgnjf-renzorex.vercel.app/`, exact implementation
-  SHA `99a23713246cd2d0cc853ac9c433052834b952c0`, with no build errors/fatals
-  and no browser console errors after user authentication. The later
-  state-only branch checkpoints trigger equivalent automatic Preview builds;
-  verify their exact SHA from Vercel before reporting. Connector-only HTTP
-  checks without the browser session redirect to Vercel Authentication.
-- Next step: stop. Do not mark PR ready, merge, deploy Production, add secrets,
-  or write financial/document test data.
+- Objective: implement and publish the read-only deterministic `ASESOR` view
+  and the extra-cash advisory UX hotfix on `feat/financial-advisor-v1`, based
+  exactly on `388d3e679ca91efa1a6bcc3d09bcb792dc848a8f`.
+- Constraints: no SQL, migrations, schema/RLS, Supabase Production writes,
+  debts, payments, movements, prepayments, card/account changes, real financial
+  or document data, PII, external AI/API keys, Vercel env writes, Production
+  deployment, merge, reset, clean, or force push.
+- Architecture: reuse the existing debt planning/intelligence/strategy,
+  obligation projection, credit-card statement, account balance, date, and
+  principal-prepayment engines. Add only pure advisor/question read-models and
+  a responsive read-only panel; unknown values remain unknown.
+- Branch state: implementation commits `c8e7a946232baad118be96e223c658f269c4b0b4`,
+  `072b09033904a6856ba6448f713cb9c609ec6c44`, hotfix
+  `9aec50d1310fcd8f3d35bf5ca571ed14d2ca4be2`, extra-cash hotfix
+  `8814c20eca05e51e92204d226bbb4a41d57fdac6`, and metadata checkpoint
+  `4b8ceaae31058b32655301bf38766845bf23bcdc` are pushed; PR #80 is
+  OPEN/DRAFT against `main`.
+- Hotfix completed in `src/utils/financialAdvisor.ts` and tests: explicit
+  overdue/due-today/immediate/card/strategy ordering, human date and money
+  copy, `Vencidas` label, and card statements included once in applicable
+  obligation windows while unknown settlements remain unknown.
+- Hotfix completed in `src/components/FinancialAdvisorPanel.tsx` and its test:
+  internal recommendation enums are translated to human labels and are not
+  exposed in visible recommendation metadata.
+- Extra-cash UX hotfix completed in `src/utils/financialAdvisor.ts`,
+  `src/utils/financialAdvisorQuestions.ts`, and
+  `src/components/FinancialAdvisorPanel.tsx`: scenario exposes liquidity and
+  shortfall before/after, exact coverage, surplus-only simulation, unknown
+  requirement fail-closed status, and shared panel/question copy.
+- Functional hotfix commit `8814c20eca05e51e92204d226bbb4a41d57fdac6` is
+  pushed to origin; PR #80 remains OPEN/DRAFT.
+- Validation so far: full `npm test -- --maxWorkers=1` (83 files, 1,166 tests),
+  extra-cash directed suite (3 files, 34 tests),
+  `npm run typecheck:api`, `npx tsc -b --pretty false`, `npm run build`, and
+  `git diff --check` pass. Build emitted only existing dynamic-import and
+  large-chunk warnings.
+- Release gate completed for the functional code checkpoint: automatic Preview
+  `dpl_BgXT6VD1fYWq1sCxt8G6pLU6dLDQ`
+  (`https://cajafamiliar-1d7qmvm2s-renzorex.vercel.app/`) is READY, HTTP 200,
+  matches functional SHA `8814c20eca05e51e92204d226bbb4a41d57fdac6`, and has no preview
+  error/fatal runtime logs. The Preview app remains authentication-protected;
+  manual authenticated Asesor acceptance is the next user-facing visual gate.
+  Do not request or store credentials.
+- GitHub CLI was reauthenticated through the web device flow on 2026-09-01;
+  normal push and remote SHA verification succeeded.
+- Production status: untouched. No SQL, migrations, financial writes, test
+  data, external AI, secrets, Vercel env writes, merge, or Production deploy.
 
 ## Objective
 

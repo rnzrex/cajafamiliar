@@ -451,6 +451,33 @@ describe("DEBT-3D Obligation Projection Read-Model", () => {
       expect(result.items.filter((i) => i.monthKey === "2026-08")).toHaveLength(2);
     });
 
+    it("linked recurring debt reminder plus contractual installment counts once", () => {
+      const linkedDebt = debt({ id: "d-linked", repaymentStructure: "fixed_schedule" });
+      const linkedReminder = recurringPayment({
+        id: "p-linked",
+        linked_debt_id: linkedDebt.id,
+        amount: 900,
+      });
+      const linkedSchedule = scheduleVersion({ id: "sv-linked", debtId: linkedDebt.id });
+      const linkedInstallment = installment({
+        id: "i-linked",
+        debtId: linkedDebt.id,
+        scheduleVersionId: linkedSchedule.id,
+        dueDate: "2026-08-25",
+      });
+      const planningItems = buildDebtPlanningItems([linkedDebt], [], [linkedSchedule], [linkedInstallment], [], todayKey);
+      const result = buildObligationProjection({
+        recurringPayments: [linkedReminder],
+        debts: [linkedDebt],
+        debtPlanningItems: planningItems,
+        todayKey,
+      });
+
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].source).toBe("debt");
+      expect(result.items[0].debtId).toBe(linkedDebt.id);
+    });
+
     it("26-27. PEN + USD remain separated in byCurrency without cross-currency monetary sum", () => {
       const pPEN = recurringPayment({ id: "p-pen", amount: 1000 });
       const dUSD = debt({ id: "d-usd", currencyCode: "USD" });

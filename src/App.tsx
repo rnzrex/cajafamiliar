@@ -10,6 +10,7 @@ import {
   PiggyBank,
   PlusCircle,
   RefreshCw,
+  Sparkles,
   Tags,
   Wallet,
   X,
@@ -28,6 +29,7 @@ import { DebtsManager } from "./components/DebtsManager";
 import { DebtForm } from "./components/DebtForm";
 import { CreditCardForm } from "./components/CreditCardForm";
 import { CreditCardsManager } from "./components/CreditCardsManager";
+import { FinancialAdvisorPanel } from "./components/FinancialAdvisorPanel";
 import { DebtOperationForm } from "./components/DebtOperationForm";
 import { DebtDetailModal } from "./components/DebtDetailModal";
 import { Toast } from "./components/Toast";
@@ -42,6 +44,7 @@ import { parseNotificationDeepLink } from "./utils/deepLink";
 import { buildCreditCardStatementAlerts, selectUrgentCreditCardStatementAlertsForReminder } from "./utils/creditCardCalculations";
 import { eligibleCreditCardsForSpending, isCreditCardMovementContext } from "./utils/creditCardSpending";
 import { buildObligationProjection } from "./utils/obligationProjection";
+import { buildFinancialAdvisorResult } from "./utils/financialAdvisor";
 import { getActiveCashAccount, isDefaultCashAccount } from "./utils/accountHelpers";
 import { containsDebtCreateResult, containsDebtOperationResult, mergeDebtCreateResultIntoAppData, mergeDebtOperationResultIntoAppData, mergePendingMovements, shouldStartAuthoritativeRefresh, validateAuthoritativeLoadSource, type DebtOperationSaveResult } from "./services/authoritativeSync";
 import type { DebtCreateResult } from "./services/dataRepository";
@@ -88,7 +91,7 @@ import { isSupabaseConfigured } from "./services/supabaseClient";
 import { makeId, makeUuid, loadData, saveData } from "./utils/storage";
 import { localDateString } from "./utils/date";
 
-type View = "dashboard" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "deudas" | "registrar-deuda" | "operacion-deuda" | "tarjetas" | "registrar-tarjeta" | "reportes" | "categorias" | "cuentas" | "saldo-inicial";
+type View = "dashboard" | "advisor" | "registrar-ingreso" | "registrar-gasto" | "movimientos" | "conteo" | "pagos" | "deudas" | "registrar-deuda" | "operacion-deuda" | "tarjetas" | "registrar-tarjeta" | "reportes" | "categorias" | "cuentas" | "saldo-inicial";
 type SyncStatus = "loading" | "connected" | "local" | "offline" | "problem" | "syncing";
 type PendingSyncState = "idle" | "flushing" | "problem";
 type RemoteContactStatus = "unknown" | "success" | "failure";
@@ -108,6 +111,7 @@ interface AppProps {
 
 const navItems: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: "dashboard", label: "Inicio", icon: Home },
+  { view: "advisor", label: "Asesor", icon: Sparkles },
   { view: "registrar-gasto", label: "Registrar", icon: PlusCircle },
   { view: "movimientos", label: "Movimientos", icon: ClipboardList },
   { view: "conteo", label: "Caja", icon: Coins },
@@ -121,6 +125,7 @@ const navItems: Array<{ view: View; label: string; icon: typeof Home }> = [
 
 const mobileNavItems: Array<{ view: View; label: string; icon: typeof Home }> = [
   { view: "dashboard", label: "Inicio", icon: Home },
+  { view: "advisor", label: "Asesor", icon: Sparkles },
   { view: "registrar-gasto", label: "Registrar", icon: PlusCircle },
   { view: "movimientos", label: "Movimientos", icon: ClipboardList },
   { view: "conteo", label: "Caja", icon: Coins },
@@ -128,6 +133,7 @@ const mobileNavItems: Array<{ view: View; label: string; icon: typeof Home }> = 
 
 const titles: Record<View, string> = {
   dashboard: "Caja Familiar",
+  advisor: "Asesor",
   "registrar-ingreso": "Registrar ingreso",
   "registrar-gasto": "Registrar gasto",
   movimientos: "Movimientos",
@@ -342,6 +348,7 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
     await refreshAuthoritativeData(reason);
   };
   const canWriteDebt = isSupabaseConfigured && isBrowserOnline && Boolean(currentMember);
+  const advisorTodayKey = localDateString();
   const expected = useMemo(() => {
     const cashAccount = getActiveCashAccount(data.financialAccounts);
     return expectedCash(data.movements, cashAccount ? cashAccount.openingBalance : data.initialBalance, cashAccount?.id ?? null, data.creditCardEntries);
@@ -356,10 +363,10 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
         data.debtScheduleVersions,
         data.debtInstallments,
         data.debtEventInstallmentAllocations,
-        undefined,
+        advisorTodayKey,
         data.debtInstallmentCarriedAllocations ?? []
       ),
-    [data.debts, data.debtEvents, data.debtScheduleVersions, data.debtInstallments, data.debtEventInstallmentAllocations, data.debtInstallmentCarriedAllocations]
+    [data.debts, data.debtEvents, data.debtScheduleVersions, data.debtInstallments, data.debtEventInstallmentAllocations, data.debtInstallmentCarriedAllocations, advisorTodayKey]
   );
 
   const debtIntelligenceItems = useMemo(
@@ -374,6 +381,7 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
         creditCardProfiles: data.creditCardProfiles,
         creditCardEntries: data.creditCardEntries,
         creditCardStatements: data.creditCardStatements,
+        todayKey: advisorTodayKey,
       }),
     [
       data.debts,
@@ -385,6 +393,7 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
       data.creditCardProfiles,
       data.creditCardEntries,
       data.creditCardStatements,
+      advisorTodayKey,
     ]
   );
 
@@ -419,8 +428,10 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
         debts: data.debts,
         debtPlanningItems,
         debtEvents: data.debtEvents,
+        todayKey: advisorTodayKey,
+        horizonMonthCount: 4,
       }),
-    [data.recurringPayments, data.debts, debtPlanningItems, data.debtEvents]
+    [data.recurringPayments, data.debts, debtPlanningItems, data.debtEvents, advisorTodayKey]
   );
 
   const debtPlanningAlertSummary = useMemo(() => summarizeDebtPlanningAlerts(genericDebtPlanningItems), [genericDebtPlanningItems]);
@@ -436,8 +447,9 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
         creditCardProfiles: data.creditCardProfiles,
         creditCardEntries: data.creditCardEntries,
         creditCardStatements: data.creditCardStatements,
+        todayKey: advisorTodayKey,
       }),
-    [cardDebts, data.creditCardEntries, data.creditCardProfiles, data.creditCardStatements]
+    [cardDebts, data.creditCardEntries, data.creditCardProfiles, data.creditCardStatements, advisorTodayKey]
   );
   const urgentCreditCardAlerts = useMemo(
     () => selectUrgentCreditCardStatementAlertsForReminder(creditCardAlerts),
@@ -448,6 +460,39 @@ export default function App({ currentMember, onSignOut, onRetryRemoteAccess, rem
   const urgentPaymentLabel = urgentPaymentSummary.total === 1 ? "1 pago requiere atención" : `${urgentPaymentSummary.total} pagos requieren atención`;
   const combinedAttentionTotal = urgentPaymentSummary.total + debtPlanningAlertSummary.total + urgentCreditCardAlerts.length;
   const combinedAttentionLabel = `${combinedAttentionTotal} obligaciones que requieren atención`;
+
+  const financialAdvisorResult = useMemo(
+    () => buildFinancialAdvisorResult({
+      todayKey: advisorTodayKey,
+      initialBalance: data.initialBalance,
+      financialAccounts: data.financialAccounts,
+      movements: data.movements,
+      debts: data.debts,
+      debtEvents: data.debtEvents,
+      debtPlanningItems,
+      debtIntelligenceItems,
+      debtStrategies,
+      obligationProjection,
+      creditCardProfiles: data.creditCardProfiles,
+      creditCardEntries: data.creditCardEntries,
+      creditCardStatements: data.creditCardStatements,
+    }),
+    [
+      advisorTodayKey,
+      data.initialBalance,
+      data.financialAccounts,
+      data.movements,
+      data.debts,
+      data.debtEvents,
+      debtPlanningItems,
+      debtIntelligenceItems,
+      debtStrategies,
+      obligationProjection,
+      data.creditCardProfiles,
+      data.creditCardEntries,
+      data.creditCardStatements,
+    ]
+  );
 
   function openDebt(debtId: string) {
     const targetDebt = data.debts.find((d) => d.id === debtId);
@@ -1475,6 +1520,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
         </header>
 
         <div className="p-4 lg:p-8">
+          {view === "advisor" && <FinancialAdvisorPanel result={financialAdvisorResult} onNavigate={navigate} />}
           {view === "dashboard" && (
             <Dashboard
               movements={data.movements}
@@ -1758,7 +1804,7 @@ async function saveInitialBalance(value: number): Promise<boolean> {
           onClick={() => setMoreOpen(true)}
           aria-label={`Más opciones${combinedAttentionTotal > 0 ? `, ${combinedAttentionLabel}` : ""}`}
           className={`relative flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-1 text-xs font-bold transition sm:text-sm ${
-             moreOpen || ["pagos", "deudas", "tarjetas", "reportes", "categorias", "cuentas", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
+             moreOpen || ["advisor", "pagos", "deudas", "tarjetas", "reportes", "categorias", "cuentas", "saldo-inicial"].includes(view) ? "text-blue-700" : "text-slate-600 hover:bg-slate-50"
           }`}
         >
           <MoreHorizontal className="h-6 w-6" />
@@ -1781,6 +1827,9 @@ async function saveInitialBalance(value: number): Promise<boolean> {
               </button>
             </div>
             <div className="grid grid-cols-2 gap-3">
+              <button type="button" onClick={() => navigate("advisor")} className="min-h-14 rounded-2xl bg-blue-50 px-4 text-left text-base font-bold text-blue-900">
+                Asesor
+              </button>
               <button
                 type="button"
                 onClick={() => navigate("pagos")}
