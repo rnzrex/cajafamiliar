@@ -12,10 +12,9 @@
   obligation projection, credit-card statement, account balance, date, and
   principal-prepayment engines. Add only pure advisor/question read-models and
   a responsive read-only panel; unknown values remain unknown.
-- Branch state: implementation commits `c8e7a946232baad118be96e223c658f269c4b0b4`
-  and `072b09033904a6856ba6448f713cb9c609ec6c44` are pushed; PR #80 is
-  OPEN/DRAFT against `main`. The visual-gate hotfix is currently local and
-  must be committed/pushed to the same branch.
+- Branch state: implementation commits `c8e7a946232baad118be96e223c658f269c4b0b4`,
+  `072b09033904a6856ba6448f713cb9c609ec6c44`, and hotfix `9aec50d1310fcd8f3d35bf5ca571ed14d2ca4be2`
+  are pushed; PR #80 is OPEN/DRAFT against `main`.
 - Hotfix completed in `src/utils/financialAdvisor.ts` and tests: explicit
   overdue/due-today/immediate/card/strategy ordering, human date and money
   copy, `Vencidas` label, and card statements included once in applicable
@@ -28,11 +27,10 @@
   `npm run typecheck:api`, `npx tsc -b --pretty false`, `npm run build`, and
   `git diff --check` pass. Build emitted only existing dynamic-import and
   large-chunk warnings.
-- Required remaining gate: commit/push the hotfix, confirm PR #80 remains
-  Draft, wait for a new Preview matching the final SHA, and verify READY/HTTP
-  200/no runtime errors. The connected browser still requires user login for
-  manual Preview Asesor desktop/mobile acceptance; do not request or store
-  credentials here.
+- Required remaining gate: confirm the final metadata checkpoint is pushed,
+  verify its automatic Preview matches the final SHA and is READY/HTTP 200 with
+  no runtime errors, then complete manual Preview Asesor desktop/mobile
+  acceptance after user authentication; do not request or store credentials.
 - Production status: untouched. No SQL, migrations, financial writes, test
   data, external AI, secrets, Vercel env writes, merge, or Production deploy.
 
