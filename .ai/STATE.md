@@ -3,7 +3,8 @@
 ## Current Active Handoff — Financial Advisor 24/7 V1 Visual Gate Hotfix — 2026-09-01
 
 - Objective: implement and publish the read-only deterministic `ASESOR` view
-  on `feat/financial-advisor-v1`, based exactly on `388d3e679ca91efa1a6bcc3d09bcb792dc848a8f`.
+  and the extra-cash advisory UX hotfix on `feat/financial-advisor-v1`, based
+  exactly on `388d3e679ca91efa1a6bcc3d09bcb792dc848a8f`.
 - Constraints: no SQL, migrations, schema/RLS, Supabase Production writes,
   debts, payments, movements, prepayments, card/account changes, real financial
   or document data, PII, external AI/API keys, Vercel env writes, Production
@@ -14,7 +15,8 @@
   a responsive read-only panel; unknown values remain unknown.
 - Branch state: implementation commits `c8e7a946232baad118be96e223c658f269c4b0b4`,
   `072b09033904a6856ba6448f713cb9c609ec6c44`, hotfix
-  `9aec50d1310fcd8f3d35bf5ca571ed14d2ca4be2`, and metadata checkpoint
+  `9aec50d1310fcd8f3d35bf5ca571ed14d2ca4be2`, extra-cash hotfix
+  `8814c20eca05e51e92204d226bbb4a41d57fdac6`, and metadata checkpoint
   `4b8ceaae31058b32655301bf38766845bf23bcdc` are pushed; PR #80 is
   OPEN/DRAFT against `main`.
 - Hotfix completed in `src/utils/financialAdvisor.ts` and tests: explicit
@@ -24,15 +26,22 @@
 - Hotfix completed in `src/components/FinancialAdvisorPanel.tsx` and its test:
   internal recommendation enums are translated to human labels and are not
   exposed in visible recommendation metadata.
-- Validation so far: full `npm test -- --maxWorkers=1` (83 files, 1,157 tests),
-  hotfix suite (3 files, 25 tests), directed suite (8 files, 212 tests),
+- Extra-cash UX hotfix completed in `src/utils/financialAdvisor.ts`,
+  `src/utils/financialAdvisorQuestions.ts`, and
+  `src/components/FinancialAdvisorPanel.tsx`: scenario exposes liquidity and
+  shortfall before/after, exact coverage, surplus-only simulation, unknown
+  requirement fail-closed status, and shared panel/question copy.
+- Functional hotfix commit `8814c20eca05e51e92204d226bbb4a41d57fdac6` is
+  pushed to origin; PR #80 remains OPEN/DRAFT.
+- Validation so far: full `npm test -- --maxWorkers=1` (83 files, 1,166 tests),
+  extra-cash directed suite (3 files, 34 tests),
   `npm run typecheck:api`, `npx tsc -b --pretty false`, `npm run build`, and
   `git diff --check` pass. Build emitted only existing dynamic-import and
   large-chunk warnings.
-- Release gate completed for the code/deployment checkpoint: automatic Preview
-  `dpl_4V91Nb2ZzSbuKUrL4gqxBAXiuL9n`
-  (`https://cajafamiliar-cglqujv5k-renzorex.vercel.app/`) is READY, HTTP 200,
-  matches SHA `4b8ceaae31058b32655301bf38766845bf23bcdc`, and has no preview
+- Release gate completed for the functional code checkpoint: automatic Preview
+  `dpl_BgXT6VD1fYWq1sCxt8G6pLU6dLDQ`
+  (`https://cajafamiliar-1d7qmvm2s-renzorex.vercel.app/`) is READY, HTTP 200,
+  matches functional SHA `8814c20eca05e51e92204d226bbb4a41d57fdac6`, and has no preview
   error/fatal runtime logs. The Preview app remains authentication-protected;
   manual authenticated Asesor acceptance is the next user-facing visual gate.
   Do not request or store credentials.
