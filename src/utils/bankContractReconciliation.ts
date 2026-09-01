@@ -12,6 +12,26 @@ export interface BankScheduleRowForReconciliation {
   remainingPrincipalBalance?: number | null;
 }
 
+export interface BankOpeningPrincipalScheduleRow {
+  contractualInstallmentNumber: number;
+  principal: number | null;
+  reportedBalance?: number | null;
+}
+
+export type BankOpeningPrincipalSource = "reported_balance" | "principal_derivation" | "unavailable";
+
+export interface BankOpeningPrincipalResult {
+  amount: number | null;
+  source: BankOpeningPrincipalSource;
+}
+
+export interface BankScheduleContinuityIssue {
+  contractualInstallmentNumber: number;
+  expectedReportedBalance: number;
+  actualReportedBalance: number;
+  difference: number;
+}
+
 export interface BankReconciliationControls {
   originalPrincipal?: number | null;
   expectedInstallmentCount?: number | null;
@@ -232,6 +252,73 @@ export function classifyReportedBalance(input: ReportedBalanceClassificationInpu
     differences,
     warnings,
   };
+}
+
+/**
+ * Uses the exact contractual row K as the cut-off balance for an existing
+ * debt. The row is deliberately located by its contractual number rather than
+ * by array index because imports may contain a pending-only range.
+ */
+export function deriveOpeningPrincipalFromOfficialSchedule(input: {
+  originalPrincipal: number | null | undefined;
+  rows: BankOpeningPrincipalScheduleRow[];
+  lastPaidContractualInstallment: number | null | undefined;
+}): BankOpeningPrincipalResult {
+  const lastPaid = input.lastPaidContractualInstallment;
+  if (lastPaid == null || !Number.isInteger(lastPaid) || lastPaid < 1) return { amount: null, source: "unavailable" };
+
+  const cutOffRow = input.rows.find((row) => row.contractualInstallmentNumber === lastPaid);
+  if (cutOffRow?.reportedBalance != null && Number.isFinite(cutOffRow.reportedBalance) && cutOffRow.reportedBalance >= 0) {
+    return { amount: round2(cutOffRow.reportedBalance), source: "reported_balance" };
+  }
+
+  if (input.originalPrincipal == null || !Number.isFinite(input.originalPrincipal) || input.originalPrincipal < 0) {
+    return { amount: null, source: "unavailable" };
+  }
+
+  const principalByInstallment = new Map(input.rows.map((row) => [row.contractualInstallmentNumber, row.principal]));
+  const paidPrincipal: number[] = [];
+  for (let installmentNumber = 1; installmentNumber <= lastPaid; installmentNumber++) {
+    const principal = principalByInstallment.get(installmentNumber);
+    if (principal == null || !Number.isFinite(principal)) return { amount: null, source: "unavailable" };
+    paidPrincipal.push(principal);
+  }
+  return {
+    amount: round2(Math.max(0, input.originalPrincipal - paidPrincipal.reduce((sum, principal) => sum + principal, 0))),
+    source: "principal_derivation",
+  };
+}
+
+/**
+ * Finds continuity anomalies without rewriting the values printed by the
+ * bank. A missing predecessor or missing cell is left for the completeness
+ * gate; this helper only classifies comparable numeric rows.
+ */
+export function detectReportedBalanceContinuityIssues(input: {
+  originalPrincipal?: number | null;
+  rows: BankOpeningPrincipalScheduleRow[];
+  tolerance?: number;
+}): BankScheduleContinuityIssue[] {
+  const tolerance = input.tolerance ?? 0.02;
+  const rowsByNumber = new Map(input.rows.map((row) => [row.contractualInstallmentNumber, row]));
+  const issues: BankScheduleContinuityIssue[] = [];
+  for (const row of input.rows) {
+    const previousBalance = row.contractualInstallmentNumber === 1
+      ? input.originalPrincipal
+      : rowsByNumber.get(row.contractualInstallmentNumber - 1)?.reportedBalance;
+    if (previousBalance == null || !Number.isFinite(previousBalance) || row.principal == null || !Number.isFinite(row.principal) || row.reportedBalance == null || !Number.isFinite(row.reportedBalance)) continue;
+    const expectedReportedBalance = round2(previousBalance - row.principal);
+    const difference = round2(row.reportedBalance - expectedReportedBalance);
+    if (Math.abs(difference) > tolerance) {
+      issues.push({
+        contractualInstallmentNumber: row.contractualInstallmentNumber,
+        expectedReportedBalance,
+        actualReportedBalance: round2(row.reportedBalance),
+        difference,
+      });
+    }
+  }
+  return issues;
 }
 
 export function deriveCurrentPrincipalBalance(

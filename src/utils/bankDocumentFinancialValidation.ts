@@ -1,4 +1,4 @@
-import { classifyReportedBalance, reconcileBankContractSchedule } from "./bankContractReconciliation.js";
+import { classifyReportedBalance, detectReportedBalanceContinuityIssues, reconcileBankContractSchedule, type BankScheduleContinuityIssue } from "./bankContractReconciliation.js";
 import { reconstructBankContractSchedule, scheduleSourceForReconstruction } from "./bankContractReconstruction.js";
 import type { BankDocumentExtraction } from "./bankDocumentExtraction.js";
 
@@ -6,6 +6,7 @@ export interface BankFinancialValidationResult {
   reconciliation: ReturnType<typeof reconcileBankContractSchedule> | null;
   reconstruction: ReturnType<typeof reconstructBankContractSchedule> | null;
   reportedBalanceClassification: ReturnType<typeof classifyReportedBalance> | null;
+  continuityIssues: BankScheduleContinuityIssue[];
   scheduleSource: "contractual" | "reconstructed" | "estimated";
 }
 
@@ -52,10 +53,14 @@ export function financialValidation(extraction: BankDocumentExtraction): BankFin
           knownRegularPayment: extraction.regularInstallmentAmount,
           knownFinalPayment: extraction.finalInstallmentAmount,
         });
-    const scheduleSource = reconciliation.status === "exact" || reconciliation.status === "within_tolerance"
-      ? "contractual" as const
-      : "estimated" as const;
-    return { reconciliation, reconstruction: null, reportedBalanceClassification: null, scheduleSource };
+    const continuityIssues = detectReportedBalanceContinuityIssues({
+      originalPrincipal: extraction.originalPrincipal ?? extraction.financedAmount,
+      rows,
+    });
+    // Authority comes from provenance, not from whether the bank's printed
+    // arithmetic agrees with its aggregate controls. An official imported
+    // table remains contractual even when reconciliation is inconsistent.
+    return { reconciliation, reconstruction: null, reportedBalanceClassification: null, continuityIssues, scheduleSource: "contractual" };
   }
 
   const originalPrincipal = extraction.financedAmount ?? extraction.originalPrincipal;
@@ -102,8 +107,8 @@ export function financialValidation(extraction: BankDocumentExtraction): BankFin
       } else if (reportedBalanceClassification && extraction.reportedBalance.inferredKind && extraction.reportedBalance.inferredKind !== reportedBalanceClassification.kind) {
         extraction.extractionWarnings.push("La etiqueta del saldo reportado no coincide con la clasificación matemática; confirma su significado.");
       }
-      return { reconciliation, reconstruction, reportedBalanceClassification, scheduleSource: scheduleSourceForReconstruction(reconciliation.status, false) };
+      return { reconciliation, reconstruction, reportedBalanceClassification, continuityIssues: [], scheduleSource: scheduleSourceForReconstruction(reconciliation.status, false) };
     }
   }
-  return { reconciliation: null, reconstruction: null, reportedBalanceClassification: null, scheduleSource: "estimated" as const };
+  return { reconciliation: null, reconstruction: null, reportedBalanceClassification: null, continuityIssues: [], scheduleSource: "estimated" as const };
 }

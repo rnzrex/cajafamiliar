@@ -27,7 +27,8 @@ import { reviewFieldStatus } from "../utils/bankDocumentExtraction";
 import type { BankFinancialValidationResult } from "../utils/bankDocumentFinancialValidation";
 import { evaluateBankDocumentCompleteness, type BankDocumentCompletenessResult } from "../utils/bankDocumentCompleteness";
 import type { BankInterestDayCountBasis, BankDueDateAdjustmentRule, BankInstallmentTotalMode, BankReportedBalanceKind } from "../types";
-import { deriveCurrentPrincipalBalance } from "../utils/bankContractReconciliation";
+import { deriveOpeningPrincipalFromOfficialSchedule } from "../utils/bankContractReconciliation";
+import { bankHistoricalAnomalyWarning, compactBankDocumentWarnings, evaluateBankDocumentContinuation } from "../utils/bankDocumentContinuation";
 import { detectFrequencyFromDates } from "../utils/debtScheduleParser";
 
 interface DebtFormProps {
@@ -51,7 +52,7 @@ type BankBalanceInformation =
   | "schedule_only"
   | "unknown";
 
-type BankOpeningBalanceSource = "user_principal" | "schedule_derived" | "imported_principal" | "none";
+type BankOpeningBalanceSource = "user_principal" | "schedule_derived" | "document_reported_balance" | "imported_principal" | "none";
 type BankLoanEntryPath = "external_ai" | "integrated_ai" | "reconstruction" | "manual";
 type BankDocumentImportSource = "external_ai" | "integrated_ai";
 type BankScheduleEntryProvenance = "external_ai" | "integrated_ai" | "spreadsheet" | "manual" | null;
@@ -154,6 +155,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     provider: string;
     policyReference: string;
     isRequired: boolean;
+    totalAmount: string;
     notes: string;
   }>>([]);
   const [newInsuranceType, setNewInsuranceType] = useState<DebtInsuranceType>("credit_life");
@@ -227,44 +229,46 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     && Number.isInteger(Number(plannedInstallmentCount))
     && Number(plannedInstallmentCount) > 0
     && installments.at(-1)?.contractualInstallmentNumber === Number(plannedInstallmentCount);
-  const hasKnownAmount = (value: string): boolean => value.trim() !== "" && Number.isFinite(Number(value));
+  const openingPrincipalDerivation = deriveOpeningPrincipalFromOfficialSchedule({
+    originalPrincipal: Number.isFinite(balanceOriginal) && balanceOriginal >= 0 ? balanceOriginal : null,
+    rows: installments.map((row) => ({
+      contractualInstallmentNumber: row.contractualInstallmentNumber,
+      principal: row.expectedPrincipal.trim() === "" ? null : Number(row.expectedPrincipal),
+      reportedBalance: row.reportedBalance.trim() === "" ? null : Number(row.reportedBalance),
+    })),
+    lastPaidContractualInstallment: onboardingMode === "EXISTING_DEBT" ? paidBeforeForExisting : null,
+  });
   const canDeriveOpeningBalance = debtKind === "bank_loan"
     && onboardingMode === "EXISTING_DEBT"
-    && Number.isFinite(balanceOriginal)
-    && balanceOriginal > 0
-    && Number.isInteger(paidBeforeForExisting)
-    && (paidBeforeForExisting ?? 0) >= 1
-    && installments.length >= (paidBeforeForExisting ?? 0)
-    && installments.slice(0, paidBeforeForExisting ?? 0).every((row, index) => row.contractualInstallmentNumber === index + 1 && hasKnownAmount(row.expectedPrincipal));
-  const derivedOpeningBalance = canDeriveOpeningBalance
-    ? deriveCurrentPrincipalBalance(
-        balanceOriginal,
-        installments.slice(0, paidBeforeForExisting ?? 0).map((row) => ({ principal: Number(row.expectedPrincipal) })),
-        paidBeforeForExisting ?? 0,
-      )
-    : null;
+    && openingPrincipalDerivation.amount != null
+    && Number.isFinite(openingPrincipalDerivation.amount)
+    && openingPrincipalDerivation.amount >= 0;
+  const derivedOpeningBalance = canDeriveOpeningBalance ? openingPrincipalDerivation.amount : null;
   const explicitOpeningPrincipalBalance = openingPrincipalBalance.trim() ? Number(openingPrincipalBalance) : null;
-  const effectiveOpeningPrincipalBalance = openingBalanceSource === "schedule_derived"
+  const effectiveOpeningPrincipalBalance = openingBalanceSource === "schedule_derived" || openingBalanceSource === "document_reported_balance"
     ? derivedOpeningBalance
     : openingBalanceSource === "user_principal" || openingBalanceSource === "imported_principal"
       ? explicitOpeningPrincipalBalance
       : null;
-  const canOfferDerivedOpeningBalance = openingBalanceSource === "none"
-    && canDeriveOpeningBalance
-    && derivedOpeningBalance != null
-    && Number.isFinite(derivedOpeningBalance)
-    && derivedOpeningBalance >= 0;
-
   useEffect(() => {
-    if (openingBalanceSource !== "schedule_derived") return;
-    if (derivedOpeningBalance != null && Number.isFinite(derivedOpeningBalance) && derivedOpeningBalance >= 0) {
-      const derivedValue = String(derivedOpeningBalance);
+    const canAutoApplyDocumentBalance = debtKind === "bank_loan"
+      && onboardingMode === "EXISTING_DEBT"
+      && openingPrincipalDerivation.amount != null
+      && Number.isFinite(openingPrincipalDerivation.amount)
+      && openingPrincipalDerivation.amount >= 0
+      && openingBalanceSource !== "user_principal";
+    if (canAutoApplyDocumentBalance) {
+      const nextSource = openingPrincipalDerivation.source === "reported_balance" ? "document_reported_balance" : "schedule_derived";
+      const derivedValue = String(openingPrincipalDerivation.amount);
       if (openingPrincipalBalance !== derivedValue) setOpeningPrincipalBalance(derivedValue);
+      if (openingBalanceSource !== nextSource) setOpeningBalanceSource(nextSource);
       return;
     }
-    setOpeningPrincipalBalance("");
-    setOpeningBalanceSource("none");
-  }, [derivedOpeningBalance, openingBalanceSource, openingPrincipalBalance]);
+    if (openingBalanceSource === "schedule_derived" || openingBalanceSource === "document_reported_balance") {
+      setOpeningPrincipalBalance("");
+      setOpeningBalanceSource("none");
+    }
+  }, [bankTermForValidation, debtKind, onboardingMode, openingBalanceSource, openingPrincipalBalance, openingPrincipalDerivation.amount, openingPrincipalDerivation.source]);
   const documentImportCompleteness: BankDocumentCompletenessResult | null = documentImportReady && documentImportExtraction
     ? documentImportValidation
       ? evaluateBankDocumentCompleteness(documentImportExtraction, documentImportValidation, {
@@ -394,9 +398,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         rateBasis: "per_installment",
         ratePercent: "",
         fixedAmount: "",
+        totalAmount: "",
         provider: "",
         policyReference: "",
-        isRequired: true,
+        isRequired: false,
         notes: "",
       },
     ]);
@@ -615,16 +620,20 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setDocumentImportExtraction(extraction);
     setDocumentImportValidation(result);
     setDocumentImportReconciliation(result.reconciliation?.status ?? null);
-    setDocumentImportWarnings([...new Set([
+    setDocumentImportWarnings(compactBankDocumentWarnings([
       ...extraction.extractionWarnings,
       ...(result.reconciliation?.warnings ?? []),
       ...(result.reconstruction?.warnings ?? []),
+      ...(result.continuityIssues.length > 0 ? ["El cronograma contractual contiene una diferencia aritmética que debe revisarse contra el historial real."] : []),
       ...(extraction.reportedBalance.inferredKind && extraction.reportedBalance.inferredKind !== "principal_balance"
         ? ["El saldo reportado por el banco no se usará automáticamente como capital pendiente."]
         : []),
-    ])]);
+    ]));
 
-    if (extraction.lenderName) setCreditorName(extraction.lenderName);
+    if (extraction.lenderName) {
+      setCreditorName(extraction.lenderName);
+      if (!name.trim()) setName(`Préstamo ${extraction.lenderName}`);
+    }
     if (extraction.contractNumber) setContractNumber(extraction.contractNumber);
     if (extraction.currencyCode) setCurrencyCode(extraction.currencyCode);
     if (extraction.contractDate) setOriginDate(extraction.contractDate);
@@ -638,7 +647,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     if (extraction.ordinaryDueDay != null) setMonthlyDueDay(String(extraction.ordinaryDueDay));
     if (extraction.firstDueDate && (importedRows[0]?.contractualInstallmentNumber ?? 1) === 1) setFirstDueDate(extraction.firstDueDate);
     if (importedRows.length > 0) {
-      setInstallments(applyBankLoanBaselineForCurrentMode(importedRows, extraction.termInstallments));
+      setInstallments(applyBankLoanBaselineForCurrentMode(importedRows, extraction.termInstallments, onboardingMode, paidBeforeForExisting));
       setPaymentFrequency(detectFrequencyFromDates(importedRows.map((row) => row.dueDate)));
       setInstallmentAmountMode(importedRows.slice(0, -1).every((row) => row.expectedAmount === importedRows[0]?.expectedAmount) ? "fixed" : "variable");
     }
@@ -646,9 +655,9 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     setScheduleSource(result.scheduleSource);
     setRepaymentStructure("fixed_schedule");
     setInterestCalculationMode("contract_schedule");
-    setInterestDayCountBasis(inferred?.dayCountBasis ?? null);
-    setDueDateAdjustmentRule(inferred?.dueDateAdjustmentRule ?? "unknown");
-    setInstallmentTotalMode(inferred?.installmentTotalMode ?? "unknown");
+    setInterestDayCountBasis(extraction.dayCountBasis ?? inferred?.dayCountBasis ?? null);
+    setDueDateAdjustmentRule(extraction.dueDateAdjustmentRule ?? inferred?.dueDateAdjustmentRule ?? "unknown");
+    setInstallmentTotalMode(extraction.installmentTotalMode ?? inferred?.installmentTotalMode ?? "unknown");
     if (extraction.reportedBalance.inferredKind) {
       setReportedBalanceKind(extraction.reportedBalance.inferredKind);
       setBankBalanceInformation(extraction.reportedBalance.inferredKind);
@@ -657,7 +666,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     }
     if (extraction.reportedBalance.amount != null) setReportedBalanceAmount(String(extraction.reportedBalance.amount));
 
-    if (extraction.reportedBalance.inferredKind === "principal_balance" && extraction.reportedBalance.amount != null) {
+    if (onboardingMode === "NEW_DEBT" && extraction.reportedBalance.inferredKind === "principal_balance" && extraction.reportedBalance.amount != null) {
       setOpeningPrincipalBalance(String(extraction.reportedBalance.amount));
       setOpeningBalanceSource("imported_principal");
     } else if (onboardingMode === "NEW_DEBT" && extraction.financedAmount != null) {
@@ -678,12 +687,15 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         label: insurance.label,
         pricingMode: insurance.pricingMode,
         ratePercent: insurance.ratePercent == null ? "" : String(insurance.ratePercent),
-        fixedAmount: insurance.fixedAmount != null ? String(insurance.fixedAmount) : insurance.totalAmount != null ? String(insurance.totalAmount) : "",
-        rateBasis: insurance.totalAmount != null ? "total_credit_unknown" : "per_installment",
+        fixedAmount: insurance.pricingMode === "fixed_amount" && insurance.fixedAmount != null ? String(insurance.fixedAmount) : "",
+        totalAmount: insurance.totalAmount == null ? "" : String(insurance.totalAmount),
+        rateBasis: insurance.pricingMode === "fixed_amount" && insurance.fixedAmount == null && insurance.totalAmount != null ? "total_credit_unknown" : "per_installment",
         provider: "",
         policyReference: "",
-        isRequired: true,
-        notes: "Importado para confirmación; verificar contra el contrato.",
+        isRequired: insurance.isRequired === true,
+        notes: insurance.isRequired == null
+          ? "Importado para confirmación; obligatoriedad no confirmada."
+          : "Importado para confirmación; verificar contra el contrato.",
       })));
     }
   };
@@ -771,11 +783,19 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
         setToast({ message: "La reconstrucción no produjo un cronograma revisable.", type: "error" });
         return false;
       }
-      if (documentImportReady && documentImportReconciliation === "inconsistent") {
+      const documentContinuation = documentImportReady && documentImportExtraction && documentImportValidation
+        ? evaluateBankDocumentContinuation({
+            extraction: documentImportExtraction,
+            validation: documentImportValidation,
+            onboardingMode,
+            lastPaidContractualInstallment: paidBeforeForExisting,
+          })
+        : null;
+      if (documentImportReady && documentImportReconciliation === "inconsistent" && !documentContinuation?.canContinue) {
         setToast({ message: "La importación tiene conflictos matemáticos. Corrige o confirma los datos antes de guardar.", type: "error" });
         return false;
       }
-      if (documentImportReady && documentImportExtraction?.fieldConflicts.length) {
+      if (documentImportReady && documentImportExtraction?.fieldConflicts.length && (documentContinuation == null || documentContinuation.blockingConflicts.length > 0)) {
         setToast({ message: "Hay datos contradictorios entre los documentos. Resuelve los conflictos antes de guardar.", type: "error" });
         return false;
       }
@@ -933,8 +953,9 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                    pricingMode: "unknown" as DebtInsurancePricingMode,
                    ratePercent: null,
                     fixedAmount: null,
-                    rateBasis: "per_installment" as DebtInsuranceRateBasis,
-                    provider: null,
+                   rateBasis: "per_installment" as DebtInsuranceRateBasis,
+                   totalAmount: "",
+                   provider: null,
                    policyReference: null,
                    isRequired: true,
                    notes: "Forma de cobertura definida por el usuario; costo pendiente de confirmar.",
@@ -1056,13 +1077,6 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       setScheduleSource("contractual");
       setInterestCalculationMode("contract_schedule");
     }
-  };
-
-  const useDerivedOpeningBalance = () => {
-    if (!canOfferDerivedOpeningBalance || derivedOpeningBalance == null) return;
-    const derivedValue = String(derivedOpeningBalance);
-    setOpeningPrincipalBalance(derivedValue);
-    setOpeningBalanceSource("schedule_derived");
   };
 
   return (
@@ -1698,22 +1712,15 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                         <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
                           <div className="relative flex min-w-0 flex-1 items-center rounded-xl border border-slate-300 bg-white focus-within:border-blue-600">
                             <span className="select-none pl-3 text-sm font-bold text-slate-500">{currencySymbol}</span>
-                            <input type="number" min="0" step="0.01" required={onboardingMode !== "EXISTING_DEBT" || bankBalanceInformation === "principal_balance" || !canDeriveOpeningBalance} value={openingBalanceSource === "schedule_derived" && derivedOpeningBalance != null ? String(derivedOpeningBalance) : openingPrincipalBalance} onChange={(e) => { setOpeningPrincipalBalance(e.target.value); setOpeningBalanceSource(e.target.value.trim() ? "user_principal" : "none"); }} placeholder="Ej. 7300" className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none" />
+                            <input type="number" min="0" step="0.01" required={onboardingMode !== "EXISTING_DEBT" || bankBalanceInformation === "principal_balance" || !canDeriveOpeningBalance} value={(openingBalanceSource === "schedule_derived" || openingBalanceSource === "document_reported_balance") && derivedOpeningBalance != null ? String(derivedOpeningBalance) : openingPrincipalBalance} onChange={(e) => { setOpeningPrincipalBalance(e.target.value); setOpeningBalanceSource(e.target.value.trim() ? "user_principal" : "none"); }} placeholder="Ej. 7300" className="w-full bg-transparent px-3 py-2.5 text-slate-900 focus:outline-none" />
                           </div>
-                          {canOfferDerivedOpeningBalance && (
-                            <button
-                              type="button"
-                              onClick={useDerivedOpeningBalance}
-                              className="rounded-xl border border-amber-300 bg-white px-3 py-2.5 text-xs font-black uppercase tracking-wide text-amber-900 transition hover:bg-amber-100"
-                            >
-                              CALCULAR
-                            </button>
-                          )}
                         </div>
                         <p className="mt-1 text-xs text-slate-600">{derivedOpeningBalance != null
-                          ? openingBalanceSource === "schedule_derived"
-                            ? `Calculado con el cronograma: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.`
-                            : `Podemos calcularlo con tu cronograma: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.`
+                          ? openingBalanceSource === "document_reported_balance"
+                            ? `Saldo contractual aplicado automáticamente: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.`
+                            : openingBalanceSource === "schedule_derived"
+                              ? `Saldo derivado automáticamente con el cronograma: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.`
+                              : `Saldo disponible en el cronograma: ${currencySymbol} ${derivedOpeningBalance.toFixed(2)}.`
                           : "Este es el capital que todavía debes hoy, no el monto original."}</p>
                       </div>
                       {onboardingMode === "EXISTING_DEBT" && (bankBalanceInformation === "schedule_financial_balance" || bankBalanceInformation === "total_remaining_payments") && (
@@ -1745,10 +1752,10 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                               const paidBefore = rawValue === "" ? null : Number(rawValue);
                               if (Number.isInteger(paidBefore) && (paidBefore ?? 0) >= 1) {
                                 const knownTotal = plannedInstallmentCount.trim() ? Number(plannedInstallmentCount) : null;
-                                setInstallments((rows) => applyBankLoanBaselineForCurrentMode(rows, knownTotal));
+                                setInstallments((rows) => applyBankLoanBaselineForCurrentMode(rows, knownTotal, "EXISTING_DEBT", paidBefore));
                               } else if (rawValue === "") {
                                 setInstallments((rows) => rows.map((row) => ({ ...row, isPaidBeforeTracking: false })));
-                                if (openingBalanceSource === "schedule_derived") {
+                                if (openingBalanceSource === "schedule_derived" || openingBalanceSource === "document_reported_balance") {
                                   setOpeningPrincipalBalance("");
                                   setOpeningBalanceSource("none");
                                 }
@@ -1889,7 +1896,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                             </div>
                             <label className="flex items-center gap-2 pt-5 text-xs font-semibold text-slate-700">
                               <input type="checkbox" checked={insurance.isRequired} onChange={(e) => { const copy = [...insurances]; copy[index] = { ...copy[index], isRequired: e.target.checked }; setInsurances(copy); }} />
-                              Seguro requerido
+                              Seguro requerido (confirmado)
                             </label>
                             <div className="flex items-end justify-end gap-2">
                               <input type="text" placeholder="Notas" value={insurance.notes} onChange={(e) => { const copy = [...insurances]; copy[index] = { ...copy[index], notes: e.target.value }; setInsurances(copy); }} className="w-full rounded-lg border border-slate-300 px-2 py-1.5 text-xs" />
@@ -2934,7 +2941,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   )}
                   <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Seguros</p>
-                  {insurances.length === 0 ? <p className="mt-1 text-slate-600">Sin desgravamen ni seguros definidos.</p> : <ul className="mt-1 space-y-1 text-slate-700">{insurances.map((insurance, index) => <li key={index}>{insurance.label} · {insurance.pricingMode === "fixed_amount" ? insuranceBasisLabel(insurance.rateBasis) : insurance.pricingMode === "percent_outstanding_balance" ? "% sobre saldo pendiente" : insurance.pricingMode === "percent_original_principal" ? "% sobre principal original" : "Según cronograma / por confirmar"}{insurance.pricingMode === "fixed_amount" && insurance.rateBasis !== "per_installment" && insurance.fixedAmount ? ` · Seguro contractual total registrado: ${currencySymbol} ${Number(insurance.fixedAmount).toFixed(2)}` : ""} {insurance.provider ? `· ${insurance.provider}` : ""}</li>)}</ul>}
+                  {insurances.length === 0 ? <p className="mt-1 text-slate-600">Sin desgravamen ni seguros definidos.</p> : <ul className="mt-1 space-y-1 text-slate-700">{insurances.map((insurance, index) => <li key={index}>{insurance.label} · {insurance.pricingMode === "fixed_amount" ? insuranceBasisLabel(insurance.rateBasis) : insurance.pricingMode === "percent_outstanding_balance" ? `% sobre saldo pendiente${insurance.ratePercent ? ` (${insurance.ratePercent}%)` : ""}` : insurance.pricingMode === "percent_original_principal" ? `% sobre principal original${insurance.ratePercent ? ` (${insurance.ratePercent}%)` : ""}` : "Según cronograma / por confirmar"}{insurance.pricingMode === "fixed_amount" && insurance.rateBasis !== "per_installment" && insurance.fixedAmount ? ` · Seguro contractual total registrado: ${currencySymbol} ${Number(insurance.fixedAmount).toFixed(2)}` : ""}{insurance.totalAmount ? ` · Total documental: ${currencySymbol} ${Number(insurance.totalAmount).toFixed(2)}` : ""}{insurance.isRequired ? " · Obligatorio confirmado" : " · Obligatoriedad no confirmada"} {insurance.provider ? `· ${insurance.provider}` : ""}</li>)}</ul>}
                 </div>
                 {scheduleSource === "contractual" ? (
                   <div className="grid grid-cols-2 gap-3 rounded-xl bg-emerald-50 p-3 text-emerald-950 sm:grid-cols-5">

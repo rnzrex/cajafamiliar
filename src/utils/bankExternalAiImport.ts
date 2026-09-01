@@ -53,18 +53,24 @@ REGLAS OBLIGATORIAS:
 2. Si un dato no aparece o no puede determinarse con seguridad, usa null.
 3. null NO significa cero.
 4. Usa 0 solamente cuando el documento muestre explícitamente cero o cuando el valor cero sea inequívoco.
-5. Conserva TODAS las filas oficiales del cronograma. No fabriques filas si no existen.
-6. No confundas TEA, TCEA, TEM, tasa nominal, tasa efectiva y tasa periódica.
-7. No utilices TCEA automáticamente como tasa para calcular intereses.
-8. No asumas que una columna llamada "Saldo" representa capital pendiente.
-9. Si existe un saldo, clasifícalo solamente con evidencia suficiente como principal_balance, schedule_financial_balance, total_remaining_payments o unknown.
-10. Si el contrato muestra un seguro contractual total y las cuotas muestran seguros variables, NO conviertas el seguro contractual total en seguro por cuota.
-11. Si varias páginas o documentos muestran valores contradictorios, NO elijas uno silenciosamente. Registra el conflicto en fieldConflicts.
-12. No incluyas información personal que Caja Familiar no necesita: nombre del titular, DNI, dirección, teléfono, correo, número de cuenta, número de tarjeta, número de crédito, número de préstamo u otros identificadores personales.
-13. Todas las fechas deben usar YYYY-MM-DD.
-14. Todos los importes y porcentajes deben ser números JSON. No incluyas S/, $, %, separadores de miles ni texto dentro de números.
-15. Evidence debe contener únicamente referencias breves al documento. No incluyas chain-of-thought ni razonamiento interno.
-16. Devuelve ÚNICAMENTE el JSON solicitado, sin introducción, conclusión, comentarios adicionales ni Markdown cuando sea posible.
+5. La tabla final o definitiva del cronograma tiene autoridad operativa sobre la solicitud preliminar para fechas de vencimiento, cuota, plazo y saldos programados. Si el cronograma definitivo resuelve inequívocamente un día de pago preliminar distinto, no registres ese contraste como fieldConflict bloqueante.
+6. Conserva TODAS las filas oficiales del cronograma. No fabriques filas si no existen.
+7. Una fila NUM 0 de desembolso o apertura es evidencia de apertura, NO es una cuota ordinaria y no debe entrar en schedule 1..N.
+8. No confundas TEA, TCEA, TEM, tasa nominal, tasa efectiva y tasa periódica.
+9. No utilices TCEA automáticamente como tasa para calcular intereses.
+10. No asumas que una columna llamada "Saldo" representa capital pendiente.
+11. Si existe SALDO CAPITAL por fila, transcríbelo en reportedBalance de esa misma fila y no lo sustituyas por una derivación matemática.
+12. Si existe un saldo, clasifícalo solamente con evidencia suficiente como principal_balance, schedule_financial_balance, total_remaining_payments o unknown.
+13. Si el contrato muestra un seguro contractual total y las cuotas muestran seguros variables, conserva el total en totalAmount y NO lo conviertas en fixedAmount. Solo usa fixedAmount cuando el documento demuestre un importe fijo bajo esa semántica.
+14. Un seguro o póliza auxiliar fuera del cronograma no se suma a las cuotas ni modifica expectedInsurance/total.
+15. Si varias páginas o documentos muestran valores contradictorios, NO elijas uno silenciosamente. Registra el conflicto en fieldConflicts.
+16. isRequired solo puede ser true si el documento demuestra inequívocamente que el seguro es obligatorio; usa false si demuestra que es voluntario y null si no está claro.
+17. No inventes importes de ITF ni otros costos por cuota cuando el documento solo informa una tasa genérica.
+18. No incluyas información personal que Caja Familiar no necesita: nombre del titular, DNI, dirección, teléfono, correo, número de cuenta, número de tarjeta, número de crédito, número de préstamo u otros identificadores personales.
+19. Todas las fechas deben usar YYYY-MM-DD.
+20. Todos los importes y porcentajes deben ser números JSON. No incluyas S/, $, %, separadores de miles ni texto dentro de números.
+21. Evidence debe contener únicamente referencias breves al documento. No incluyas chain-of-thought ni razonamiento interno.
+22. Devuelve ÚNICAMENTE el JSON solicitado, sin introducción, conclusión, comentarios adicionales ni Markdown cuando sea posible.
 
 CRONOGRAMA DE PAGOS — EXTRACCIÓN OBLIGATORIA:
 Busca explícitamente en TODAS las páginas cualquier tabla o sección que represente un cronograma de pagos, plan de pagos, calendario de cuotas, tabla de amortización o schedule del crédito.
@@ -129,7 +135,7 @@ FORMATO EXACTO:
 
 Si NO existe cronograma bajo las reglas anteriores, schedule debe ser []. Si NO existe seguro, insuranceTerms debe ser [].
 Si existe cronograma, cada fila debe usar contractualInstallmentNumber, dueDate, principal, interest, insurance, fees, total, reportedBalance y evidence. Los importes desconocidos son null; no omitas la fila por una celda ilegible.
-Si existe seguro, cada objeto puede usar label, insuranceType, pricingMode, ratePercent, fixedAmount, totalAmount y evidence.
+Si existe seguro, cada objeto puede usar label, insuranceType, pricingMode, ratePercent, fixedAmount, totalAmount, isRequired y evidence. Para una póliza separada que no forma parte de las cuotas, conserva la evidencia sin alterar los importes del cronograma.
 El ejemplo anterior es una plantilla de forma: no lo uses para fabricar datos o filas que no estén en los documentos.
 
 Devuelve únicamente un objeto JSON con schema y extraction. No devuelvas ningún dato personal ni ningún razonamiento interno.`;

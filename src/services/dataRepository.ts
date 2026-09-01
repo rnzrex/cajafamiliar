@@ -857,7 +857,10 @@ export async function createBankLoan(input: BankLoanCreateInput): Promise<DebtCr
       rate_percent: ins.ratePercent ?? null,
       fixed_amount: ins.fixedAmount ?? null,
       rate_basis: ins.rateBasis ?? null,
-      is_required: ins.isRequired ?? true,
+      // Missing evidence must not be serialized as confirmed mandatory
+      // insurance. The form can still explicitly pass true when the user or
+      // document establishes that obligation.
+      is_required: ins.isRequired ?? false,
       provider: ins.provider ?? null,
       policy_reference: ins.policyReference ?? null,
       notes: ins.notes ?? "",

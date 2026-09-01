@@ -8,6 +8,7 @@ import { BANK_LOAN_SUBTYPE_OPTIONS, AMORTIZATION_METHOD_OPTIONS } from "../utils
 import * as dataRepository from "../services/dataRepository.js";
 import { addMonthsClamped } from "../utils/debtEstimation.js";
 import { bankExternalAiPayloadText, BANK_EXTERNAL_AI_ALFIN_FIXTURE } from "../utils/bankExternalAiFixture.js";
+import { BANK_RIPLEY_SANITIZED_FIXTURE } from "../utils/bankRipleyRegressionFixture.js";
 
 vi.mock("../services/dataRepository", async () => {
   const actual = await vi.importActual<typeof dataRepository>("../services/dataRepository.js");
@@ -55,7 +56,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
   expect(screen.getByText("1. SOBRE EL CRÉDITO")).toBeTruthy();
   expect(screen.getByText("5. CRONOGRAMA *")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Agregar seguro" }));
-    expect(screen.getByText("Seguro requerido")).toBeTruthy();
+    expect(screen.getByText(/Seguro requerido/)).toBeTruthy();
 
   const loanSubtype = screen.getAllByRole("combobox")[0];
     await user.selectOptions(loanSubtype, "mortgage");
@@ -276,15 +277,13 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.getAllByText("2027-11-10").length).toBeGreaterThan(0);
     expect(screen.getAllByText("138.91").length).toBeGreaterThan(0);
     expect(screen.getAllByText("331.92").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "CALCULAR" })).toBeTruthy();
-    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("");
-    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
+    expect(screen.queryByRole("button", { name: "CALCULAR" })).toBeNull();
     expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("3294.39");
     await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
 
     expect(screen.getByText("Analizado con IA externa")).toBeTruthy();
     expect(screen.getByText("Resultado del análisis")).toBeTruthy();
-    expect(screen.getByText("CRONOGRAMA COMPLETO")).toBeTruthy();
+    expect(screen.getByText("CRONOGRAMA CONTRACTUAL DETECTADO")).toBeTruthy();
     expect(screen.getByText("18 cuotas detectadas e importadas")).toBeTruthy();
     expect(screen.getByText("Tenemos la información necesaria para continuar.")).toBeTruthy();
     expect(screen.getByText(/18 filas/)).toBeTruthy();
@@ -318,12 +317,9 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.queryByText(/Calculado con el cronograma: S\/ 4100\.00/)).toBeNull();
 
     fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
-    expect(screen.getByText(/Podemos calcularlo con tu cronograma: S\/ 3294\.39\./)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "CALCULAR" })).toBeTruthy();
-    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("");
-    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
-    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("3294.39");
+    expect(screen.queryByText(/Podemos calcularlo con tu cronograma/)).toBeNull();
     expect(screen.queryByRole("button", { name: "CALCULAR" })).toBeNull();
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("3294.39");
     expect(screen.getByText(/Última pagada: 5 · Próxima: 6 de 18 · Pendientes: 13/)).toBeTruthy();
   }, 15_000);
 
@@ -351,7 +347,6 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(screen.queryByRole("button", { name: "CALCULAR" })).toBeNull();
 
     fireEvent.change(paidBeforeInput, { target: { value: "5" } });
-    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
     expect(principalInput.value).toBe("3294.39");
 
     fireEvent.change(paidBeforeInput, { target: { value: "6" } });
@@ -363,10 +358,10 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     fireEvent.change(paidBeforeInput, { target: { value: "5" } });
     expect(principalInput.value).toBe("3000");
 
-    // Clear the manual override, re-select the derived action, then deleting
-    // its required historical input must clear the stale derived balance.
+    // Clearing the manual override reactivates the document-derived value;
+    // deleting its required historical input must clear the stale value.
     fireEvent.change(principalInput, { target: { value: "" } });
-    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
+    await waitFor(() => expect(principalInput.value).toBe("3294.39"));
     fireEvent.change(paidBeforeInput, { target: { value: "" } });
     await waitFor(() => expect(principalInput.value).toBe(""));
     expect(screen.queryByRole("button", { name: "CALCULAR" })).toBeNull();
@@ -395,7 +390,7 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText(withImportedPrincipal) } });
     await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
 
-    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("3961.09");
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("");
     expect(screen.queryByRole("button", { name: "CALCULAR" })).toBeNull();
   }, 15_000);
 
@@ -487,7 +482,6 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
     fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), { target: { value: bankExternalAiPayloadText() } });
     await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
-    await user.click(screen.getByRole("button", { name: "CALCULAR" }));
     await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
     await user.click(screen.getByRole("button", { name: "Registrar deuda" }));
 
@@ -499,6 +493,67 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(savedInput?.installments[0]?.dueDate).toBe("2026-06-10");
     expect(savedInput?.installments[17]?.expectedPrincipal).toBe(331.92);
   }, 15_000);
+
+  it("runs the sanitized Ripley flow with reactive reported-balance baseline and no historical movements", async () => {
+    const user = userEvent.setup();
+    vi.clearAllMocks();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
+    const onSaved = vi.fn();
+    render(
+      <DebtFormLegacy
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={onSaved}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), {
+      target: { value: bankExternalAiPayloadText(BANK_RIPLEY_SANITIZED_FIXTURE) },
+    });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+
+    await waitFor(() => expect((screen.getByPlaceholderText("Ej. Crédito personal BCP") as HTMLInputElement).value).toBe("Préstamo Banco Fixture Perú"));
+    expect((screen.getByPlaceholderText("Ej. Banco de Crédito del Perú") as HTMLInputElement).value).toBe("Banco Fixture Perú");
+    expect(screen.getByText("CRONOGRAMA CONTRACTUAL DETECTADO")).toBeTruthy();
+    expect(screen.getByText(/24 cuotas contractuales cargadas/)).toBeTruthy();
+
+    const paidBeforeInput = screen.getByLabelText("Última cuota contractual que ya pagaste");
+    const principalInput = screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement;
+    fireEvent.change(paidBeforeInput, { target: { value: "3" } });
+    await waitFor(() => expect(principalInput.value).toBe("4626.37"));
+    expect(screen.getByText(/Próxima: 4 de 24/)).toBeTruthy();
+    expect(screen.getAllByText("2026-08-24").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("332.03").length).toBeGreaterThan(0);
+    fireEvent.change(paidBeforeInput, { target: { value: "4" } });
+    await waitFor(() => expect(principalInput.value).toBe("4485.7"));
+    fireEvent.change(paidBeforeInput, { target: { value: "5" } });
+    await waitFor(() => expect(principalInput.value).toBe("4339.21"));
+
+    fireEvent.change(principalInput, { target: { value: "3000" } });
+    fireEvent.change(paidBeforeInput, { target: { value: "3" } });
+    expect(principalInput.value).toBe("3000");
+    fireEvent.change(principalInput, { target: { value: "" } });
+    await waitFor(() => expect(principalInput.value).toBe("4626.37"));
+
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+    await user.click(screen.getByRole("button", { name: "Registrar deuda" }));
+
+    await waitFor(() => expect(dataRepository.createBankLoan).toHaveBeenCalled());
+    const savedInput = vi.mocked(dataRepository.createBankLoan).mock.calls.at(-1)?.[0];
+    expect(savedInput).toEqual(expect.objectContaining({
+      openingPrincipalBalance: 4626.37,
+      scheduleSource: "contractual",
+      installmentsPaidBeforeTracking: 3,
+    }));
+    expect(savedInput?.installments).toHaveLength(24);
+    expect(savedInput?.installments.slice(0, 3).every((row) => row.isPaidBeforeTracking)).toBe(true);
+    expect(savedInput?.installments.slice(3).every((row) => !row.isPaidBeforeTracking)).toBe(true);
+    expect(savedInput).not.toHaveProperty("movements");
+    expect(onSaved).toHaveBeenCalled();
+  }, 20_000);
 
   it("shows an explicit missing-schedule review instead of treating term as imported rows", async () => {
     const user = userEvent.setup();

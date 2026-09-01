@@ -65,7 +65,7 @@ describe("bank document analyze endpoint orchestration", () => {
     expect(fake.updates.some((update) => update.status === "review")).toBe(true);
   });
 
-  it("does not label an inconsistent imported schedule as contractual", async () => {
+  it("keeps an inconsistent imported schedule contractual while exposing reconciliation status", async () => {
     const path = `${householdId}/${userId}/${importId}/contrato.pdf`;
     const fake = fakeAdmin(new Uint8Array([1]), path);
     const provider = new FakeBankDocumentProvider({
@@ -82,7 +82,7 @@ describe("bank document analyze endpoint orchestration", () => {
     });
 
     expect(result.reconciliation?.status).toBe("inconsistent");
-    expect(result.scheduleSource).toBe("estimated");
+    expect(result.scheduleSource).toBe("contractual");
     expect(fake.removed).toEqual([[path]]);
   });
 

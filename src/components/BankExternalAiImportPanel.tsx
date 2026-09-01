@@ -55,10 +55,13 @@ export function BankExternalAiImportPanel({ onExtractionReady, setToast, complet
     setImportResult(result);
     onExtractionReady(result.extraction, result.validation);
     const status = result.validation.reconciliation?.status;
-    const statusLabel = status === "exact" ? "validación matemática exacta" : status === "within_tolerance" ? "validación dentro de tolerancia" : status === "inconsistent" ? "REVISAR: la validación matemática es inconsistente" : "revisión pendiente por datos insuficientes";
+    const statusLabel = status === "exact" ? "validación matemática exacta" : status === "within_tolerance" ? "validación dentro de tolerancia" : status === "inconsistent" ? "revisión matemática pendiente; el cronograma documental se conserva" : "revisión pendiente por datos insuficientes";
     const ready = `Respuesta interpretada con IA externa: ${statusLabel}. Revisa antes de guardar.`;
     setMessage(ready);
-    setToast({ message: ready, type: status === "inconsistent" ? "error" : "success" });
+    // An arithmetic discrepancy is not itself a source downgrade or a toast
+    // error: the later save gate decides whether it is historical-safe or
+    // affects a future contractual obligation.
+    setToast({ message: ready, type: "success" });
   }
 
   function clear() {
