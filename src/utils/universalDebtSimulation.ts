@@ -13,7 +13,7 @@ export interface UniversalDebtSimulationInput {
   originalTermInstallments?: number | null;
   currentSchedule: Array<Pick<DebtInstallment, "installmentNumber" | "contractualInstallmentNumber" | "dueDate" | "expectedAmount" | "expectedPrincipal" | "expectedInterest" | "expectedFees" | "expectedInsurance" | "expectedTaxes">>;
   contract?: Pick<DebtFinancingContract, "interestRateType" | "interestRatePercent" | "interestRateBasis" | "dayCountBasis" | "feeRuleType" | "feeRule" | "prepaymentTerms" | "repaymentStructure"> | null;
-  insuranceTerms?: Array<Pick<DebtInsuranceTerms, "pricingMode" | "ratePercent" | "fixedAmount" | "rateBasis" | "isRequired">>;
+  insuranceTerms?: Array<Pick<DebtInsuranceTerms, "pricingMode" | "ratePercent" | "fixedAmount" | "rateBasis" | "isRequired"> & { affectsInstallmentSchedule?: boolean | null }>;
   currentScheduleSource?: ScheduleSource | null;
   currentScheduleAuthoritative?: boolean;
   hasAllocatedFutureInstallments?: boolean;
@@ -105,7 +105,9 @@ function insuranceForRow(
   balance: number,
   source: FutureRow,
 ): { amount: number | null; known: boolean } {
-  const terms = input.insuranceTerms ?? [];
+  // A documentary auxiliary policy may be displayed to the user, but it is
+  // never part of the operational projection.
+  const terms = (input.insuranceTerms ?? []).filter((term) => term.affectsInstallmentSchedule !== false);
   if (terms.length === 0) {
     if (source.expectedInsurance === 0) return { amount: 0, known: true };
     return { amount: null, known: false };

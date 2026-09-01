@@ -82,7 +82,9 @@ export function financialValidation(extraction: BankDocumentExtraction): BankFin
         installmentTotalMode: extraction.installmentTotalMode ?? "unknown",
         dayCountBasis: extraction.dayCountBasis,
         dueDateAdjustmentRule: extraction.dueDateAdjustmentRule,
-        insuranceTerms: extraction.insuranceTerms,
+        // Auxiliary documentary policies are retained for auditability but
+        // must not influence a reconstructed operational schedule.
+        insuranceTerms: extraction.operationalInsuranceTerms ?? extraction.insuranceTerms,
       });
       const reconciliation = reconcileBankContractSchedule(reconstruction.rows, {
         originalPrincipal,

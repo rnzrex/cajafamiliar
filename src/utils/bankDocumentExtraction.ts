@@ -1,4 +1,5 @@
 import { parseDateStr, parsePeruvianNumeric } from "./debtScheduleParser.js";
+import { normalizeBankOperationalInsuranceTerms } from "./bankInsuranceTerms.js";
 
 export interface BankDocumentDescriptor {
   index: number;
@@ -41,6 +42,8 @@ export interface BankInsuranceExtraction {
   totalAmount: number | null;
   /** null means the documents do not prove whether the insurance is required. */
   isRequired?: boolean | null;
+  /** true/false only when the documents prove whether it enters instalments. */
+  affectsInstallmentSchedule?: boolean | null;
   evidence?: BankExtractionEvidence[];
 }
 
@@ -68,6 +71,10 @@ export interface BankDocumentExtraction {
   installmentTotalMode?: "financial_installment_plus_costs" | "total_installment_including_costs" | "unknown" | null;
   reportedBalance: BankReportedBalanceExtraction;
   insuranceTerms: BankInsuranceExtraction[];
+  /** Kept separately so auxiliary policies remain auditable but non-operational. */
+  documentaryInsuranceTerms?: BankInsuranceExtraction[];
+  /** Only terms safe to pass to debt creation and recalculation engines. */
+  operationalInsuranceTerms?: BankInsuranceExtraction[];
   schedule: BankDocumentScheduleExtractionRow[];
   extractionWarnings: string[];
   fieldEvidence: Record<string, BankExtractionEvidence[]>;
@@ -235,6 +242,7 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
       fixedAmount: numberOrNull(item.fixedAmount),
       totalAmount: numberOrNull(item.totalAmount),
       isRequired: item.isRequired === true ? true : item.isRequired === false ? false : null,
+      affectsInstallmentSchedule: item.affectsInstallmentSchedule === true ? true : item.affectsInstallmentSchedule === false ? false : null,
       evidence: safeEvidence(item.evidence),
     }];
   }) : [];
@@ -297,6 +305,14 @@ export function normalizeBankDocumentExtraction(raw: unknown): ExtractionNormali
     }
     output.fieldConflicts = output.fieldConflicts.filter((conflict) => !new Set(["ordinaryDueDay", "dueDay", "paymentDay", "preliminaryDueDay"]).has(conflict.field));
   }
+  const insuranceTerms = normalizeBankOperationalInsuranceTerms({
+    insuranceTerms: output.insuranceTerms,
+    schedule: output.schedule,
+    extractionWarnings: output.extractionWarnings,
+  });
+  output.insuranceTerms = insuranceTerms.documentaryInsuranceTerms;
+  output.documentaryInsuranceTerms = insuranceTerms.documentaryInsuranceTerms;
+  output.operationalInsuranceTerms = insuranceTerms.operationalInsuranceTerms;
   if (output.schedule.length === 0 && output.termInstallments == null && output.financedAmount == null && output.totalContractAmount == null) {
     errors.push("El documento no contiene suficientes datos contractuales reconocibles.");
   }
@@ -367,6 +383,14 @@ export function mergeBankDocumentExtractions(extractions: BankDocumentExtraction
   }
   merged.evidence = normalized.flatMap((item) => item.evidence ?? []).slice(0, 24);
   merged.extractionWarnings = [...new Set(normalized.flatMap((item) => item.extractionWarnings).concat(merged.extractionWarnings))].slice(0, SAFE_WARNINGS_LIMIT);
+  const insuranceTerms = normalizeBankOperationalInsuranceTerms({
+    insuranceTerms: merged.insuranceTerms,
+    schedule: merged.schedule,
+    extractionWarnings: merged.extractionWarnings,
+  });
+  merged.insuranceTerms = insuranceTerms.documentaryInsuranceTerms;
+  merged.documentaryInsuranceTerms = insuranceTerms.documentaryInsuranceTerms;
+  merged.operationalInsuranceTerms = insuranceTerms.operationalInsuranceTerms;
   return merged;
 }
 

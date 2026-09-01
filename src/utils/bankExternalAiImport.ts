@@ -63,6 +63,7 @@ REGLAS OBLIGATORIAS:
 12. Si existe un saldo, clasifícalo solamente con evidencia suficiente como principal_balance, schedule_financial_balance, total_remaining_payments o unknown.
 13. Si el contrato muestra un seguro contractual total y las cuotas muestran seguros variables, conserva el total en totalAmount y NO lo conviertas en fixedAmount. Solo usa fixedAmount cuando el documento demuestre un importe fijo bajo esa semántica.
 14. Un seguro o póliza auxiliar fuera del cronograma no se suma a las cuotas ni modifica expectedInsurance/total.
+14.1. Clasifica affectsInstallmentSchedule como true solo si el cronograma demuestra que ese seguro integra las cuotas; usa false únicamente para una póliza o certificado separado que el expediente demuestra que no integra las cuotas; en caso contrario usa null.
 15. Si varias páginas o documentos muestran valores contradictorios, NO elijas uno silenciosamente. Registra el conflicto en fieldConflicts.
 16. isRequired solo puede ser true si el documento demuestra inequívocamente que el seguro es obligatorio; usa false si demuestra que es voluntario y null si no está claro.
 17. No inventes importes de ITF ni otros costos por cuota cuando el documento solo informa una tasa genérica.
@@ -135,7 +136,7 @@ FORMATO EXACTO:
 
 Si NO existe cronograma bajo las reglas anteriores, schedule debe ser []. Si NO existe seguro, insuranceTerms debe ser [].
 Si existe cronograma, cada fila debe usar contractualInstallmentNumber, dueDate, principal, interest, insurance, fees, total, reportedBalance y evidence. Los importes desconocidos son null; no omitas la fila por una celda ilegible.
-Si existe seguro, cada objeto puede usar label, insuranceType, pricingMode, ratePercent, fixedAmount, totalAmount, isRequired y evidence. Para una póliza separada que no forma parte de las cuotas, conserva la evidencia sin alterar los importes del cronograma.
+Si existe seguro, cada objeto puede usar label, insuranceType, pricingMode, ratePercent, fixedAmount, totalAmount, isRequired, affectsInstallmentSchedule y evidence. Para una póliza separada que no forma parte de las cuotas, usa affectsInstallmentSchedule=false, conserva la evidencia y no alteres los importes del cronograma. Si no puedes demostrar que es auxiliar, usa null y no la excluyas.
 El ejemplo anterior es una plantilla de forma: no lo uses para fabricar datos o filas que no estén en los documentos.
 
 Devuelve únicamente un objeto JSON con schema y extraction. No devuelvas ningún dato personal ni ningún razonamiento interno.`;

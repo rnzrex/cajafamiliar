@@ -68,6 +68,8 @@ export function BankDocumentReviewPanel({ extraction, validation, completeness, 
   const coverage = coverageCopy(completeness, contractual);
   const reconciliationStatus = validation.reconciliation?.status;
   const source = validation.scheduleSource === "contractual" ? "contractual" : validation.scheduleSource === "reconstructed" ? "reconstructed" : "estimated";
+  const documentaryAuxiliaryInsurances = (extraction.documentaryInsuranceTerms ?? extraction.insuranceTerms)
+    .filter((insurance) => insurance.affectsInstallmentSchedule === false);
   return (
     <section className="space-y-4 rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm" aria-labelledby="bank-document-analysis-result">
       <div>
@@ -111,6 +113,13 @@ export function BankDocumentReviewPanel({ extraction, validation, completeness, 
             <p className="mt-1 text-xs font-bold text-indigo-800">{extraction.schedule.length} cuotas detectadas e importadas</p>
           </div>
           <BankSchedulePreview rows={extraction.schedule} compact showBalance ariaLabel="Vista previa del cronograma importado" />
+        </section>
+      )}
+
+      {documentaryAuxiliaryInsurances.length > 0 && (
+        <section aria-labelledby="bank-document-auxiliary-insurance-title" className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sky-950">
+          <p id="bank-document-auxiliary-insurance-title" className="text-xs font-black uppercase tracking-wide">Seguro documental no operativo</p>
+          <p className="mt-1 text-xs font-semibold">{documentaryAuxiliaryInsurances.map((insurance) => insurance.label).join(" · ")} · Seguro auxiliar documentado; no integra las cuotas contractuales ni el cálculo de prepagos.</p>
         </section>
       )}
 
