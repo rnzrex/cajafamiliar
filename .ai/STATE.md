@@ -1,5 +1,36 @@
 # Shared Agent State
 
+## Current Active Handoff — BANK Insurance + Warning Zero-Rework V1 — 2026-09-01
+
+- Objective: publish and hold `fix/bank-insurance-zero-rework-v1` for the
+  deterministic insurance/warning release-gate audit. No SQL, migrations,
+  schema/RLS, Supabase Production writes, real financial/document data, PII,
+  Gemini/API key, Vercel env writes, Production frontend deployment, merge,
+  reset, clean, or force push.
+- Base: `354b54c66b67b6463adc0a45ff3266ccb00a91cb`. Published commit:
+  `99a23713246cd2d0cc853ac9c433052834b952c0` (remote matches; working tree
+  is clean before this state checkpoint).
+- Implementation: deterministic 0.3% credit-life inference only from matching
+  contractual reported-balance rows; documentary/operational insurance split;
+  auxiliary-policy exclusion; external JSON backward compatibility; warning
+  compaction; historical/future/new-debt anomaly gates; prepayment simulation
+  filtering; sanitized Ripley/UI regressions.
+- Validation: full Vitest `80 files / 1,131 tests passed`; targeted gate suite
+  `8 files / 130 tests passed`; `npm run typecheck:api`, `npm run build`, and
+  `git diff --check` passed. Build warnings are the existing dynamic-import and
+  large-chunk notices.
+- PR: #78 OPEN/DRAFT against `main`, title
+  `BANK INSURANCE ZERO-REWORK V1 — deterministic insurance + warning compaction`.
+- Preview: Vercel deployment `dpl_J2PVuuJFwGnoRbKduTQdbWF5Exap`, READY, exact
+  SHA `99a23713246cd2d0cc853ac9c433052834b952c0`, URL
+  `https://cajafamiliar-brk3zgnjf-renzorex.vercel.app/`; build errors-only log
+  has no errors/fatals, only known warnings. After the user authenticated in
+  the Preview browser, the application document rendered successfully as
+  `Caja Familiar` with no console errors. Connector-only HTTP checks without
+  that browser session redirect to Vercel Authentication.
+- Next step: commit/push this state checkpoint, re-verify the resulting exact
+  SHA/Preview deployment, and stop. Do not mark PR ready or merge.
+
 ## Objective
 
 Implement, validate, and publish the Document-First Production RPC runtime fix
