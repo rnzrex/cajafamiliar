@@ -104,6 +104,47 @@ function summarizeWindow(window: AdvisorObligationWindow): string {
   return parts.length > 0 ? parts.join("; ") : "No hay obligaciones proyectadas en esa ventana.";
 }
 
+function extraCashAmount(scenario: AdvisorExtraCashScenario, amount: number): string {
+  return formatMoneyByCurrency(amount, scenario.currencyCode);
+}
+
+/**
+ * Uses only the already-computed extra-cash read-model. The panel and the local
+ * question surface deliberately share this copy so neither surface recalculates
+ * financial values independently.
+ */
+export function formatExtraCashAdvice(scenario: AdvisorExtraCashScenario): string {
+  if (scenario.decisionStatus === "no_positive_extra") {
+    return "No hay dinero adicional positivo para simular. Ingresa dinero nuevo que todavía no forme parte de tu liquidez registrada.";
+  }
+
+  const unknownCaveat = scenario.unknownObligationCount > 0
+    ? " Además, todavía hay obligaciones con monto por confirmar; no trates ningún remanente como dinero libre para prepago."
+    : "";
+
+  if (scenario.shortfallAfter > 0) {
+    return `Actualmente te faltan ${extraCashAmount(scenario, scenario.shortfallBefore)} para cubrir tus obligaciones conocidas. Si recibieras ${extraCashAmount(scenario, scenario.additionalCash)} adicionales, tu liquidez subiría a ${extraCashAmount(scenario, scenario.liquidityAfterAdditionalCash)} y el faltante bajaría a ${extraCashAmount(scenario, scenario.shortfallAfter)}. Recomendación: conserva esos ${extraCashAmount(scenario, scenario.additionalCash)} para tus próximos pagos. Todavía no los destines a reducción de principal.${unknownCaveat}`;
+  }
+
+  if (scenario.shortfallBefore > 0 && scenario.remainingAfterKnownRequirements === 0) {
+    return `Con este dinero lograrías cubrir exactamente las obligaciones conocidas consideradas por el asesor. No queda un remanente demostrado para prepago.${unknownCaveat}`;
+  }
+
+  if (scenario.remainingAfterKnownRequirements > 0) {
+    const remaining = extraCashAmount(scenario, scenario.remainingAfterKnownRequirements);
+    if (scenario.decisionStatus === "unknown_requirements") {
+      return `Existe un remanente potencial de ${remaining}, pero todavía hay obligaciones con monto por confirmar; no lo trates como dinero libre para prepago.`;
+    }
+    if (scenario.selectedDebtName && scenario.simulation && scenario.simulation.status !== "exceeds_current_principal") {
+      const simulatedReduction = scenario.simulation.appliedPrincipalReduction ?? scenario.simulation.requestedPrincipalReduction;
+      return `Después de cubrir tus obligaciones conocidas quedarían ${remaining} potencialmente disponibles para una decisión extraordinaria. Podrías evaluar un abono simulado de ${extraCashAmount(scenario, simulatedReduction)} a ${scenario.selectedDebtName}; es una opción a considerar, no una instrucción de pago. El ahorro exacto de intereses y el nuevo cronograma dependen del recálculo contractual del acreedor.`;
+    }
+    return `Después de cubrir tus obligaciones quedarían ${remaining}, pero no existe información comparable suficiente para afirmar qué deuda conviene prepagar.${unknownCaveat}`;
+  }
+
+  return `No queda un remanente demostrado después de cubrir las obligaciones conocidas.${unknownCaveat}`;
+}
+
 export function answerFinancialAdvisorQuestion(
   parsed: ParsedFinancialAdvisorQuestion,
   result: FinancialAdvisorResult,
@@ -131,9 +172,7 @@ export function answerFinancialAdvisorQuestion(
       break;
     case "extra_cash":
       answer = scenario
-        ? scenario.reservedForObligations > 0
-          ? `Primero reservaría ${formatMoneyByCurrency(scenario.reservedForObligations, scenario.currencyCode)} para obligaciones inmediatas. Quedarían potencialmente disponibles ${formatMoneyByCurrency(scenario.availableForDecision, scenario.currencyCode)}.`
-          : `No hay un faltante conocido inmediato en ${scenario.currencyCode}. Quedarían potencialmente disponibles ${formatMoneyByCurrency(scenario.availableForDecision, scenario.currencyCode)}.`
+        ? formatExtraCashAdvice(scenario)
         : "Indica el monto y la moneda para simular primero la reserva de obligaciones y después un posible prepago.";
       break;
     case "prepayment":

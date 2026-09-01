@@ -16,6 +16,7 @@ import { buildDebtPlanningItems } from "./debtPlanning.js";
 import { simulateDebtPrincipalPrepayment } from "./debtSimulation.js";
 import { buildDebtStrategies } from "./debtStrategy.js";
 import { buildObligationProjection } from "./obligationProjection.js";
+import { answerFinancialAdvisorQuestion, formatExtraCashAdvice, parseFinancialAdvisorQuestion } from "./financialAdvisorQuestions.js";
 import {
   buildFinancialAdvisorResult,
   simulateFinancialAdvisorExtraCash,
@@ -250,6 +251,28 @@ function buildSnapshot({
   };
 }
 
+function shortfallResult(options: { unknownObligation?: boolean; comparableDebts?: boolean } = {}) {
+  const debts = options.comparableDebts
+    ? [
+        debt({ id: "debt-cheap", name: "Deuda barata", tceaPercent: 15 }),
+        debt({ id: "debt-expensive", name: "Deuda cara", tceaPercent: 25 }),
+      ]
+    : options.unknownObligation
+      ? [debt({ id: "debt-unknown", name: "Deuda por confirmar" })]
+      : [];
+  const installments = options.comparableDebts
+    ? [installment("debt-cheap", 1, "2026-09-20"), installment("debt-expensive", 1, "2026-09-21")]
+    : options.unknownObligation
+      ? [installment("debt-unknown", 1, "2026-09-03", { expectedAmount: null })]
+      : [];
+  return buildFinancialAdvisorResult(buildSnapshot({
+    accounts: [account({ openingBalance: 2138.25 })],
+    debts,
+    installments,
+    recurringPayments: [recurring({ id: "known-reserve", amount: 3656.69, dueDay: 2 })],
+  }));
+}
+
 describe("Financial Advisor deterministic read-model", () => {
   it("1. prioritizes an overdue debt payment first", () => {
     const result = buildFinancialAdvisorResult(buildSnapshot({
@@ -290,6 +313,76 @@ describe("Financial Advisor deterministic read-model", () => {
     const scenario = simulateFinancialAdvisorExtraCash(result, 1000, "PEN");
     expect(scenario.reservedForObligations).toBe(300);
     expect(scenario.availableForDecision).toBe(700);
+  });
+
+  it("extra cash: reports the shortfall before and after a partial contribution", () => {
+    const scenario = simulateFinancialAdvisorExtraCash(shortfallResult(), 100, "PEN");
+    expect(scenario.currentLiquidity).toBe(2138.25);
+    expect(scenario.additionalCash).toBe(100);
+    expect(scenario.liquidityAfterAdditionalCash).toBe(2238.25);
+    expect(scenario.knownReserveRequirement).toBe(3656.69);
+    expect(scenario.shortfallBefore).toBe(1518.44);
+    expect(scenario.shortfallAfter).toBe(1418.44);
+    expect(scenario.reservedFromAdditionalCash).toBe(100);
+    expect(scenario.remainingAfterKnownRequirements).toBe(0);
+    expect(scenario.decisionStatus).toBe("cover_shortfall_first");
+  });
+
+  it("extra cash: recognizes exact shortfall coverage without proving surplus", () => {
+    const scenario = simulateFinancialAdvisorExtraCash(shortfallResult(), 1518.44, "PEN");
+    expect(scenario.shortfallAfter).toBe(0);
+    expect(scenario.remainingAfterKnownRequirements).toBe(0);
+    expect(scenario.decisionStatus).toBe("cover_shortfall_first");
+    expect(formatExtraCashAdvice(scenario)).toContain("cubrir exactamente las obligaciones conocidas");
+  });
+
+  it("extra cash: exposes only the surplus after covering the known shortfall", () => {
+    const scenario = simulateFinancialAdvisorExtraCash(shortfallResult(), 2000, "PEN");
+    expect(scenario.reservedFromAdditionalCash).toBe(1518.44);
+    expect(scenario.remainingAfterKnownRequirements).toBe(481.56);
+    expect(scenario.decisionStatus).toBe("potential_extra_available");
+  });
+
+  it("extra cash: passes only the surplus into a full comparable TCEA simulation", () => {
+    const scenario = simulateFinancialAdvisorExtraCash(shortfallResult({ comparableDebts: true }), 2000, "PEN");
+    expect(scenario.selectedDebtId).toBe("debt-expensive");
+    expect(scenario.simulation?.requestedPrincipalReduction).toBe(481.56);
+    expect(scenario.simulation?.requestedPrincipalReduction).not.toBe(2000);
+    expect(scenario.selectedDebtComparisonReason).toContain("TCEA");
+  });
+
+  it("extra cash: keeps a potential remainder fail-closed when an obligation is unknown", () => {
+    const scenario = simulateFinancialAdvisorExtraCash(shortfallResult({ unknownObligation: true }), 2000, "PEN");
+    expect(scenario.decisionStatus).toBe("unknown_requirements");
+    expect(scenario.unknownObligationCount).toBeGreaterThan(0);
+    expect(scenario.remainingAfterKnownRequirements).toBe(481.56);
+    expect(scenario.simulation).toBeNull();
+    expect(formatExtraCashAdvice(scenario)).toContain("Existe un remanente potencial");
+  });
+
+  it("extra cash: reports no positive scenario for an empty or non-positive input", () => {
+    const scenario = simulateFinancialAdvisorExtraCash(shortfallResult(), 0, "PEN");
+    expect(scenario.decisionStatus).toBe("no_positive_extra");
+    expect(scenario.additionalCash).toBe(0);
+    expect(scenario.remainingAfterKnownRequirements).toBe(0);
+  });
+
+  it("extra cash: does not invent a debt candidate without a comparable cohort", () => {
+    const scenario = simulateFinancialAdvisorExtraCash(shortfallResult(), 2000, "PEN");
+    expect(scenario.remainingAfterKnownRequirements).toBe(481.56);
+    expect(scenario.selectedDebtId).toBeNull();
+    expect(scenario.simulation).toBeNull();
+    expect(scenario.warnings.join(" ")).toContain("deuda comparable");
+  });
+
+  it("extra cash: the question uses the same shortfall-before/after read-model", () => {
+    const result = shortfallResult();
+    const scenario = simulateFinancialAdvisorExtraCash(result, 100, "PEN");
+    const answer = answerFinancialAdvisorQuestion(parseFinancialAdvisorQuestion("Tengo S/100 extra, ¿qué hago?"), result, scenario);
+    expect(answer.answer).toContain("faltan S/");
+    expect(answer.answer).toContain("bajaría a S/");
+    expect(answer.answer).toContain("conserva esos S/");
+    expect(answer.answer).not.toContain("Reserva primero");
   });
 
   it("5. keeps PEN and USD liquidity separate", () => {

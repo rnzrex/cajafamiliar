@@ -9,7 +9,7 @@ import {
   type AdvisorObligationWindow,
   type FinancialAdvisorResult,
 } from "../utils/financialAdvisor.js";
-import { answerFinancialAdvisorQuestion, parseFinancialAdvisorQuestion, QUICK_SUGGESTIONS } from "../utils/financialAdvisorQuestions.js";
+import { answerFinancialAdvisorQuestion, formatExtraCashAdvice, parseFinancialAdvisorQuestion, QUICK_SUGGESTIONS } from "../utils/financialAdvisorQuestions.js";
 
 interface FinancialAdvisorPanelProps {
   result: FinancialAdvisorResult;
@@ -79,25 +79,52 @@ function confidenceLabel(confidence: FinancialAdvisorResult["recommendations"][n
 }
 
 function ExtraCashSummary({ scenario }: { scenario: AdvisorExtraCashScenario }) {
+  const simulationIsValid = scenario.simulation != null && scenario.simulation.status !== "exceeds_current_principal";
+  const callout = scenario.decisionStatus === "cover_shortfall_first"
+    ? "NO CONVIENE HACER UN PREPAGO TODAVÍA"
+    : scenario.decisionStatus === "potential_extra_available"
+      ? "PUEDES EVALUAR UNA DECISIÓN EXTRAORDINARIA"
+      : scenario.decisionStatus === "unknown_requirements"
+        ? "MANTÉN EL REMANENTE EN RESERVA"
+        : "NO HAY DINERO ADICIONAL POSITIVO PARA SIMULAR";
+
   return (
     <div className="mt-4 rounded-2xl bg-blue-50 p-4 text-blue-950" data-testid="advisor-extra-cash-result">
-      <p className="font-bold">Resultado de la simulación</p>
-      <p className="mt-1 text-sm">
-        Reserva primero: <strong>{formatMoneyByCurrency(scenario.reservedForObligations, scenario.currencyCode)}</strong>.
-        Queda potencialmente disponible: <strong>{formatMoneyByCurrency(scenario.availableForDecision, scenario.currencyCode)}</strong>.
-      </p>
-      {scenario.unknownObligationCount > 0 && (
-        <p className="mt-2 text-sm font-semibold text-amber-800">Hay {scenario.unknownObligationCount} obligación(es) cuyo monto necesita confirmación.</p>
-      )}
-      {scenario.selectedDebtName && scenario.simulation && scenario.simulation.status !== "exceeds_current_principal" && (
+      <p className="font-bold uppercase tracking-wide">RESULTADO</p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Liquidez actual</p><p className="mt-1 text-lg font-bold">{formatMoneyByCurrency(scenario.currentLiquidity, scenario.currencyCode)}</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Dinero adicional</p><p className="mt-1 text-lg font-bold">+ {formatMoneyByCurrency(scenario.additionalCash, scenario.currencyCode)}</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Liquidez después</p><p className="mt-1 text-lg font-bold">{formatMoneyByCurrency(scenario.liquidityAfterAdditionalCash, scenario.currencyCode)}</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Obligaciones conocidas a cubrir</p><p className="mt-1 text-lg font-bold">{formatMoneyByCurrency(scenario.knownReserveRequirement, scenario.currencyCode)}</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Faltante antes</p><p className="mt-1 text-lg font-bold">{formatMoneyByCurrency(scenario.shortfallBefore, scenario.currencyCode)}</p></div>
+        <div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Faltante después</p><p className="mt-1 text-lg font-bold">{formatMoneyByCurrency(scenario.shortfallAfter, scenario.currencyCode)}</p></div>
+        {scenario.reservedFromAdditionalCash > 0 && <div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Para cubrir faltante</p><p className="mt-1 text-lg font-bold">{formatMoneyByCurrency(scenario.reservedFromAdditionalCash, scenario.currencyCode)}</p></div>}
+      </div>
+      <div className={`mt-4 rounded-xl p-4 ${scenario.decisionStatus === "potential_extra_available" ? "bg-emerald-100 text-emerald-950" : "bg-amber-100 text-amber-950"}`}>
+        <p className="font-bold">{callout}</p>
+        <p className="mt-2 text-sm">{formatExtraCashAdvice(scenario)}</p>
+      </div>
+      {scenario.decisionStatus === "potential_extra_available" && (
         <div className="mt-3 rounded-xl bg-white p-3 text-sm">
-          <p className="font-bold">Opción para simular: {scenario.selectedDebtName}</p>
-          <p>Principal actual: {formatMoneyByCurrency(scenario.simulation.currentPrincipal, scenario.currencyCode)}</p>
-          <p>Principal simulado: {formatMoneyByCurrency(scenario.simulation.simulatedPrincipal ?? 0, scenario.currencyCode)}</p>
-          <p className="mt-1 text-slate-600">El ahorro exacto de intereses y el nuevo cronograma dependen del recálculo contractual del acreedor.</p>
+          <p className="font-bold uppercase tracking-wide text-slate-700">Remanente potencial</p>
+          <p className="mt-1 text-lg font-bold">{formatMoneyByCurrency(scenario.remainingAfterKnownRequirements, scenario.currencyCode)}</p>
         </div>
       )}
-      {scenario.warnings.map((warning) => (
+      {scenario.selectedDebtName && simulationIsValid && scenario.simulation && (
+        <div className="mt-3 rounded-xl bg-white p-3 text-sm">
+          <p className="font-bold uppercase tracking-wide text-slate-700">OPCIÓN A EVALUAR</p>
+          <p className="mt-1 font-bold">{scenario.selectedDebtName}</p>
+          <p className="mt-2">Principal actual: {formatMoneyByCurrency(scenario.simulation.currentPrincipal, scenario.currencyCode)}</p>
+          <p>Abono simulado: {formatMoneyByCurrency(scenario.simulation.appliedPrincipalReduction ?? scenario.simulation.requestedPrincipalReduction, scenario.currencyCode)}</p>
+          <p>Principal después: {formatMoneyByCurrency(scenario.simulation.simulatedPrincipal ?? 0, scenario.currencyCode)}</p>
+          <p className="mt-2 text-slate-700">Esta deuda aparece primero porque {scenario.selectedDebtComparisonReason ?? "forma parte de una comparación completa"}.</p>
+          <p className="mt-1 text-slate-600">Podrías evaluar esta simulación; el ahorro exacto de intereses y el nuevo cronograma dependen del recálculo contractual del acreedor.</p>
+        </div>
+      )}
+      {scenario.unknownObligationCount > 0 && (
+        <p className="mt-3 text-sm font-semibold text-amber-800">Hay {scenario.unknownObligationCount} obligación(es) cuyo monto necesita confirmación; el remanente no se considera libre para prepago.</p>
+      )}
+      {scenario.warnings.filter((warning) => !warning.includes("monto por confirmar") && !warning.includes("ahorro exacto")).map((warning) => (
         <p key={warning} className="mt-2 text-xs text-slate-700">{warning}</p>
       ))}
     </div>
@@ -211,15 +238,15 @@ export function FinancialAdvisorPanel({ result, onNavigate }: FinancialAdvisorPa
 
         <article data-testid="advisor-extra-cash" className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm lg:p-6">
           <p className="text-sm font-bold uppercase tracking-wide text-emerald-600">Simulación sin efectos reales</p>
-          <h2 className="mt-1 text-2xl font-bold text-slate-900">SI TUVIERAS DINERO EXTRA</h2>
-          <p className="mt-2 text-sm text-slate-600">Reserva primero obligaciones inmediatas. Solo el remanente puede evaluarse para una reducción de principal.</p>
+          <h2 className="mt-1 text-2xl font-bold text-slate-900">SI RECIBIERAS DINERO ADICIONAL</h2>
+          <p className="mt-2 text-sm text-slate-600">Ingresa dinero nuevo que todavía no forma parte de tu liquidez registrada. Primero mediremos el faltante conocido; solo un remanente potencial puede evaluarse para una reducción de principal.</p>
           <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
             <label className="sr-only" htmlFor="advisor-extra-amount">Monto extra</label>
-            <input id="advisor-extra-amount" inputMode="decimal" value={extraAmount} onChange={(event) => setExtraAmount(event.target.value)} placeholder="Monto" className="min-h-12 rounded-xl border border-slate-300 px-3 text-lg" />
+            <input id="advisor-extra-amount" data-testid="advisor-extra-amount" inputMode="decimal" value={extraAmount} onChange={(event) => setExtraAmount(event.target.value)} placeholder="Monto" className="min-h-12 rounded-xl border border-slate-300 px-3 text-lg" />
             <label className="sr-only" htmlFor="advisor-extra-currency">Moneda</label>
             <select id="advisor-extra-currency" value={extraCurrency} onChange={(event) => setExtraCurrency(event.target.value)} className="min-h-12 rounded-xl border border-slate-300 bg-white px-3 font-bold"><option value="PEN">PEN</option>{currencies.filter((currency) => currency !== "PEN").map((currency) => <option key={currency} value={currency}>{currency}</option>)}</select>
           </div>
-          <button type="button" onClick={runExtraCash} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-600 px-4 font-bold text-white hover:bg-emerald-700">Simular reserva y prepago</button>
+          <button type="button" onClick={runExtraCash} className="mt-3 min-h-12 w-full rounded-xl bg-emerald-600 px-4 font-bold text-white hover:bg-emerald-700">Analizar dinero adicional</button>
           {extraScenario && <ExtraCashSummary scenario={extraScenario} />}
         </article>
       </section>

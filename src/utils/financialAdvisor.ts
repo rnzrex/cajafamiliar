@@ -179,15 +179,36 @@ export interface AdvisorDebtLoadSummary {
   incomeRatioMessage: string;
 }
 
+export type AdvisorExtraCashDecisionStatus =
+  | "cover_shortfall_first"
+  | "potential_extra_available"
+  | "no_positive_extra"
+  | "unknown_requirements";
+
 export interface AdvisorExtraCashScenario {
+  /** New money that is not included in the current liquidity read-model. */
+  additionalCash: number;
+  currentLiquidity: number;
+  liquidityAfterAdditionalCash: number;
+  knownReserveRequirement: number;
+  shortfallBefore: number;
+  shortfallAfter: number;
+  reservedFromAdditionalCash: number;
+  remainingAfterKnownRequirements: number;
+  decisionStatus: AdvisorExtraCashDecisionStatus;
   amount: number;
   currencyCode: string;
+  /** @deprecated Use reservedFromAdditionalCash. */
   reservedForObligations: number;
+  /** @deprecated Use remainingAfterKnownRequirements. */
   availableForDecision: number;
+  /** @deprecated Use shortfallBefore. */
   uncoveredObligationAmount: number;
   unknownObligationCount: number;
   selectedDebtId: string | null;
   selectedDebtName: string | null;
+  selectedDebtComparisonReason: string | null;
+  comparisonMode: AdvisorDebtComparison["mode"] | null;
   simulation: DebtPrepaymentSimulation | null;
   warnings: string[];
 }
@@ -907,29 +928,49 @@ export function simulateFinancialAdvisorExtraCash(
   amount: number,
   currencyCode: string
 ): AdvisorExtraCashScenario {
+  const roundMoney = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
   const normalizedCurrency = currencyOf(currencyCode) ?? "UNKNOWN";
-  const safeAmount = finiteAmount(amount) && amount > 0 ? amount : 0;
+  const safeAmount = finiteAmount(amount) && amount > 0 ? roundMoney(amount) : 0;
   const reserve = result.reserveRequirementsByCurrency[normalizedCurrency];
-  const liquidity = result.liquidityByCurrency[normalizedCurrency]?.knownAmount ?? 0;
-  const requiredKnown = reserve?.requiredKnownAmount ?? 0;
-  const uncoveredObligationAmount = Math.max(0, requiredKnown - liquidity);
-  const reservedForObligations = Math.min(safeAmount, uncoveredObligationAmount);
-  const availableForDecision = Math.max(0, safeAmount - uncoveredObligationAmount);
+  const currentLiquidity = roundMoney(result.liquidityByCurrency[normalizedCurrency]?.knownAmount ?? 0);
+  const knownReserveRequirement = roundMoney(reserve?.requiredKnownAmount ?? 0);
+  const shortfallBefore = roundMoney(Math.max(0, knownReserveRequirement - currentLiquidity));
+  const reservedFromAdditionalCash = roundMoney(Math.min(safeAmount, shortfallBefore));
+  const shortfallAfter = roundMoney(Math.max(0, shortfallBefore - safeAmount));
+  const remainingAfterKnownRequirements = roundMoney(Math.max(0, safeAmount - shortfallBefore));
+  const liquidityAfterAdditionalCash = roundMoney(currentLiquidity + safeAmount);
   const unknownObligationCount = (reserve?.ordinaryUnknownCount ?? 0) + (reserve?.cardUnknownCount ?? 0);
+  const decisionStatus: AdvisorExtraCashDecisionStatus = unknownObligationCount > 0
+    ? "unknown_requirements"
+    : safeAmount <= 0
+      ? "no_positive_extra"
+      : remainingAfterKnownRequirements > 0
+        ? "potential_extra_available"
+        : "cover_shortfall_first";
   const warnings: string[] = [];
   if (unknownObligationCount > 0) warnings.push("Hay obligaciones inmediatas con monto por confirmar; el remanente es potencial, no una autorización de prepago.");
 
   let selectedDebtId: string | null = null;
   let selectedDebtName: string | null = null;
+  let selectedDebtComparisonReason: string | null = null;
+  let comparisonMode: AdvisorDebtComparison["mode"] | null = null;
   let simulation: DebtPrepaymentSimulation | null = null;
-  if (availableForDecision > 0) {
-    const comparison = result.debtComparisons.find((item) => item.currencyCode === normalizedCurrency && item.recommendedDebtId);
+  if (decisionStatus === "potential_extra_available") {
+    const comparison = result.debtComparisons.find((item) =>
+      item.currencyCode === normalizedCurrency
+      && (item.mode === "tcea_full" || item.mode === "tea_full")
+      && item.recommendedDebtId
+    );
     const candidate = comparison ? result.debtPriorities.find((item) => item.debtId === comparison.recommendedDebtId) : null;
     const item = candidate ? result.extraCashDebtItems.find((debt) => debt.debtId === candidate.debtId) : null;
     if (candidate && item) {
       selectedDebtId = candidate.debtId;
       selectedDebtName = candidate.debtName;
-      simulation = simulateDebtPrincipalPrepayment(item, availableForDecision);
+      comparisonMode = comparison?.mode ?? null;
+      selectedDebtComparisonReason = comparisonMode === "tcea_full"
+        ? "su TCEA es la más alta entre las deudas comparables"
+        : "su TEA es la más alta entre las deudas comparables";
+      simulation = simulateDebtPrincipalPrepayment(item, remainingAfterKnownRequirements);
       if (simulation.status === "exceeds_current_principal") {
         warnings.push("El remanente supera el principal actual de la candidata; no se ajustó ni se inventó un resultado.");
       }
@@ -939,14 +980,25 @@ export function simulateFinancialAdvisorExtraCash(
     }
   }
   return {
+    additionalCash: safeAmount,
+    currentLiquidity,
+    liquidityAfterAdditionalCash,
+    knownReserveRequirement,
+    shortfallBefore,
+    shortfallAfter,
+    reservedFromAdditionalCash,
+    remainingAfterKnownRequirements,
+    decisionStatus,
     amount: safeAmount,
     currencyCode: normalizedCurrency,
-    reservedForObligations,
-    availableForDecision,
-    uncoveredObligationAmount,
+    reservedForObligations: reservedFromAdditionalCash,
+    availableForDecision: remainingAfterKnownRequirements,
+    uncoveredObligationAmount: shortfallBefore,
     unknownObligationCount,
     selectedDebtId,
     selectedDebtName,
+    selectedDebtComparisonReason,
+    comparisonMode,
     simulation,
     warnings,
   };
