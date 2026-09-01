@@ -13,8 +13,10 @@
   principal-prepayment engines. Add only pure advisor/question read-models and
   a responsive read-only panel; unknown values remain unknown.
 - Branch state: implementation commits `c8e7a946232baad118be96e223c658f269c4b0b4`,
-  `072b09033904a6856ba6448f713cb9c609ec6c44`, and hotfix `9aec50d1310fcd8f3d35bf5ca571ed14d2ca4be2`
-  are pushed; PR #80 is OPEN/DRAFT against `main`.
+  `072b09033904a6856ba6448f713cb9c609ec6c44`, hotfix
+  `9aec50d1310fcd8f3d35bf5ca571ed14d2ca4be2`, and metadata checkpoint
+  `4b8ceaae31058b32655301bf38766845bf23bcdc` are pushed; PR #80 is
+  OPEN/DRAFT against `main`.
 - Hotfix completed in `src/utils/financialAdvisor.ts` and tests: explicit
   overdue/due-today/immediate/card/strategy ordering, human date and money
   copy, `Vencidas` label, and card statements included once in applicable
@@ -27,10 +29,15 @@
   `npm run typecheck:api`, `npx tsc -b --pretty false`, `npm run build`, and
   `git diff --check` pass. Build emitted only existing dynamic-import and
   large-chunk warnings.
-- Required remaining gate: confirm the final metadata checkpoint is pushed,
-  verify its automatic Preview matches the final SHA and is READY/HTTP 200 with
-  no runtime errors, then complete manual Preview Asesor desktop/mobile
-  acceptance after user authentication; do not request or store credentials.
+- Release gate completed for the code/deployment checkpoint: automatic Preview
+  `dpl_4V91Nb2ZzSbuKUrL4gqxBAXiuL9n`
+  (`https://cajafamiliar-cglqujv5k-renzorex.vercel.app/`) is READY, HTTP 200,
+  matches SHA `4b8ceaae31058b32655301bf38766845bf23bcdc`, and has no preview
+  error/fatal runtime logs. The Preview app remains authentication-protected;
+  manual authenticated Asesor acceptance is the next user-facing visual gate.
+  Do not request or store credentials.
+- GitHub CLI was reauthenticated through the web device flow on 2026-09-01;
+  normal push and remote SHA verification succeeded.
 - Production status: untouched. No SQL, migrations, financial writes, test
   data, external AI, secrets, Vercel env writes, merge, or Production deploy.
 
