@@ -12,7 +12,7 @@ import {
   buildCreditCardIntelligenceItem,
   type CreditCardIntelligenceAdapterItem,
 } from "./creditCardCalculations.js";
-import { expectedCash } from "./calculations.js";
+import { expectedCash, formatMoneyByCurrency } from "./calculations.js";
 import type { DebtIntelligenceItem } from "./debtIntelligence.js";
 import type { DebtInstallmentPlanningItem } from "./debtPlanning.js";
 import type { DebtStrategyResult } from "./debtStrategy.js";
@@ -21,9 +21,8 @@ import type {
   ObligationProjectionItem,
   ObligationProjectionResult,
   ProjectionAmountKind,
-  ProjectionCurrencySummary,
 } from "./obligationProjection.js";
-import { localDateString, parseLocalDate } from "./date.js";
+import { formatLocalDate, localDateString, parseLocalDate } from "./date.js";
 
 export type AdvisorDataQualityStatus = "complete" | "partial" | "insufficient";
 export type AdvisorRecommendationType =
@@ -34,6 +33,14 @@ export type AdvisorRecommendationType =
   | "PRIORITIZE_DEBT"
   | "CONSIDER_PREPAYMENT"
   | "DATA_GAP";
+
+export type AdvisorRecommendationPriorityClass =
+  | "overdue"
+  | "due_today"
+  | "immediate"
+  | "card_statement"
+  | "strategy"
+  | "data_gap";
 
 export type AdvisorWindowKey =
   | "overdue"
@@ -77,6 +84,7 @@ export interface AdvisorObligationWindow {
   label: string;
   byCurrency: Record<string, AdvisorAmountSummary>;
   items: ObligationProjectionItem[];
+  cardStatements: AdvisorCardStatement[];
 }
 
 export interface AdvisorReserveRequirement {
@@ -101,6 +109,7 @@ export interface AdvisorCoverageSummary {
 export interface AdvisorRecommendation {
   id: string;
   priority: number;
+  priorityClass: AdvisorRecommendationPriorityClass;
   type: AdvisorRecommendationType;
   title: string;
   reason: string;
@@ -217,7 +226,7 @@ export interface FinancialAdvisorResult {
 }
 
 const WINDOW_LABELS: Record<AdvisorWindowKey, string> = {
-  overdue: "Vencidas / inmediatas",
+  overdue: "Vencidas",
   today: "Hoy",
   next_7_days: "Próximos 7 días",
   rest_of_week: "Resto de esta semana",
@@ -272,7 +281,7 @@ function addProjectionAmount(summary: AdvisorAmountSummary, amount: number | nul
 function buildWindow(
   key: AdvisorWindowKey,
   items: ObligationProjectionItem[],
-  todayKey: string
+  cardStatements: AdvisorCardStatement[]
 ): AdvisorObligationWindow {
   const byCurrency: Record<string, AdvisorAmountSummary> = {};
   for (const item of items) {
@@ -280,7 +289,16 @@ function buildWindow(
     const summary = byCurrency[currencyCode] ?? (byCurrency[currencyCode] = EMPTY_AMOUNT(currencyCode));
     addProjectionAmount(summary, item.amount, item.amountKind);
   }
-  return { key, label: WINDOW_LABELS[key], byCurrency, items };
+  for (const card of cardStatements) {
+    const currencyCode = currencyOf(card.currencyCode) ?? "UNKNOWN";
+    const summary = byCurrency[currencyCode] ?? (byCurrency[currencyCode] = EMPTY_AMOUNT(currencyCode));
+    if (card.coverageStatus === "known_unsettled" && card.actionable && finiteAmount(card.statementBalance)) {
+      addProjectionAmount(summary, card.statementBalance, "known");
+    } else {
+      addProjectionAmount(summary, null, "unknown");
+    }
+  }
+  return { key, label: WINDOW_LABELS[key], byCurrency, items, cardStatements };
 }
 
 function projectionItemsForWindows(projection: ObligationProjectionResult, todayKey: string) {
@@ -303,6 +321,25 @@ function projectionItemsForWindows(projection: ObligationProjectionResult, today
     next_30_days: between(addDaysKey(todayKey, 1) ?? todayKey, next30End),
     next_90_days: between(addDaysKey(todayKey, 1) ?? todayKey, next90End),
   } satisfies Record<AdvisorWindowKey, ObligationProjectionItem[]>;
+}
+
+function cardDateBelongsToWindow(card: AdvisorCardStatement, key: AdvisorWindowKey, todayKey: string): boolean {
+  if (!card.dueDate || !validDateKey(card.dueDate)) return false;
+  const tomorrowKey = addDaysKey(todayKey, 1);
+  const next7End = addDaysKey(todayKey, 7);
+  const weekEnd = endOfWeekKey(todayKey);
+  const next30End = addDaysKey(todayKey, 30);
+  const next90End = addDaysKey(todayKey, 90);
+  if (key === "overdue") return card.dueDate < todayKey;
+  if (key === "today") return card.dueDate === todayKey;
+  if (key === "next_7_days") return Boolean(tomorrowKey && next7End && card.dueDate >= tomorrowKey && card.dueDate <= next7End);
+  if (key === "rest_of_week") return Boolean(card.dueDate >= todayKey && weekEnd && card.dueDate <= weekEnd);
+  if (key === "next_30_days") return Boolean(tomorrowKey && next30End && card.dueDate >= tomorrowKey && card.dueDate <= next30End);
+  return Boolean(tomorrowKey && next90End && card.dueDate >= tomorrowKey && card.dueDate <= next90End);
+}
+
+function cardsForWindow(cards: AdvisorCardStatement[], key: AdvisorWindowKey, todayKey: string): AdvisorCardStatement[] {
+  return cards.filter((card) => card.statementBalance != null && card.statementBalance > 0 && cardDateBelongsToWindow(card, key, todayKey));
 }
 
 function buildLiquidity(snapshot: FinancialAdvisorSnapshot): {
@@ -515,11 +552,12 @@ function buildReserveRequirements(
   });
   const reserveWindows = [windows.overdue, windows.today, windows.next_7_days];
   for (const window of reserveWindows) {
-    for (const [currencyCode, summary] of Object.entries(window.byCurrency)) {
+    for (const item of window.items) {
+      const currencyCode = currencyOf(item.currencyCode) ?? "UNKNOWN";
       const target = add(currencyCode);
-      target.ordinaryKnownAmount += summary.knownAmount;
-      target.ordinaryEstimatedAmount += summary.estimatedAmount;
-      target.ordinaryUnknownCount += summary.unknownAmountCount;
+      if (item.amountKind === "known" && finiteAmount(item.amount)) target.ordinaryKnownAmount += item.amount;
+      else if (item.amountKind === "estimated" && finiteAmount(item.amount)) target.ordinaryEstimatedAmount += item.amount;
+      else target.ordinaryUnknownCount++;
     }
   }
   for (const card of cards) {
@@ -597,12 +635,34 @@ function makeRecommendation(input: Omit<AdvisorRecommendation, "priority">, prio
   return { ...input, priority };
 }
 
+const RECOMMENDATION_CLASS_ORDER: Record<AdvisorRecommendationPriorityClass, number> = {
+  overdue: 10,
+  due_today: 20,
+  immediate: 30,
+  card_statement: 40,
+  strategy: 50,
+  data_gap: 90,
+};
+
+function humanDueDate(dueDate: string | null, todayKey: string): string {
+  if (!dueDate || !validDateKey(dueDate)) return "una fecha por confirmar";
+  if (dueDate < todayKey) return `el ${formatLocalDate(dueDate)}`;
+  if (dueDate === todayKey) return "hoy";
+  if (dueDate === addDaysKey(todayKey, 1)) return "mañana";
+  return `el ${formatLocalDate(dueDate)}`;
+}
+
+function priorityClassForCard(card: AdvisorCardStatement, todayKey: string): AdvisorRecommendationPriorityClass {
+  if (card.dueDate && card.dueDate < todayKey) return "overdue";
+  if (card.dueDate === todayKey) return "due_today";
+  return "card_statement";
+}
+
 function buildRecommendations(
   resultParts: {
+    todayKey: string;
     windows: Record<AdvisorWindowKey, AdvisorObligationWindow>;
     coverage: Record<string, AdvisorCoverageSummary>;
-    reserveRequirements: Record<string, AdvisorReserveRequirement>;
-    liquidity: Record<string, AdvisorLiquiditySummary>;
     cards: AdvisorCardStatement[];
     debtPriorities: AdvisorDebtPriority[];
     comparisons: AdvisorDebtComparison[];
@@ -616,7 +676,8 @@ function buildRecommendations(
     recommendations.push(makeRecommendation({
       id: `overdue:${currencyCode}`,
       type: "URGENT_PAYMENT",
-      title: amount > 0 ? `Atiende vencimientos por ${currencyCode} ${amount.toFixed(2)}` : "Revisa tus vencimientos inmediatos",
+      priorityClass: "overdue",
+      title: amount > 0 ? `Atiende vencimientos por ${formatMoneyByCurrency(amount, currencyCode)}` : "Revisa tus vencimientos inmediatos",
       reason: summary.unknownAmountCount > 0
         ? "Hay obligaciones vencidas y al menos un monto necesita confirmación."
         : "Resolver lo vencido es la primera prioridad antes de usar liquidez en decisiones opcionales.",
@@ -631,13 +692,39 @@ function buildRecommendations(
     }, recommendations.length + 1));
   }
 
+  const dueTodayDebtIds = new Set<string>();
+  for (const debt of resultParts.debtPriorities
+    .filter((item) => item.nextDueDate === resultParts.todayKey)
+    .sort((a, b) => a.debtName.localeCompare(b.debtName) || a.debtId.localeCompare(b.debtId))) {
+    dueTodayDebtIds.add(debt.debtId);
+    const hasAmount = finiteAmount(debt.nextDueAmount);
+    recommendations.push(makeRecommendation({
+      id: `debt-due-today:${debt.debtId}`,
+      type: "URGENT_PAYMENT",
+      priorityClass: "due_today",
+      title: `Paga ${debt.debtName} hoy`,
+      reason: hasAmount
+        ? `La cuota contractual vence hoy. Monto conocido: ${formatMoneyByCurrency(debt.nextDueAmount!, debt.currencyCode)}.`
+        : "La cuota contractual vence hoy, pero el monto necesita confirmación.",
+      currencyCode: debt.currencyCode,
+      amount: hasAmount ? debt.nextDueAmount : null,
+      dueDate: debt.nextDueDate,
+      debtId: debt.debtId,
+      cardId: null,
+      paymentId: null,
+      confidence: hasAmount ? "complete" : "partial",
+      evidence: [{ code: "debt_due_today", label: "Cuota contractual que vence hoy", source: "buildDebtPlanningItems" }],
+    }, recommendations.length + 1));
+  }
+
   for (const card of resultParts.cards) {
     if (!card.actionable || card.statementBalance == null || card.statementBalance <= 0 || card.daysUntilDue == null || card.daysUntilDue > 30) continue;
     recommendations.push(makeRecommendation({
       id: `card:${card.cardId}:${card.statementId}`,
       type: "CARD_STATEMENT_DUE",
-      title: `Reserva ${card.currencyCode} ${card.statementBalance.toFixed(2)} para ${card.cardName}`,
-      reason: "El estado de cuenta cerrado es una obligación conocida y vence pronto; el saldo vivo posterior al cierre no se suma aquí.",
+      priorityClass: priorityClassForCard(card, resultParts.todayKey),
+      title: `Reserva ${formatMoneyByCurrency(card.statementBalance, card.currencyCode)} para ${card.cardName}`,
+      reason: `El estado de cuenta cerrado es una obligación conocida y vence ${humanDueDate(card.dueDate, resultParts.todayKey)}; el saldo vivo posterior al cierre no se suma aquí.`,
       currencyCode: card.currencyCode,
       amount: card.statementBalance,
       dueDate: card.dueDate,
@@ -654,10 +741,11 @@ function buildRecommendations(
     recommendations.push(makeRecommendation({
       id: `reserve:${currencyCode}`,
       type: "RESERVE_CASH",
-      title: `Reserva ${currencyCode} ${coverage.shortfallKnownAmount.toFixed(2)}`,
+      priorityClass: "immediate",
+      title: `Te faltan ${formatMoneyByCurrency(coverage.shortfallKnownAmount, currencyCode)} para cubrir tus obligaciones conocidas`,
       reason: coverage.unknownAmountCount > 0
-        ? "La liquidez conocida no cubre todas las obligaciones conocidas y todavía hay montos por confirmar."
-        : "La liquidez conocida no alcanza para las obligaciones inmediatas y de los próximos 7 días.",
+        ? `Con tu liquidez actual de ${formatMoneyByCurrency(coverage.liquidityKnownAmount, currencyCode)}, todavía faltan ${formatMoneyByCurrency(coverage.shortfallKnownAmount, currencyCode)} para cubrir las obligaciones consideradas; además hay montos por confirmar.`
+        : `Con tu liquidez actual de ${formatMoneyByCurrency(coverage.liquidityKnownAmount, currencyCode)}, todavía faltan ${formatMoneyByCurrency(coverage.shortfallKnownAmount, currencyCode)} para cubrir las obligaciones consideradas.`,
       currencyCode,
       amount: coverage.shortfallKnownAmount,
       dueDate: null,
@@ -669,28 +757,56 @@ function buildRecommendations(
     }, recommendations.length + 1));
   }
 
+  const next7End = addDaysKey(resultParts.todayKey, 7);
+  const dueSoonDebtIds = new Set<string>();
+  for (const debt of resultParts.debtPriorities
+    .filter((item) => item.nextDueDate && item.nextDueDate > resultParts.todayKey && Boolean(next7End && item.nextDueDate <= next7End))
+    .sort((a, b) => a.nextDueDate!.localeCompare(b.nextDueDate!) || a.debtName.localeCompare(b.debtName) || a.debtId.localeCompare(b.debtId))) {
+    dueSoonDebtIds.add(debt.debtId);
+    recommendations.push(makeRecommendation({
+      id: `debt-due-soon:${debt.debtId}`,
+      type: "URGENT_PAYMENT",
+      priorityClass: "immediate",
+      title: debt.nextDueDate === addDaysKey(resultParts.todayKey, 1)
+        ? `Paga ${debt.debtName} antes de mañana`
+        : `Paga ${debt.debtName} antes del ${formatLocalDate(debt.nextDueDate!)}`,
+      reason: `La siguiente cuota contractual vence ${humanDueDate(debt.nextDueDate, resultParts.todayKey)} y forma parte de tus obligaciones inmediatas.`,
+      currencyCode: debt.currencyCode,
+      amount: finiteAmount(debt.nextDueAmount) ? debt.nextDueAmount : null,
+      dueDate: debt.nextDueDate,
+      debtId: debt.debtId,
+      cardId: null,
+      paymentId: null,
+      confidence: finiteAmount(debt.nextDueAmount) ? "complete" : "partial",
+      evidence: [{ code: "debt_due_date", label: "Próxima cuota", source: "buildDebtPlanningItems" }],
+    }, recommendations.length + 1));
+  }
+
   const urgentDebt = resultParts.debtPriorities
-    .filter((item) => item.nextDueDate && item.nextDueAmount != null)
-    .sort((a, b) => a.nextDueDate!.localeCompare(b.nextDueDate!) || a.debtName.localeCompare(b.debtName))[0];
-  if (urgentDebt && recommendations.length < 5) {
+    .filter((item) => item.nextDueDate && !dueTodayDebtIds.has(item.debtId) && !dueSoonDebtIds.has(item.debtId))
+    .sort((a, b) => a.nextDueDate!.localeCompare(b.nextDueDate!) || a.debtName.localeCompare(b.debtName) || a.debtId.localeCompare(b.debtId))[0];
+  if (urgentDebt) {
     recommendations.push(makeRecommendation({
       id: `debt-due:${urgentDebt.debtId}`,
       type: "URGENT_PAYMENT",
-      title: `Paga ${urgentDebt.debtName} antes del ${urgentDebt.nextDueDate}`,
+      priorityClass: "strategy",
+      title: urgentDebt.nextDueDate === addDaysKey(resultParts.todayKey, 1)
+        ? `Paga ${urgentDebt.debtName} antes de mañana`
+        : `Paga ${urgentDebt.debtName} antes del ${formatLocalDate(urgentDebt.nextDueDate!)}`,
       reason: "La siguiente cuota contractual aparece entre tus obligaciones próximas.",
       currencyCode: urgentDebt.currencyCode,
-      amount: urgentDebt.nextDueAmount,
+      amount: finiteAmount(urgentDebt.nextDueAmount) ? urgentDebt.nextDueAmount : null,
       dueDate: urgentDebt.nextDueDate,
       debtId: urgentDebt.debtId,
       cardId: null,
       paymentId: null,
-      confidence: "complete",
+      confidence: finiteAmount(urgentDebt.nextDueAmount) ? "complete" : "partial",
       evidence: [{ code: "debt_due_date", label: "Próxima cuota", source: "buildDebtPlanningItems" }],
     }, recommendations.length + 1));
   }
 
   for (const comparison of resultParts.comparisons) {
-    if (!comparison.recommendedDebtId || recommendations.length >= 5) continue;
+    if (!comparison.recommendedDebtId) continue;
     const candidate = resultParts.debtPriorities.find((item) => item.debtId === comparison.recommendedDebtId);
     if (!candidate) continue;
     const coverage = resultParts.coverage[comparison.currencyCode];
@@ -698,6 +814,7 @@ function buildRecommendations(
     recommendations.push(makeRecommendation({
       id: `debt-priority:${candidate.debtId}`,
       type: "PRIORITIZE_DEBT",
+      priorityClass: "strategy",
       title: `Mi prioridad recomendada hoy: ${candidate.debtName}`,
       reason: comparison.explanation,
       currencyCode: comparison.currencyCode,
@@ -715,6 +832,7 @@ function buildRecommendations(
     recommendations.push(makeRecommendation({
       id: "data-gap",
       type: "DATA_GAP",
+      priorityClass: "data_gap",
       title: "Completa algunos datos antes de tomar decisiones",
       reason: resultParts.quality.messages[0] ?? "La cobertura actual no permite una recomendación responsable.",
       currencyCode: null,
@@ -727,22 +845,25 @@ function buildRecommendations(
       evidence: [{ code: "data_quality", label: "Calidad del análisis", source: "FinancialAdvisor" }],
     }, 1));
   }
-  return recommendations.slice(0, 5).map((item, index) => ({ ...item, priority: index + 1 }));
+  return recommendations
+    .sort((a, b) => RECOMMENDATION_CLASS_ORDER[a.priorityClass] - RECOMMENDATION_CLASS_ORDER[b.priorityClass] || a.priority - b.priority)
+    .slice(0, 5)
+    .map((item, index) => ({ ...item, priority: index + 1 }));
 }
 
 export function buildFinancialAdvisorResult(snapshot: FinancialAdvisorSnapshot): FinancialAdvisorResult {
   const todayKey = snapshot.todayKey ?? localDateString();
   const windowItems = projectionItemsForWindows(snapshot.obligationProjection, todayKey);
+  const cardStatements = buildCardStatements(snapshot, todayKey);
   const windows = {
-    overdue: buildWindow("overdue", windowItems.overdue, todayKey),
-    today: buildWindow("today", windowItems.today, todayKey),
-    next_7_days: buildWindow("next_7_days", windowItems.next_7_days, todayKey),
-    rest_of_week: buildWindow("rest_of_week", windowItems.rest_of_week, todayKey),
-    next_30_days: buildWindow("next_30_days", windowItems.next_30_days, todayKey),
-    next_90_days: buildWindow("next_90_days", windowItems.next_90_days, todayKey),
+    overdue: buildWindow("overdue", windowItems.overdue, cardsForWindow(cardStatements, "overdue", todayKey)),
+    today: buildWindow("today", windowItems.today, cardsForWindow(cardStatements, "today", todayKey)),
+    next_7_days: buildWindow("next_7_days", windowItems.next_7_days, cardsForWindow(cardStatements, "next_7_days", todayKey)),
+    rest_of_week: buildWindow("rest_of_week", windowItems.rest_of_week, cardsForWindow(cardStatements, "rest_of_week", todayKey)),
+    next_30_days: buildWindow("next_30_days", windowItems.next_30_days, cardsForWindow(cardStatements, "next_30_days", todayKey)),
+    next_90_days: buildWindow("next_90_days", windowItems.next_90_days, cardsForWindow(cardStatements, "next_90_days", todayKey)),
   } satisfies Record<AdvisorWindowKey, AdvisorObligationWindow>;
   const { liquidityByCurrency, unknownCurrencyCount } = buildLiquidity(snapshot);
-  const cardStatements = buildCardStatements(snapshot, todayKey);
   const reserveRequirementsByCurrency = buildReserveRequirements(windows, cardStatements);
   const coverageByCurrency = buildCoverage(liquidityByCurrency, reserveRequirementsByCurrency);
   const dataQuality = buildDataQuality(snapshot, windows, cardStatements, unknownCurrencyCount);
@@ -755,10 +876,9 @@ export function buildFinancialAdvisorResult(snapshot: FinancialAdvisorSnapshot):
     windows.overdue.items.length
   );
   const recommendations = buildRecommendations({
+    todayKey,
     windows,
     coverage: coverageByCurrency,
-    reserveRequirements: reserveRequirementsByCurrency,
-    liquidity: liquidityByCurrency,
     cards: cardStatements,
     debtPriorities,
     comparisons: debtComparisons,

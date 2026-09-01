@@ -59,6 +59,25 @@ function comparisonLabel(comparison: AdvisorDebtComparison): string {
   return "Sin comparación de costo";
 }
 
+function recommendationLabel(type: FinancialAdvisorResult["recommendations"][number]["type"]): string {
+  const labels: Record<typeof type, string> = {
+    URGENT_PAYMENT: "Pago prioritario",
+    RESERVE_CASH: "Faltante de liquidez",
+    CARD_STATEMENT_DUE: "Estado de cuenta próximo",
+    KEEP_LIQUIDITY: "Conserva liquidez",
+    PRIORITIZE_DEBT: "Estrategia de deuda",
+    CONSIDER_PREPAYMENT: "Evalúa un prepago",
+    DATA_GAP: "Información por completar",
+  };
+  return labels[type];
+}
+
+function confidenceLabel(confidence: FinancialAdvisorResult["recommendations"][number]["confidence"]): string {
+  if (confidence === "complete") return "Monto conocido";
+  if (confidence === "partial") return "Requiere confirmación";
+  return "Información insuficiente";
+}
+
 function ExtraCashSummary({ scenario }: { scenario: AdvisorExtraCashScenario }) {
   return (
     <div className="mt-4 rounded-2xl bg-blue-50 p-4 text-blue-950" data-testid="advisor-extra-cash-result">
@@ -139,7 +158,7 @@ export function FinancialAdvisorPanel({ result, onNavigate }: FinancialAdvisorPa
                   <div className="min-w-0">
                     <h3 className="font-bold text-slate-900">{recommendation.title}</h3>
                     <p className="mt-1 text-sm text-slate-600">{recommendation.reason}</p>
-                    <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{recommendation.confidence} · {recommendation.type}</p>
+                    <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{recommendationLabel(recommendation.type)} · {confidenceLabel(recommendation.confidence)}</p>
                     {(recommendation.debtId || recommendation.cardId || recommendation.paymentId) && (
                       <button type="button" onClick={() => onNavigate(recommendation.cardId ? "tarjetas" : recommendation.paymentId ? "pagos" : "deudas")} className="mt-3 inline-flex items-center gap-1 text-sm font-bold text-blue-700 hover:text-blue-900">
                         Ver detalle <ArrowRight className="h-4 w-4" />

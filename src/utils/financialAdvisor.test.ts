@@ -275,7 +275,11 @@ describe("Financial Advisor deterministic read-model", () => {
       recurringPayments: [recurring({ amount: 800, dueDay: 3 })],
     }));
     expect(result.coverageByCurrency.PEN.shortfallKnownAmount).toBe(300);
-    expect(result.recommendations.some((item) => item.type === "RESERVE_CASH" && item.amount === 300)).toBe(true);
+    const shortfall = result.recommendations.find((item) => item.type === "RESERVE_CASH");
+    expect(shortfall?.amount).toBe(300);
+    expect(shortfall?.title).toMatch(/Te faltan S\/\s*300\.00/);
+    expect(shortfall?.title).not.toContain("Reserva");
+    expect(shortfall?.reason).toMatch(/Con tu liquidez actual de S\/\s*500\.00/);
   });
 
   it("4. reserves the S/300 shortfall before leaving S/700 as potential extra cash", () => {
@@ -390,5 +394,56 @@ describe("Financial Advisor deterministic read-model", () => {
     const result = buildFinancialAdvisorResult(buildSnapshot({ debts: [], recurringPayments: [] }));
     expect(result.dataQuality.status).toBe("complete");
     expect(result.recommendations).toEqual([]);
+  });
+
+  it("visual gate: prioritizes a debt due today before a future card or liquidity gap", () => {
+    const result = buildFinancialAdvisorResult(buildSnapshot({
+      accounts: [account({ openingBalance: 2138.25 })],
+      debts: [
+        debt({ id: "debt-today", name: "Financiamiento Fixture" }),
+        cardDebt({ id: "card-cmr-fixture", name: "Tarjeta CMR Fixture" }),
+      ],
+      installments: [installment("debt-today", 1, TODAY, { expectedAmount: 1361.5 })],
+      recurringPayments: [recurring({ id: "recurring-next", amount: 1250, dueDay: 2 })],
+      cardEntries: [cardEntry({ id: "card-entry-cmr", debtId: "card-cmr-fixture" })],
+      cardStatements: [cardStatement({ id: "statement-cmr", debtId: "card-cmr-fixture", statementBalance: 852.73, dueDate: "2026-09-20" })],
+    }));
+
+    expect(result.windows.today.byCurrency.PEN.knownAmount).toBe(1361.5);
+    expect(result.windows.today.cardStatements).toEqual([]);
+    expect(result.recommendations[0].debtId).toBe("debt-today");
+    expect(result.recommendations[0].title).toBe("Paga Financiamiento Fixture hoy");
+    expect(result.recommendations[0].title).not.toContain(TODAY);
+    expect(result.recommendations.find((item) => item.cardId === "card-cmr-fixture")?.title).toContain("S/");
+    expect(result.recommendations.find((item) => item.cardId === "card-cmr-fixture")?.reason).toMatch(/20 (set\.|sep)\.?(?: 2026)/);
+  });
+
+  it("visual gate: reconciles ordinary and card obligations in the 30-day window once", () => {
+    const result = buildFinancialAdvisorResult(buildSnapshot({
+      debts: [cardDebt()],
+      recurringPayments: [recurring({ amount: 1000, dueDay: 10 })],
+      cardEntries: [cardEntry()],
+      cardStatements: [cardStatement({ statementBalance: 400, dueDate: "2026-09-20" })],
+    }));
+
+    expect(result.windows.next_30_days.byCurrency.PEN.knownAmount).toBe(1400);
+    expect(result.windows.next_30_days.byCurrency.PEN.obligationCount).toBe(2);
+    expect(result.windows.next_30_days.cardStatements).toHaveLength(1);
+    expect(result.windows.next_30_days.byCurrency.PEN.knownAmount).not.toBe(1900);
+    expect(result.reserveRequirementsByCurrency.PEN.cardKnownAmount).toBe(400);
+  });
+
+  it("visual gate: keeps a post-close card settlement unknown in every applicable window", () => {
+    const result = buildFinancialAdvisorResult(buildSnapshot({
+      debts: [cardDebt()],
+      cardEntries: [cardEntry(), cardEntry({ id: "card-payment", entryDate: "2026-08-25", entryType: "payment", liabilityDelta: -100 })],
+      cardStatements: [cardStatement({ statementBalance: 400, dueDate: "2026-09-20" })],
+    }));
+
+    expect(result.windows.next_30_days.byCurrency.PEN.knownAmount).toBe(0);
+    expect(result.windows.next_30_days.byCurrency.PEN.unknownAmountCount).toBe(1);
+    expect(result.windows.next_30_days.cardStatements).toHaveLength(1);
+    expect(result.reserveRequirementsByCurrency.PEN.cardKnownAmount).toBe(0);
+    expect(result.reserveRequirementsByCurrency.PEN.cardUnknownCount).toBe(1);
   });
 });

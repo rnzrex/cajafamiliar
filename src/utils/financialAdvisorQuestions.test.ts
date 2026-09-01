@@ -8,13 +8,14 @@ function emptyResult(): FinancialAdvisorResult {
     label,
     byCurrency: {},
     items: [],
+    cardStatements: [],
   });
   return {
     todayKey: "2026-09-01",
     dataQuality: { status: "complete", missingDataCount: 0, messages: [], reasonCodes: [] },
     liquidityByCurrency: {},
     windows: {
-      overdue: emptyWindow("overdue", "Vencidas / inmediatas"),
+      overdue: emptyWindow("overdue", "Vencidas"),
       today: emptyWindow("today", "Hoy"),
       next_7_days: emptyWindow("next_7_days", "Próximos 7 días"),
       rest_of_week: emptyWindow("rest_of_week", "Resto de esta semana"),

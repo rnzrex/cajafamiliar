@@ -1,6 +1,6 @@
 # Shared Agent State
 
-## Current Active Handoff — Financial Advisor 24/7 V1 — 2026-09-01
+## Current Active Handoff — Financial Advisor 24/7 V1 Visual Gate Hotfix — 2026-09-01
 
 - Objective: implement and publish the read-only deterministic `ASESOR` view
   on `feat/financial-advisor-v1`, based exactly on `388d3e679ca91efa1a6bcc3d09bcb792dc848a8f`.
@@ -12,25 +12,27 @@
   obligation projection, credit-card statement, account balance, date, and
   principal-prepayment engines. Add only pure advisor/question read-models and
   a responsive read-only panel; unknown values remain unknown.
-- Branch state: implementation commit `c8e7a946232baad118be96e223c658f269c4b0b4`
-  is pushed; PR #80 is OPEN/DRAFT against `main`. Git is authoritative for
-  future HEAD/remote facts.
-- Completed files: `src/utils/financialAdvisor.ts`,
-  `src/utils/financialAdvisorQuestions.ts`, their tests,
-  `src/components/FinancialAdvisorPanel.tsx` and its test, plus the App view
-  integration and the linked-recurring de-duplication/horizon projection fix.
-- Validation completed locally: full `npm test -- --maxWorkers=1` (83 files,
-  1,153 tests), directed suite (12 files, 358 tests),
+- Branch state: implementation commits `c8e7a946232baad118be96e223c658f269c4b0b4`
+  and `072b09033904a6856ba6448f713cb9c609ec6c44` are pushed; PR #80 is
+  OPEN/DRAFT against `main`. The visual-gate hotfix is currently local and
+  must be committed/pushed to the same branch.
+- Hotfix completed in `src/utils/financialAdvisor.ts` and tests: explicit
+  overdue/due-today/immediate/card/strategy ordering, human date and money
+  copy, `Vencidas` label, and card statements included once in applicable
+  obligation windows while unknown settlements remain unknown.
+- Hotfix completed in `src/components/FinancialAdvisorPanel.tsx` and its test:
+  internal recommendation enums are translated to human labels and are not
+  exposed in visible recommendation metadata.
+- Validation so far: full `npm test -- --maxWorkers=1` (83 files, 1,157 tests),
+  hotfix suite (3 files, 25 tests), directed suite (8 files, 212 tests),
   `npm run typecheck:api`, `npx tsc -b --pretty false`, `npm run build`, and
-  `git diff --check` all pass. Build emitted only the repository's existing
-  dynamic-import and large-chunk warnings.
-- Preview gate: deployment `dpl_E9isZ5csnbFnHEcHmyTvcR8r6Abp` is READY/HTTP
-  200, exact SHA `c8e7a946232baad118be96e223c658f269c4b0b4`, and has no error or
-  fatal runtime logs. The Preview currently shows Caja Familiar's login page
-  in the connected browser, so manual Asesor desktop/mobile acceptance is
-  pending user authentication; do not request or store credentials here.
-- Required remaining gate: after the user authenticates the Preview, verify
-  the Asesor screen on desktop/mobile and then stop; do not alter Production.
+  `git diff --check` pass. Build emitted only existing dynamic-import and
+  large-chunk warnings.
+- Required remaining gate: commit/push the hotfix, confirm PR #80 remains
+  Draft, wait for a new Preview matching the final SHA, and verify READY/HTTP
+  200/no runtime errors. The connected browser still requires user login for
+  manual Preview Asesor desktop/mobile acceptance; do not request or store
+  credentials here.
 - Production status: untouched. No SQL, migrations, financial writes, test
   data, external AI, secrets, Vercel env writes, merge, or Production deploy.
 

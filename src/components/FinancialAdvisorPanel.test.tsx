@@ -40,4 +40,29 @@ describe("FinancialAdvisorPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Consultar" }));
     expect(screen.getByText("Esta versión todavía no guarda snapshots del asesor para comparar semanas con precisión.")).toBeTruthy();
   });
+
+  it("translates internal recommendation values into human copy", () => {
+    const advisorResult = result();
+    advisorResult.recommendations = [{
+      id: "card-statement-fixture",
+      priority: 1,
+      priorityClass: "card_statement",
+      type: "CARD_STATEMENT_DUE",
+      title: "Reserva S/ 400.00 para Tarjeta Fixture",
+      reason: "El estado de cuenta vence el 20 sep 2026.",
+      currencyCode: "PEN",
+      amount: 400,
+      dueDate: "2026-09-20",
+      debtId: null,
+      cardId: "card-fixture",
+      paymentId: null,
+      confidence: "complete",
+      evidence: [],
+    }];
+
+    render(<FinancialAdvisorPanel result={advisorResult} onNavigate={vi.fn()} />);
+
+    expect(screen.getByText("Estado de cuenta próximo · Monto conocido")).toBeTruthy();
+    expect(screen.queryByText(/CARD_STATEMENT_DUE|COMPLETE|PARTIAL/)).toBeNull();
+  });
 });
