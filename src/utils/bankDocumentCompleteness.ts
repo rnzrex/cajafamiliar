@@ -285,13 +285,13 @@ export function evaluateBankDocumentCompleteness(
   if (extraction.termInstallments == null && validation.reconstruction == null && extraction.schedule.length === 0) {
     requiredIssues.push(issue("TERM_REQUIRED", "termInstallments", "required", "Falta el plazo total", "No encontramos el número total de cuotas del crédito.", "Busca el plazo en el contrato o consulta al banco."));
   }
+  const continuation = evaluateBankDocumentContinuation({
+    extraction,
+    validation,
+    onboardingMode: context.onboardingMode ?? "NEW_DEBT",
+    lastPaidContractualInstallment: context.installmentsPaidBeforeTracking,
+  });
   if (validation.reconstruction == null && validation.reconciliation?.status === "inconsistent") {
-    const continuation = evaluateBankDocumentContinuation({
-      extraction,
-      validation,
-      onboardingMode: context.onboardingMode ?? "NEW_DEBT",
-      lastPaidContractualInstallment: context.installmentsPaidBeforeTracking,
-    });
     if (continuation.historicalAnomaly) {
       reviewIssues.push(issue("HISTORICAL_SCHEDULE_ANOMALY", "schedule", "review", "Diferencia aritmética histórica", "El documento bancario contiene una diferencia aritmética en una cuota histórica. Conservamos el cronograma original y usaremos el saldo contractual posterior a tu última cuota pagada.", "Confirma la última cuota pagada y el saldo de corte mostrado en el formulario."));
     } else {
@@ -311,7 +311,9 @@ export function evaluateBankDocumentCompleteness(
   if (extraction.tceaPercent == null) {
     optionalMissing.push(issue("TCEA_OPTIONAL", "tceaPercent", "optional", "TCEA no identificada", "La TCEA no es necesaria para guardar un cronograma oficial completo.", "Puedes consultarla en la hoja resumen si quieres conservarla."));
   }
-  const actionableWarnings = compactBankDocumentWarnings(extraction.extractionWarnings);
+  const actionableWarnings = compactBankDocumentWarnings(extraction.extractionWarnings, {
+    suppressHistoricalArithmetic: continuation.historicalAnomaly && continuation.futureIssues.length === 0,
+  });
   if (actionableWarnings.length > 0) {
     reviewIssues.push(...actionableWarnings.map((warning) => issue("EXTRACTION_WARNING", "extractionWarnings", "review", "Revisión documental", warning, "Revisa la página o dato señalado antes de confirmar.")));
   }

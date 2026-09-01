@@ -494,6 +494,39 @@ describe("BankLoanFormUX - Bank Credit Contract V2 Onboarding", () => {
     expect(savedInput?.installments[17]?.expectedPrincipal).toBe(331.92);
   }, 15_000);
 
+  it("normalizes Ripley old JSON into one operational insurance and one documentary auxiliary note", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network must not be needed for external import")));
+    render(
+      <DebtFormLegacy
+        accounts={[]}
+        categories={[]}
+        setToast={() => {}}
+        onSaved={() => {}}
+        onCancel={() => {}}
+        initialStep="details"
+      />
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Ej. Crédito personal BCP"), { target: { value: "Crédito Ripley fixture" } });
+    fireEvent.change(screen.getByPlaceholderText("Ej. Banco de Crédito del Perú"), { target: { value: "Banco fixture" } });
+    fireEvent.change(screen.getByLabelText("Última cuota contractual que ya pagaste"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Respuesta de la IA externa"), {
+      target: { value: JSON.stringify({ schema: "CAJA_FAMILIAR_BANK_DOCUMENT_V1", extraction: BANK_RIPLEY_SANITIZED_FIXTURE }) },
+    });
+    await user.click(screen.getByRole("button", { name: "INTERPRETAR RESPUESTA" }));
+
+    await waitFor(() => expect(screen.getByText("CRONOGRAMA CARGADO AUTOMÁTICAMENTE")).toBeTruthy());
+    expect(screen.getAllByRole("combobox").some((element) => (element as HTMLSelectElement).value === "percent_outstanding_balance")).toBe(true);
+    expect((screen.getByLabelText("Seguro requerido (confirmado)") as HTMLInputElement).checked).toBe(false);
+    expect(screen.getByTestId("documentary-auxiliary-insurance-note").textContent).toContain("no integra las cuotas contractuales");
+    expect((screen.getByPlaceholderText("Ej. 7300") as HTMLInputElement).value).toBe("4339.21");
+
+    await user.click(screen.getByRole("button", { name: "Revisar resumen" }));
+    expect(screen.getByText(/Total documental: S\/\s*217\.04/)).toBeTruthy();
+    expect(screen.getAllByText(/Seguro auxiliar documentado; no integra las cuotas contractuales/).length).toBeGreaterThan(0);
+  }, 20_000);
+
   it("runs the sanitized Ripley flow with reactive reported-balance baseline and no historical movements", async () => {
     const user = userEvent.setup();
     vi.clearAllMocks();

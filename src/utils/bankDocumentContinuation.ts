@@ -124,19 +124,68 @@ export function bankHistoricalAnomalyWarning(): string {
   return "El documento bancario contiene una diferencia aritmética en una cuota histórica. Caja Familiar conserva el cronograma original y comenzará desde el saldo contractual confirmado después de tu última cuota pagada.";
 }
 
-const BENIGN_WARNING_PATTERNS = [
-  /fila(?:\s+|\s+num(?:ero)?\s*)0.*(desembolso|apertura)|(desembolso|apertura).*fila(?:\s+|\s+num(?:ero)?\s*)0/i,
-  /(copia|duplicad).*(hoja resumen|summary)|(hoja resumen|summary).*(copia|duplicad)/i,
-  /contrato marco.*(otro|varios).*(producto|secci[oó]n)/i,
-  /itf.*(no|sin).*(desglos|importe).*(cuota|fila)/i,
-  /saldo.*(no demuestra|no prueba).*(pago|pagos)/i,
-  /(p[oó]liza|seguro).*(auxiliar|separad).*(cronograma|cuota)/i,
-  /((d[ií]a|fecha).*(preliminar|solicitad)|(preliminar|solicitad).*(d[ií]a|fecha)).*(cronograma|definitiv)/i,
-];
+function normalizedWarning(warning: string): string {
+  return warning
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isAuxiliaryInsuranceWarning(warning: string): boolean {
+  return /proteccion de pagos|seguro auxiliar|poliza auxiliar|certificado separado|poliza separada/.test(warning);
+}
+
+function isBenignWarning(warning: string): boolean {
+  const normalized = normalizedWarning(warning);
+  const rowZero = /fila\b.*\bnum(?:ero)?\s*\.?\s*0\b.*(?:desembolso|apertura)|(?:desembolso|apertura).*fila\b.*\bnum(?:ero)?\s*\.?\s*0\b/.test(normalized);
+  const duplicateSummary = /(?:copia|duplicad|repetid).{0,120}(?:hoja resumen|summary|pagina|documento)|(?:hoja resumen|summary).{0,120}(?:copia|duplicad|repetid)/.test(normalized);
+  const otherProducts = /contrato\s+(?:general|marco)/.test(normalized)
+    && /(?:otro|vario|producto|seccion|secciones)/.test(normalized);
+  const itfWithoutAmount = /\bitf\b/.test(normalized)
+    && /(?:no|sin).{0,60}(?:desglos|importe|cuota|fila)/.test(normalized);
+  const programmedBalanceWarning = /saldo(?:\s+de)?(?:\s+capital)?/.test(normalized)
+    && /(?:no demuestra|no demuestran|no prueba|no prueban)/.test(normalized)
+    && /(?:saldo vigente|cuota|pago)/.test(normalized);
+  const separateAuxiliarySchedule = isAuxiliaryInsuranceWarning(normalized)
+    && /(?:cronograma|cuota|en\s*0|certificado separado|poliza separada)/.test(normalized);
+  const preliminaryDay = /(?:solicitud(?:\s+de\s+credito)?|preliminar|aplicacion)/.test(normalized)
+    && /(?:dia|fecha)/.test(normalized)
+    && /(?:cronograma|definitiv)/.test(normalized);
+  const auxiliaryObligationConflict = isAuxiliaryInsuranceWarning(normalized)
+    && /(?:obligatori|voluntari)/.test(normalized)
+    && /(?:clausula|certificado|poliza|seguro)/.test(normalized);
+  return rowZero
+    || duplicateSummary
+    || otherProducts
+    || itfWithoutAmount
+    || programmedBalanceWarning
+    || separateAuxiliarySchedule
+    || preliminaryDay
+    || auxiliaryObligationConflict;
+}
+
+function isHistoricalArithmeticDuplicate(warning: string): boolean {
+  const normalized = normalizedWarning(warning);
+  if (/(?:diferencia aritmetica.*historica|cuota historica)/.test(normalized)) return false;
+  const hasArithmeticSignal = /(?:diferencia|discrepancia|descuadre|no coincide|no concuerda|!=|<>)/.test(normalized);
+  const hasHistoricalSignal = /(?:histor|capital|principal|saldo|cuota|pagad|\b\d{3,}[.,]\d{2}\b)/.test(normalized);
+  return hasArithmeticSignal && hasHistoricalSignal;
+}
+
+export interface BankDocumentWarningCompactionOptions {
+  /** Suppress the raw historical balance discrepancy after the canonical review issue is present. */
+  suppressHistoricalArithmetic?: boolean;
+}
 
 /** Removes warnings that describe already-resolved document context. */
-export function compactBankDocumentWarnings(warnings: string[]): string[] {
+export function compactBankDocumentWarnings(
+  warnings: string[],
+  options: BankDocumentWarningCompactionOptions = {},
+): string[] {
   return [...new Set(warnings.map((warning) => warning.trim()).filter(Boolean))]
-    .filter((warning) => !BENIGN_WARNING_PATTERNS.some((pattern) => pattern.test(warning)))
+    .filter((warning) => !isBenignWarning(warning))
+    .filter((warning) => !(options.suppressHistoricalArithmetic && isHistoricalArithmeticDuplicate(warning)))
     .slice(0, 8);
 }

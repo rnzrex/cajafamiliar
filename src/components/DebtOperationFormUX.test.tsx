@@ -36,7 +36,7 @@ const debt: Debt = {
   installmentAmountMode: "fixed",
   paymentFrequency: "monthly",
   customFrequencyDays: null,
-  firstDueDate: "2026-09-01",
+  firstDueDate: "2026-09-02",
   teaPercent: 15,
   tceaPercent: 17,
   notes: "",
@@ -81,7 +81,7 @@ const installments: DebtInstallment[] = [
     scheduleVersionId: schedule.id,
     debtId: debt.id,
     installmentNumber: 1,
-    dueDate: "2026-09-01",
+    dueDate: "2026-09-02",
     expectedAmount: 1100,
     expectedPrincipal: 800,
     expectedInterest: 250,
@@ -95,7 +95,7 @@ const installments: DebtInstallment[] = [
     scheduleVersionId: schedule.id,
     debtId: debt.id,
     installmentNumber: 2,
-    dueDate: "2026-10-01",
+    dueDate: "2026-10-02",
     expectedAmount: 1200,
     expectedPrincipal: 700,
     expectedInterest: 400,
@@ -234,7 +234,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
 
     const dueDate = screen.getByLabelText("Fecha nueva cuota 1");
     await user.clear(dueDate);
-    await user.type(dueDate, "2026-09-01");
+    await user.type(dueDate, "2026-09-02");
     await user.type(screen.getByLabelText("Total nueva cuota 1"), "1000");
     await user.type(screen.getByLabelText("Capital nueva cuota 1"), "800");
     await user.type(screen.getByLabelText("Interés nueva cuota 1"), "150");
@@ -246,7 +246,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
       prepaymentEffect: "other",
       scheduleInstallments: [{
         installmentNumber: 1,
-        dueDate: "2026-09-01",
+        dueDate: "2026-09-02",
         expectedAmount: 1000,
         expectedPrincipal: 800,
         expectedInterest: 150,
@@ -419,7 +419,7 @@ describe("DebtOperationFormUX - BANK V2 operations", () => {
 
     renderOperation("reversal", false, vi.fn(), targetEvent.id, [schedule, estimatedSchedule, officialSchedule], [targetEvent]);
 
-    expect((screen.getByLabelText("Fecha cuota restaurada 1") as HTMLInputElement).value).toBe("2026-09-01");
+    expect((screen.getByLabelText("Fecha cuota restaurada 1") as HTMLInputElement).value).toBe("2026-09-02");
     expect((screen.getByLabelText("Total cuota restaurada 1") as HTMLInputElement).value).toBe("1100");
     expect((screen.getByLabelText("Capital cuota restaurada 2") as HTMLInputElement).value).toBe("700");
   });

@@ -5,6 +5,7 @@ import { evaluateBankDocumentContinuation, compactBankDocumentWarnings } from ".
 import { normalizeBankDocumentExtraction } from "./bankDocumentExtraction.js";
 import { financialValidation } from "./bankDocumentFinancialValidation.js";
 import { BANK_RIPLEY_SANITIZED_FIXTURE } from "./bankRipleyRegressionFixture.js";
+import { simulateBankPrepayment } from "./bankPrepaymentSimulation.js";
 
 function normalizedFixture(overrides: Partial<typeof BANK_RIPLEY_SANITIZED_FIXTURE> = {}) {
   return normalizeBankDocumentExtraction({ ...BANK_RIPLEY_SANITIZED_FIXTURE, ...overrides }).value;
@@ -177,18 +178,168 @@ describe("bank document-first zero-rework / Ripley regression", () => {
     const creditLife = extraction.insuranceTerms.find((insurance) => insurance.insuranceType === "credit_life");
     const auxiliary = extraction.insuranceTerms.find((insurance) => insurance.insuranceType === "other");
 
-    expect(creditLife).toMatchObject({ pricingMode: "percent_outstanding_balance", ratePercent: 0.3, fixedAmount: null, totalAmount: 217.04, isRequired: null });
-    expect(auxiliary).toMatchObject({ totalAmount: 9, fixedAmount: null, isRequired: false });
+    expect(creditLife).toMatchObject({ pricingMode: "percent_outstanding_balance", ratePercent: 0.3, fixedAmount: null, totalAmount: 217.04, isRequired: null, affectsInstallmentSchedule: true });
+    expect(auxiliary).toMatchObject({ totalAmount: null, fixedAmount: null, isRequired: null, affectsInstallmentSchedule: false });
+    expect(extraction.documentaryInsuranceTerms).toHaveLength(2);
+    expect(extraction.operationalInsuranceTerms).toHaveLength(1);
+    expect(extraction.operationalInsuranceTerms?.[0]).toMatchObject({ insuranceType: "credit_life", pricingMode: "percent_outstanding_balance" });
     expect(Number(extraction.schedule.reduce((sum, row) => sum + (row.total ?? 0), 0).toFixed(2))).toBe(7968.59);
     expect(Number(extraction.schedule.reduce((sum, row) => sum + (row.insurance ?? 0), 0).toFixed(2))).toBe(217.04);
+  });
+
+  it("infers 0.3% even when the first scheduled insurance row is irregular", () => {
+    const extraction = normalizedFixture({
+      schedule: BANK_RIPLEY_SANITIZED_FIXTURE.schedule.map((row, index) => index === 0 ? { ...row, insurance: 99.99 } : row),
+    });
+    expect(extraction.insuranceTerms.find((insurance) => insurance.insuranceType === "credit_life")?.pricingMode).toBe("percent_outstanding_balance");
+  });
+
+  it("keeps an unknown rate closed when the schedule does not reconcile", () => {
+    const extraction = normalizedFixture({
+      schedule: BANK_RIPLEY_SANITIZED_FIXTURE.schedule.map((row) => ({ ...row, insurance: 1 })),
+    });
+    expect(extraction.insuranceTerms.find((insurance) => insurance.insuranceType === "credit_life")?.pricingMode).toBe("unknown");
+  });
+
+  it("keeps the formula unknown when documentary warnings contradict a percentage formula", () => {
+    const extraction = normalizedFixture({
+      extractionWarnings: ["El seguro de desgravamen tiene un importe fijo por cuota."],
+    });
+    expect(extraction.insuranceTerms.find((insurance) => insurance.insuranceType === "credit_life")?.pricingMode).toBe("unknown");
+  });
+
+  it("keeps an unknown rate closed when reported balances are unavailable", () => {
+    const extraction = normalizedFixture({
+      schedule: BANK_RIPLEY_SANITIZED_FIXTURE.schedule.map((row) => ({ ...row, reportedBalance: null })),
+    });
+    expect(extraction.insuranceTerms.find((insurance) => insurance.insuranceType === "credit_life")?.pricingMode).toBe("unknown");
+  });
+
+  it("never converts a documentary insurance total into a fixed amount", () => {
+    const extraction = normalizedFixture();
+    const creditLife = extraction.operationalInsuranceTerms?.find((insurance) => insurance.insuranceType === "credit_life");
+    expect(creditLife).toMatchObject({ totalAmount: 217.04, fixedAmount: null, pricingMode: "percent_outstanding_balance" });
+  });
+
+  it("does not exclude a generic unknown insurance without auxiliary evidence", () => {
+    const extraction = normalizedFixture({
+      insuranceTerms: [{
+        label: "Seguro adicional",
+        insuranceType: "other",
+        pricingMode: "unknown",
+        ratePercent: null,
+        fixedAmount: null,
+        totalAmount: null,
+        isRequired: null,
+      }],
+      extractionWarnings: [],
+    });
+    expect(extraction.insuranceTerms[0]?.affectsInstallmentSchedule).toBeNull();
+    expect(extraction.operationalInsuranceTerms).toHaveLength(1);
+  });
+
+  it("recalculates Ripley credit-life insurance without the unknown-insurance warning", () => {
+    const extraction = normalizedFixture();
+    const result = simulateBankPrepayment({
+      effect: "reduce_term",
+      principalBeforeOperation: 4339.21,
+      principalPaid: 146.49,
+      extraPrincipalPaid: 100,
+      operationDate: "2026-09-24",
+      originalPrincipal: 5000,
+      originalTermInstallments: 24,
+      teaPercent: 54.83,
+      dayCountBasis: "actual_days_360",
+      installmentTotalMode: "total_installment_including_costs",
+      dueDateAdjustmentRule: "contractual_dates",
+      amortizationMethod: "fixed_installment",
+      currentScheduleSource: "contractual",
+      currentScheduleAuthoritative: true,
+      currentSchedule: extraction.schedule.map((row, index) => ({
+        installmentNumber: index + 1,
+        contractualInstallmentNumber: row.contractualInstallmentNumber,
+        dueDate: row.dueDate,
+        expectedAmount: row.total,
+        expectedPrincipal: row.principal,
+        expectedInterest: row.interest,
+        expectedFees: row.fees,
+        expectedInsurance: row.insurance,
+      })),
+      insuranceTerms: (extraction.operationalInsuranceTerms ?? []).map((term) => ({
+        pricingMode: term.pricingMode,
+        ratePercent: term.ratePercent,
+        fixedAmount: term.fixedAmount,
+        rateBasis: "per_installment",
+        isRequired: term.isRequired === true,
+        affectsInstallmentSchedule: term.affectsInstallmentSchedule,
+      })).concat({
+        pricingMode: "fixed_amount",
+        ratePercent: null,
+        fixedAmount: 9,
+        rateBasis: "per_installment",
+        isRequired: false,
+        affectsInstallmentSchedule: false,
+      }),
+    });
+    expect(result.status).toBe("calculated");
+    expect(result.warnings).not.toContain("El seguro futuro depende del banco; no se inventó una fórmula.");
+    expect(result.rows[0]?.insurance).toBe(12.28);
   });
 
   it("suppresses benign document warnings without hiding actionable future warnings", () => {
     const warnings = compactBankDocumentWarnings([
       ...BANK_RIPLEY_SANITIZED_FIXTURE.extractionWarnings,
+      "Los valores de SALDO CAPITAL no demuestran un saldo vigente ni qué cuotas fueron realmente pagadas.",
+      "El contrato general incluye secciones para otros productos financieros.",
+      "La Hoja Resumen es una copia duplicada del documento principal.",
       "La cuota futura 4 tiene una diferencia de saldo que debe revisarse.",
     ]);
 
     expect(warnings).toEqual(["La cuota futura 4 tiene una diferencia de saldo que debe revisarse."]);
+  });
+
+  it("compacts the raw historical 63.81 duplicate only after the canonical exception is safe", () => {
+    const extraction = normalizedFixture({
+      extractionWarnings: [
+        ...BANK_RIPLEY_SANITIZED_FIXTURE.extractionWarnings,
+        "El saldo documental 5000.00 no coincide con 5063.81; diferencia 63.81.",
+      ],
+    });
+    const validation = financialValidation(extraction);
+    const completeness = evaluateBankDocumentCompleteness(extraction, validation, {
+      onboardingMode: "EXISTING_DEBT",
+      installmentsPaidBeforeTracking: 5,
+      currentPrincipal: 4339.21,
+      creditorName: extraction.lenderName,
+      currencyCode: "PEN",
+    });
+    expect(completeness.reviewIssues.filter((item) => item.code === "HISTORICAL_SCHEDULE_ANOMALY")).toHaveLength(1);
+    expect(completeness.reviewIssues.some((item) => item.message.includes("5063.81"))).toBe(false);
+  });
+
+  it("keeps a future anomaly visible and blocks continuation", () => {
+    const extraction = normalizedFixture({
+      schedule: BANK_RIPLEY_SANITIZED_FIXTURE.schedule.map((row, index) => index === 5 ? { ...row, reportedBalance: 4200 } : row),
+    });
+    const validation = financialValidation(extraction);
+    const continuation = evaluateBankDocumentContinuation({
+      extraction,
+      validation,
+      onboardingMode: "EXISTING_DEBT",
+      lastPaidContractualInstallment: 5,
+    });
+    expect(continuation.canContinue).toBe(false);
+    expect(continuation.futureIssues.some((issue) => issue.contractualInstallmentNumber === 6)).toBe(true);
+  });
+
+  it("keeps a new-debt inconsistency fail-closed", () => {
+    const extraction = normalizedFixture();
+    const continuation = evaluateBankDocumentContinuation({
+      extraction,
+      validation: financialValidation(extraction),
+      onboardingMode: "NEW_DEBT",
+      lastPaidContractualInstallment: null,
+    });
+    expect(continuation.canContinue).toBe(false);
   });
 });

@@ -348,6 +348,9 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
     return "Monto fijo por cuota";
   };
 
+  const documentaryAuxiliaryInsurances = (documentImportExtraction?.documentaryInsuranceTerms ?? documentImportExtraction?.insuranceTerms ?? [])
+    .filter((insurance) => insurance.affectsInstallmentSchedule === false);
+
   const estimatedInsuranceInputs = () => {
     let creditLifeRatePercent = 0;
     let percentOriginalPrincipalRatePercent = 0;
@@ -604,6 +607,14 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       expectedInsurance: row.insurance == null ? "" : String(row.insurance),
       reportedBalance: "reportedBalance" in row && row.reportedBalance != null ? String(row.reportedBalance) : "",
     }));
+    const operationalInsuranceTerms = extraction.operationalInsuranceTerms
+      ?? extraction.insuranceTerms.filter((insurance) => insurance.affectsInstallmentSchedule !== false);
+    const continuation = evaluateBankDocumentContinuation({
+      extraction,
+      validation: result,
+      onboardingMode,
+      lastPaidContractualInstallment: paidBeforeForExisting,
+    });
 
     setTsvScheduleText("");
     setScheduleParseError(null);
@@ -624,11 +635,13 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       ...extraction.extractionWarnings,
       ...(result.reconciliation?.warnings ?? []),
       ...(result.reconstruction?.warnings ?? []),
-      ...(result.continuityIssues.length > 0 ? ["El cronograma contractual contiene una diferencia aritmética que debe revisarse contra el historial real."] : []),
+      ...(result.continuityIssues.length > 0 && !continuation.historicalAnomaly ? ["El cronograma contractual contiene una diferencia aritmética que debe revisarse contra el historial real."] : []),
       ...(extraction.reportedBalance.inferredKind && extraction.reportedBalance.inferredKind !== "principal_balance"
         ? ["El saldo reportado por el banco no se usará automáticamente como capital pendiente."]
         : []),
-    ]));
+    ], {
+      suppressHistoricalArithmetic: continuation.historicalAnomaly && continuation.futureIssues.length === 0,
+    }));
 
     if (extraction.lenderName) {
       setCreditorName(extraction.lenderName);
@@ -681,8 +694,7 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
       setOpeningBalanceSource("none");
     }
 
-    if (extraction.insuranceTerms.length > 0) {
-      setInsurances(extraction.insuranceTerms.map((insurance) => ({
+    setInsurances(operationalInsuranceTerms.map((insurance) => ({
         insuranceType: insurance.insuranceType,
         label: insurance.label,
         pricingMode: insurance.pricingMode,
@@ -697,7 +709,6 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
           ? "Importado para confirmación; obligatoriedad no confirmada."
           : "Importado para confirmación; verificar contra el contrato.",
       })));
-    }
   };
 
   const openScheduleManualReplacement = () => {
@@ -1802,6 +1813,12 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                         </button>
                       </div>
                     </div>
+                    {documentaryAuxiliaryInsurances.length > 0 && (
+                      <div data-testid="documentary-auxiliary-insurance-note" className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-950">
+                        <p className="font-black uppercase tracking-wide">Seguro auxiliar documentado</p>
+                        <p className="mt-1">{documentaryAuxiliaryInsurances.map((insurance) => insurance.label).join(" · ")} · no integra las cuotas contractuales ni los cálculos de prepago.</p>
+                      </div>
+                    )}
                     {loanSubtype === "mortgage" && (
                       <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3">
                         <label className="block text-sm font-bold text-slate-800 mb-1">¿Cómo se cubre el desgravamen? *</label>
@@ -2941,7 +2958,8 @@ export function DebtForm({ canWriteDebt = true, onSaved, onCancel, setToast, ini
                   )}
                   <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Seguros</p>
-                  {insurances.length === 0 ? <p className="mt-1 text-slate-600">Sin desgravamen ni seguros definidos.</p> : <ul className="mt-1 space-y-1 text-slate-700">{insurances.map((insurance, index) => <li key={index}>{insurance.label} · {insurance.pricingMode === "fixed_amount" ? insuranceBasisLabel(insurance.rateBasis) : insurance.pricingMode === "percent_outstanding_balance" ? `% sobre saldo pendiente${insurance.ratePercent ? ` (${insurance.ratePercent}%)` : ""}` : insurance.pricingMode === "percent_original_principal" ? `% sobre principal original${insurance.ratePercent ? ` (${insurance.ratePercent}%)` : ""}` : "Según cronograma / por confirmar"}{insurance.pricingMode === "fixed_amount" && insurance.rateBasis !== "per_installment" && insurance.fixedAmount ? ` · Seguro contractual total registrado: ${currencySymbol} ${Number(insurance.fixedAmount).toFixed(2)}` : ""}{insurance.totalAmount ? ` · Total documental: ${currencySymbol} ${Number(insurance.totalAmount).toFixed(2)}` : ""}{insurance.isRequired ? " · Obligatorio confirmado" : " · Obligatoriedad no confirmada"} {insurance.provider ? `· ${insurance.provider}` : ""}</li>)}</ul>}
+                   {insurances.length === 0 ? <p className="mt-1 text-slate-600">Sin desgravamen ni seguros operativos definidos.</p> : <ul className="mt-1 space-y-1 text-slate-700">{insurances.map((insurance, index) => <li key={index}>{insurance.label} · {insurance.pricingMode === "fixed_amount" ? insuranceBasisLabel(insurance.rateBasis) : insurance.pricingMode === "percent_outstanding_balance" ? `% sobre saldo pendiente${insurance.ratePercent ? ` (${insurance.ratePercent}%)` : ""}` : insurance.pricingMode === "percent_original_principal" ? `% sobre principal original${insurance.ratePercent ? ` (${insurance.ratePercent}%)` : ""}` : "Según cronograma / por confirmar"}{insurance.pricingMode === "fixed_amount" && insurance.rateBasis !== "per_installment" && insurance.fixedAmount ? ` · Seguro contractual total registrado: ${currencySymbol} ${Number(insurance.fixedAmount).toFixed(2)}` : ""}{insurance.totalAmount ? ` · Total documental: ${currencySymbol} ${Number(insurance.totalAmount).toFixed(2)}` : ""}{insurance.isRequired ? " · Obligatorio confirmado" : " · Obligatoriedad no confirmada"} {insurance.provider ? `· ${insurance.provider}` : ""}</li>)}</ul>}
+                   {documentaryAuxiliaryInsurances.length > 0 && <p className="mt-2 text-xs font-semibold text-sky-900">Seguro auxiliar documentado; no integra las cuotas contractuales.</p>}
                 </div>
                 {scheduleSource === "contractual" ? (
                   <div className="grid grid-cols-2 gap-3 rounded-xl bg-emerald-50 p-3 text-emerald-950 sm:grid-cols-5">

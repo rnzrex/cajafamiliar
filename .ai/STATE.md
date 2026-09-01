@@ -1,5 +1,36 @@
 # Shared Agent State
 
+## Current Active Handoff — BANK Insurance + Warning Zero-Rework V1 — 2026-09-01
+
+- Objective: publish and hold `fix/bank-insurance-zero-rework-v1` for the
+  deterministic insurance/warning release-gate audit. No SQL, migrations,
+  schema/RLS, Supabase Production writes, real financial/document data, PII,
+  Gemini/API key, Vercel env writes, Production frontend deployment, merge,
+  reset, clean, or force push.
+- Base: `354b54c66b67b6463adc0a45ff3266ccb00a91cb`. Implementation commit:
+  `99a23713246cd2d0cc853ac9c433052834b952c0`; subsequent commits are
+  state-only checkpoints. Git HEAD and the remote branch ref are authoritative.
+- Implementation: deterministic 0.3% credit-life inference only from matching
+  contractual reported-balance rows; documentary/operational insurance split;
+  auxiliary-policy exclusion; external JSON backward compatibility; warning
+  compaction; historical/future/new-debt anomaly gates; prepayment simulation
+  filtering; sanitized Ripley/UI regressions.
+- Validation: full Vitest `80 files / 1,131 tests passed`; targeted gate suite
+  `8 files / 130 tests passed`; `npm run typecheck:api`, `npm run build`, and
+  `git diff --check` passed. Build warnings are the existing dynamic-import and
+  large-chunk notices.
+- PR: #78 OPEN/DRAFT against `main`, title
+  `BANK INSURANCE ZERO-REWORK V1 — deterministic insurance + warning compaction`.
+- Preview: the implementation deployment was READY at
+  `https://cajafamiliar-brk3zgnjf-renzorex.vercel.app/`, exact implementation
+  SHA `99a23713246cd2d0cc853ac9c433052834b952c0`, with no build errors/fatals
+  and no browser console errors after user authentication. The later
+  state-only branch checkpoints trigger equivalent automatic Preview builds;
+  verify their exact SHA from Vercel before reporting. Connector-only HTTP
+  checks without the browser session redirect to Vercel Authentication.
+- Next step: stop. Do not mark PR ready, merge, deploy Production, add secrets,
+  or write financial/document test data.
+
 ## Objective
 
 Implement, validate, and publish the Document-First Production RPC runtime fix

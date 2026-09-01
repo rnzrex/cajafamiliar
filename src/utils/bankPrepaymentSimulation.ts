@@ -34,7 +34,7 @@ export interface BankPrepaymentSimulationInput {
   /** Automatic simulations may only start from the authoritative bank schedule. */
   currentScheduleSource?: ScheduleSource | null;
   currentScheduleAuthoritative?: boolean;
-  insuranceTerms?: Array<Pick<DebtInsuranceTerms, "pricingMode" | "ratePercent" | "fixedAmount" | "rateBasis" | "isRequired">>;
+  insuranceTerms?: Array<Pick<DebtInsuranceTerms, "pricingMode" | "ratePercent" | "fixedAmount" | "rateBasis" | "isRequired"> & { affectsInstallmentSchedule?: boolean | null }>;
   /** Effective allocations on future rows make the bank's post-prepayment treatment ambiguous. */
   hasAllocatedFutureInstallments?: boolean;
   /** Optional explicit signal for payment + extra principal off-cycle validation. */
@@ -150,7 +150,9 @@ function insuranceForRow(
   futureRow: FutureRow,
   warnings: string[],
 ): { amount: number; known: boolean } {
-  const terms = input.insuranceTerms ?? [];
+  // Auxiliary documentary policies are intentionally visible in the import
+  // result but must never affect an operational prepayment projection.
+  const terms = (input.insuranceTerms ?? []).filter((term) => term.affectsInstallmentSchedule !== false);
   if (terms.length === 0) {
     if ((futureRow.expectedInsurance ?? 0) > 0) {
       return { amount: 0, known: false };
