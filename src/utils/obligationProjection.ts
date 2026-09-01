@@ -68,6 +68,8 @@ export interface BuildObligationProjectionInput {
   debtPlanningItems: DebtInstallmentPlanningItem[];
   debtEvents?: DebtEvent[];
   todayKey?: string;
+  /** Defaults to the historical 3-month projection; advisor uses 4 for a full 90-day window. */
+  horizonMonthCount?: number;
 }
 
 function parseReferenceDate(todayKey: string): Date {
@@ -85,16 +87,22 @@ export function buildObligationProjection({
   debtPlanningItems,
   debtEvents = [],
   todayKey = localDateString(),
+  horizonMonthCount = 3,
 }: BuildObligationProjectionInput): ObligationProjectionResult {
   const currentMonth = todayKey.slice(0, 7);
-  const month1 = getNextMonthKey(currentMonth);
-  const month2 = getNextMonthKey(month1);
-  const horizonMonths = [currentMonth, month1, month2];
+  const horizonMonths = Array.from({ length: Math.max(1, Math.floor(horizonMonthCount)) }, (_, index) => {
+    let month = currentMonth;
+    for (let step = 0; step < index; step++) month = getNextMonthKey(month);
+    return month;
+  });
+  const month1 = horizonMonths[1] ?? getNextMonthKey(currentMonth);
+  const month2 = horizonMonths[2] ?? getNextMonthKey(month1);
   const referenceDate = parseReferenceDate(todayKey);
 
   const items: ObligationProjectionItem[] = [];
   const overduePriorItems: ObligationProjectionItem[] = [];
   let unscheduledRecurringCount = 0;
+  const linkedDebtIdsProjected = new Set<string>();
 
   // 1. Process Active Recurring Payments
   const activeRecurring = recurringPayments.filter((p) => p.is_active);
@@ -149,8 +157,10 @@ export function buildObligationProjection({
 
         if (mKey < currentMonth) {
           overduePriorItems.push(item);
+          linkedDebtIdsProjected.add(linkedDebt.id);
         } else if (horizonMonths.includes(mKey)) {
           items.push(item);
+          linkedDebtIdsProjected.add(linkedDebt.id);
         }
       }
       continue;
@@ -200,7 +210,7 @@ export function buildObligationProjection({
         unscheduledRecurringCount++;
       } else {
         const paidThisMonth = isPaymentPaidThisMonth(payment, referenceDate);
-        const targetMonths = paidThisMonth ? [month1, month2] : [currentMonth, month1, month2];
+        const targetMonths = paidThisMonth ? horizonMonths.slice(1) : horizonMonths;
 
         for (const mKey of targetMonths) {
           if (startsOn && `${mKey}-31` < startsOn) continue;
@@ -241,7 +251,7 @@ export function buildObligationProjection({
         unscheduledRecurringCount++;
       } else {
         const paidThisMonth = isPaymentPaidThisMonth(payment, referenceDate);
-        const candidateMonths = paidThisMonth ? [month1, month2] : [currentMonth, month1, month2];
+        const candidateMonths = paidThisMonth ? horizonMonths.slice(1) : horizonMonths;
         const selectedMonths = candidateMonths.slice(0, remainingInst);
 
         const initialPaid = payment.paid_installments ?? 0;
@@ -281,6 +291,10 @@ export function buildObligationProjection({
   const nonCoveredDebts = debtPlanningItems.filter((i) => !i.isCovered);
 
   for (const debtItem of nonCoveredDebts) {
+    // A linked open-ended debt is represented by its recurring reminder above.
+    // Keep the recurring source as the single economic obligation and avoid
+    // adding the derived debt-planning row a second time.
+    if (linkedDebtIdsProjected.has(debtItem.debtId)) continue;
     const mKey = debtItem.dueDate.slice(0, 7);
 
     const item: ObligationProjectionItem = {
