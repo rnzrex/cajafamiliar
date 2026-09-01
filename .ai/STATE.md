@@ -12,9 +12,9 @@
   obligation projection, credit-card statement, account balance, date, and
   principal-prepayment engines. Add only pure advisor/question read-models and
   a responsive read-only panel; unknown values remain unknown.
-- Branch state: implementation is complete locally on the requested base; the
-  branch has not yet been committed, pushed, or opened as a Draft PR. Git is
-  authoritative for the final HEAD/remote facts.
+- Branch state: implementation commit `c8e7a946232baad118be96e223c658f269c4b0b4`
+  is pushed; PR #80 is OPEN/DRAFT against `main`. Git is authoritative for
+  future HEAD/remote facts.
 - Completed files: `src/utils/financialAdvisor.ts`,
   `src/utils/financialAdvisorQuestions.ts`, their tests,
   `src/components/FinancialAdvisorPanel.tsx` and its test, plus the App view
@@ -24,9 +24,13 @@
   `npm run typecheck:api`, `npx tsc -b --pretty false`, `npm run build`, and
   `git diff --check` all pass. Build emitted only the repository's existing
   dynamic-import and large-chunk warnings.
-- Required remaining gate: commit and push without force, create/confirm the
-  Draft PR, and verify an automatic Vercel Preview matches the final SHA,
-  reaches READY/HTTP 200, and has no unexplained runtime errors.
+- Preview gate: deployment `dpl_E9isZ5csnbFnHEcHmyTvcR8r6Abp` is READY/HTTP
+  200, exact SHA `c8e7a946232baad118be96e223c658f269c4b0b4`, and has no error or
+  fatal runtime logs. The Preview currently shows Caja Familiar's login page
+  in the connected browser, so manual Asesor desktop/mobile acceptance is
+  pending user authentication; do not request or store credentials here.
+- Required remaining gate: after the user authenticates the Preview, verify
+  the Asesor screen on desktop/mobile and then stop; do not alter Production.
 - Production status: untouched. No SQL, migrations, financial writes, test
   data, external AI, secrets, Vercel env writes, merge, or Production deploy.
 
